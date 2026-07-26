@@ -31,6 +31,31 @@ class Theme:
     spacing: float = 5.0
     font_size: float = 13.0
 
+    @property
+    def space_xs(self) -> float:
+        """Extra-small layout spacing derived from :attr:`spacing`."""
+        return self.spacing * 0.5
+
+    @property
+    def space_sm(self) -> float:
+        """Small layout spacing; equivalent to the base :attr:`spacing`."""
+        return self.spacing
+
+    @property
+    def space_md(self) -> float:
+        """Medium layout spacing derived from :attr:`spacing`."""
+        return self.spacing * 2.0
+
+    @property
+    def space_lg(self) -> float:
+        """Large layout spacing derived from :attr:`spacing`."""
+        return self.spacing * 3.0
+
+    @property
+    def space_xl(self) -> float:
+        """Extra-large layout spacing derived from :attr:`spacing`."""
+        return self.spacing * 4.0
+
     @classmethod
     def dark(cls, **overrides: object) -> "Theme":
         """Return the built-in dark theme, optionally overriding specific tokens.

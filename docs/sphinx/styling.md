@@ -74,6 +74,10 @@ after stylesheets, so they remain the strongest local override.
 
 Type selectors use DragonGUI widget names exactly, such as `Button`,
 `ProgressBar`, `DataFrameTable`, and `Scatter3D`. They are case-sensitive.
+They match the stable public base-type chain rather than private native
+render-kind names. Thus `ColorPicker` matches `ColorPicker` and `Panel`,
+`SearchBox` matches `SearchBox` and `HLayout`, and `AppShell` matches
+`AppShell` and `FlexLayout`.
 
 Common selector forms:
 
@@ -239,7 +243,7 @@ The most common user-facing properties are:
 
 | Group | Examples |
 | --- | --- |
-| Layout | `display`, `flex-direction`, `flex`, `width`, `height`, `min-width`, `max-height`, `padding`, `margin`, `gap`, `overflow`, `position`, `top`, `right`, `bottom`, `left`, `z-index` |
+| Layout | `display`, `flex-direction`, `flex-wrap`, `flex`, `width`, `height`, `min-width`, `max-height`, `padding`, `margin`, `gap`, `overflow`, `position`, `top`, `right`, `bottom`, `left`, `z-index` |
 | Grid | `grid-template-columns`, `grid-template-rows`, `grid-template-areas`, `grid-auto-flow`, `grid-area`, `grid-column`, `grid-row` |
 | Visual | `background`, `background-color`, `background-image`, `border`, `border-color`, `border-width`, `border-radius`, `outline`, `box-shadow`, `opacity`, `accent`, `track-color`, `thumb-color`, `transform`, `translate`, `scale`, `rotate` |
 | Text | `font-size`, `font-family`, `font-weight`, `font-style`, `color`, `text-align` |
@@ -379,8 +383,15 @@ print(snapshot["stylesheets"])
 ```
 
 The snapshot includes rule counts, warning counts, the last stylesheet parse
-error, matched rules per widget, computed style fields, and computed part
-styles.
+error, public `render_kind`/`css_types`, matched selectors with source and
+specificity, winning and overridden declarations, unmatched eligible user
+selectors, computed style fields, and computed part styles.
+
+To troubleshoot an unmatched selector, inspect the node's exact, case-sensitive
+`css_types`, then check `unmatched_user_selectors` and parser warnings. If
+the selector matched, inspect `provenance[property]` to see whether origin,
+specificity, source order, `!important`, or an inline style supplied the winner.
+Selectors inside inactive responsive conditions are not currently eligible.
 
 For runtime help inside Python:
 

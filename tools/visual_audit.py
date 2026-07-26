@@ -5,9 +5,11 @@ import ctypes
 from ctypes import wintypes
 from dataclasses import dataclass
 import json
+import math
 import os
 from pathlib import Path
 import platform
+import re
 import subprocess
 import sys
 import tempfile
@@ -22,6 +24,16 @@ DEFAULT_OUT = ROOT / "artifacts" / "visual_audit"
 SIZE_ALIASES = {
     "desktop": None,
     "mobile": (390, 720),
+}
+LAYOUT_TORTURE_TARGETS = {
+    "layout-flex-stress",
+    "layout-panel-bounds",
+    "layout-grid-masonry",
+    "layout-overlay-collision",
+    "layout-scrollable-composites",
+    "layout-plot-embedding",
+    "overflow-scrollbar",
+    "responsive-layout",
 }
 
 
@@ -49,6 +61,11 @@ def main() -> int:
         "--sizes",
         default="desktop",
         help="Comma-separated aliases desktop,mobile or explicit WIDTHxHEIGHT values.",
+    )
+    parser.add_argument(
+        "--scales",
+        default="manifest",
+        help="Comma-separated scale factors, or manifest to use each target's configured scales.",
     )
     parser.add_argument("--no-capture", action="store_true", help="Generate report shell only.")
     parser.add_argument(
@@ -93,6 +110,7 @@ def main() -> int:
         return 2
 
     sizes = parse_sizes(args.sizes)
+    scales = parse_scales(args.scales)
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "screenshots").mkdir(exist_ok=True)
     (out_dir / "snapshots").mkdir(exist_ok=True)
@@ -106,6 +124,7 @@ def main() -> int:
             wait_ms=max(0, args.wait_ms),
             timeout_ms=max(args.timeout_ms, args.wait_ms + 1000),
             size_selectors=sizes,
+            scale_selectors=scales,
             no_capture=args.no_capture,
         )
         results.append(result)
@@ -142,7 +161,53 @@ def load_manifest(path: Path) -> list[dict[str, Any]]:
         script = resolve_path(str(item["script"]))
         if not script.exists():
             raise ValueError(f"probe script does not exist for {target_id}: {script}")
+        target_states(item)
     return data
+
+
+def target_states(target: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_states = target.get("states")
+    if raw_states is None:
+        return [{"name": "default", "route": None, "actions": []}]
+    if not isinstance(raw_states, list) or not raw_states:
+        raise ValueError(f"visual audit target {target.get('id')} states must be a non-empty list")
+    states: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw in raw_states:
+        if not isinstance(raw, dict) or not isinstance(raw.get("name"), str):
+            raise ValueError(f"visual audit target {target.get('id')} has an invalid state")
+        name = raw["name"].strip()
+        if not name or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name):
+            raise ValueError(f"visual audit state name must be a stable identifier: {name!r}")
+        if name in seen:
+            raise ValueError(f"duplicate visual audit state name for {target.get('id')}: {name}")
+        route = raw.get("route")
+        if route is not None and (not isinstance(route, str) or not route.strip()):
+            raise ValueError(f"visual audit state {name} route must be a non-empty string")
+        actions = raw.get("actions", [])
+        if not isinstance(actions, list) or not all(
+            isinstance(action, str) and action.strip() for action in actions
+        ):
+            raise ValueError(f"visual audit state {name} actions must be non-empty strings")
+        for action in actions:
+            validate_state_action(action)
+        seen.add(name)
+        states.append({"name": name, "route": route, "actions": actions})
+    return states
+
+
+def validate_state_action(action: str) -> None:
+    if re.fullmatch(r"(?:click|hover):#[A-Za-z_][A-Za-z0-9_.:-]*", action):
+        return
+    if re.fullmatch(r"type:#[A-Za-z_][A-Za-z0-9_.:-]*=.+", action):
+        return
+    if re.fullmatch(r"scroll:#[A-Za-z_][A-Za-z0-9_.:-]*=-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?", action):
+        return
+    if re.fullmatch(r"resize:\d+x\d+", action):
+        return
+    if re.fullmatch(r"wait:\d+", action):
+        return
+    raise ValueError(f"unsupported visual audit state action: {action!r}")
 
 
 def select_targets(
@@ -195,8 +260,21 @@ def merge_results(
             continue
         previous = merged[result_id]
         combined = {**previous, **result}
-        for key in ("screenshots", "snapshots", "logs", "reproduction"):
+        for key in (
+            "screenshots",
+            "snapshots",
+            "logs",
+            "reproduction",
+            "unmatched_selectors",
+            "captures",
+            "layout_issues",
+            "diagnostic_comparisons",
+        ):
             combined[key] = unique_list(previous.get(key, []), result.get(key, []))
+        combined["layout_issue_counts"] = merge_count_maps(
+            previous.get("layout_issue_counts"),
+            result.get("layout_issue_counts"),
+        )
         combined["notes"] = combine_notes(previous.get("notes", ""), result.get("notes", ""))
         combined["status"] = combined_status(str(previous.get("status")), str(result.get("status")))
         combined["priority"] = combined_priority(str(previous.get("priority")), str(result.get("priority")))
@@ -225,6 +303,17 @@ def unique_list(*values: Any) -> list[Any]:
             seen.add(key)
             out.append(item)
     return out
+
+
+def merge_count_maps(*values: Any) -> dict[str, int]:
+    merged: dict[str, int] = {}
+    for value in values:
+        if not isinstance(value, dict):
+            continue
+        for key, count in value.items():
+            if isinstance(count, int) and count >= 0:
+                merged[str(key)] = merged.get(str(key), 0) + count
+    return merged
 
 
 def combine_notes(previous: str, current: str) -> str:
@@ -265,6 +354,27 @@ def parse_sizes(value: str) -> list[tuple[int, int] | None]:
     return parsed or [None]
 
 
+def parse_scales(value: str) -> list[float | None]:
+    parsed: list[float | None] = []
+    for raw in value.split(","):
+        part = raw.strip().lower()
+        if not part:
+            continue
+        if part == "manifest":
+            parsed.append(None)
+            continue
+        try:
+            scale = float(part)
+        except ValueError as exc:
+            raise SystemExit(
+                f"Invalid --scales entry {raw!r}; use manifest or positive numbers."
+            ) from exc
+        if not 0.5 <= scale <= 4.0:
+            raise SystemExit(f"Invalid --scales entry {raw!r}; expected a value from 0.5 to 4.0.")
+        parsed.append(scale)
+    return parsed or [None]
+
+
 def run_target(
     target: dict[str, Any],
     *,
@@ -273,10 +383,12 @@ def run_target(
     timeout_ms: int,
     size_selectors: list[tuple[int, int] | None],
     no_capture: bool,
+    scale_selectors: list[float | None] | None = None,
 ) -> dict[str, Any]:
     target_id = str(target["id"])
     script = resolve_path(str(target["script"]))
     selected_sizes = target_sizes(target, size_selectors)
+    selected_scales = target_scales(target, scale_selectors or [None])
     result = {
         "id": target_id,
         "name": target["name"],
@@ -290,6 +402,11 @@ def run_target(
         "suspected_modules": suspected_modules(target),
         "screenshots": [],
         "snapshots": [],
+        "captures": [],
+        "diagnostic_comparisons": [],
+        "layout_issue_counts": {},
+        "layout_issues": [],
+        "unmatched_selectors": [],
         "logs": [],
         "reproduction": [],
     }
@@ -301,8 +418,22 @@ def run_target(
         result["reproduction"] = [f"python {target['script']}"]
         return result
 
-    for index, size in enumerate(selected_sizes, start=1):
-        label = size_label(size, index)
+    captures = [
+        (size, scale, state)
+        for size in selected_sizes
+        for scale in selected_scales
+        for state in target_states(target)
+    ]
+    for index, (size, scale_factor, capture_state) in enumerate(captures, start=1):
+        state_name = str(capture_state["name"])
+        route = capture_state.get("route")
+        actions = list(capture_state.get("actions", []))
+        label = capture_label(
+            size,
+            scale_factor,
+            index,
+            state_name=None if state_name == "default" else state_name,
+        )
         stdout_path = out_dir / "logs" / f"{target_id}-{label}.stdout.txt"
         stderr_path = out_dir / "logs" / f"{target_id}-{label}.stderr.txt"
         snapshot_path = out_dir / "snapshots" / f"{target_id}-{label}.json"
@@ -314,20 +445,130 @@ def run_target(
             wait_ms=wait_ms,
             timeout_ms=timeout_ms,
             size=size,
+            scale_factor=scale_factor,
+            resize_checkpoints=[
+                tuple(checkpoint) for checkpoint in target.get("resize_checkpoints", [])
+            ],
             screenshot_path=screenshot_path,
             stdout_path=stdout_path,
             stderr_path=stderr_path,
+            route=route,
+            actions=actions,
         )
         result["logs"].extend(
             [relative_artifact(stdout_path, out_dir), relative_artifact(stderr_path, out_dir)]
         )
         result["reproduction"].append(
-            f"python tools/visual_audit.py --target {target_id} --sizes {label}"
+            f"python tools/visual_audit.py --target {target_id} "
+            f"--sizes {size_label(size, index)} --scales {scale_factor:g}"
+            + (f" # state={state_name}" if state_name != "default" else "")
         )
+        capture_record = {
+            "name": label,
+            "state": state_name,
+            "route": route,
+            "actions": actions,
+            "size": f"{size[0]}x{size[1]}" if size is not None else "default",
+            "scale": float(scale_factor),
+            "screenshot": None,
+            "snapshot": None,
+            "diagnostic_counts": {},
+        }
         if run_result["screenshot"]:
-            result["screenshots"].append(relative_artifact(screenshot_path, out_dir))
+            screenshot_artifact = relative_artifact(screenshot_path, out_dir)
+            result["screenshots"].append(screenshot_artifact)
+            capture_record["screenshot"] = screenshot_artifact
         if run_result["snapshot"]:
-            result["snapshots"].append(relative_artifact(snapshot_path, out_dir))
+            snapshot_artifact = relative_artifact(snapshot_path, out_dir)
+            result["snapshots"].append(snapshot_artifact)
+            capture_record["snapshot"] = snapshot_artifact
+            screenshot_artifact = (
+                relative_artifact(screenshot_path, out_dir)
+                if run_result["screenshot"]
+                else None
+            )
+            capture_issues = snapshot_layout_diagnostic_entries(
+                snapshot_path,
+                size=size,
+                scale_factor=scale_factor,
+                snapshot_artifact=snapshot_artifact,
+                screenshot_artifact=screenshot_artifact,
+                route=route,
+                state=state_name,
+                artifact_root=out_dir,
+            )
+            result["layout_issues"].extend(capture_issues)
+            for issue in capture_issues:
+                code = issue["code"]
+                result["layout_issue_counts"][code] = (
+                    result["layout_issue_counts"].get(code, 0) + 1
+                )
+                capture_record["diagnostic_counts"][code] = (
+                    capture_record["diagnostic_counts"].get(code, 0) + 1
+                )
+        checkpoint_paths = sorted(
+            snapshot_path.parent.glob(f"{snapshot_path.stem}-resize-*.json")
+        )
+        for checkpoint_path in checkpoint_paths:
+            result["snapshots"].append(relative_artifact(checkpoint_path, out_dir))
+        capture_unmatched = sorted(
+            {
+                selector
+                for artifact_path in [snapshot_path, *checkpoint_paths]
+                for selector in unmatched_user_selectors(artifact_path)
+            }
+        )
+        new_unmatched = [
+            selector
+            for selector in capture_unmatched
+            if selector not in result["unmatched_selectors"]
+        ]
+        result["unmatched_selectors"].extend(new_unmatched)
+        if new_unmatched:
+            result["priority"] = "medium"
+            result["notes"] = combine_notes(
+                result["notes"],
+                "Active user selectors matched zero nodes: "
+                + ", ".join(new_unmatched[:6]),
+            )
+            if target.get("strict_css"):
+                run_result["status"] = "fail"
+                run_result["notes"] = combine_notes(
+                    run_result["notes"],
+                    "Strict CSS check failed because active user selectors matched zero nodes.",
+                )
+        if target_id in LAYOUT_TORTURE_TARGETS:
+            layout_violations: list[str] = []
+            for artifact_path in [snapshot_path, *checkpoint_paths]:
+                violations, _counts = validate_layout_snapshot_relations(artifact_path)
+                layout_violations.extend(violations)
+                layout_violations.extend(
+                    validate_layout_target_relationships(artifact_path, target_id)
+                )
+            start_paths = [
+                path for path in checkpoint_paths if "-resize-0-start-" in path.name
+            ]
+            if start_paths:
+                return_paths = [
+                    path for path in checkpoint_paths if "-resize-0-start-" not in path.name
+                ]
+                round_trip_path = max(
+                    return_paths,
+                    key=lambda path: int(
+                        re.search(r"-resize-(\d+)-", path.name).group(1)
+                    ),
+                    default=snapshot_path,
+                )
+                layout_violations.extend(
+                    validate_layout_resize_round_trip(start_paths[0], round_trip_path)
+                )
+            if layout_violations:
+                run_result["status"] = "fail"
+                run_result["notes"] = combine_notes(
+                    run_result["notes"],
+                    "Layout relational check failed: "
+                    + "; ".join(layout_violations[:4]),
+                )
         badge_violations = (
             validate_badge_layout_snapshot(snapshot_path) if target_id == "badge-layout" else []
         )
@@ -396,8 +637,521 @@ def run_target(
             result["notes"] = combine_notes(result["notes"], run_result["notes"])
         else:
             result["notes"] = combine_notes(result["notes"], run_result["notes"])
+        result["captures"].append(capture_record)
 
+    result["diagnostic_comparisons"] = compare_capture_diagnostics(result["captures"])
     return result
+
+
+def _read_layout_snapshot(
+    snapshot_path: Path,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, list[str]]:
+    try:
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return None, None, [f"{snapshot_path.name}: could not read layout snapshot: {exc}"]
+    gpu = snapshot.get("gpu") if isinstance(snapshot, dict) else None
+    layout = gpu.get("layout") if isinstance(gpu, dict) else None
+    if not isinstance(gpu, dict) or not isinstance(layout, dict):
+        return None, None, [f"{snapshot_path.name}: missing gpu.layout"]
+    return gpu, layout, []
+
+
+def unmatched_user_selectors(snapshot_path: Path) -> list[str]:
+    try:
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    gpu = snapshot.get("gpu") if isinstance(snapshot, dict) else None
+    stylesheets = gpu.get("stylesheets") if isinstance(gpu, dict) else None
+    unmatched = (
+        stylesheets.get("unmatched_user_selectors")
+        if isinstance(stylesheets, dict)
+        else None
+    )
+    if not isinstance(unmatched, list):
+        return []
+    return sorted(
+        {
+            selector
+            for selector in unmatched
+            if isinstance(selector, str) and selector
+        }
+    )
+
+
+def _snapshot_rect(value: object) -> tuple[float, float, float, float] | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        rect = tuple(float(value[key]) for key in ("x", "y", "w", "h"))
+    except (KeyError, TypeError, ValueError):
+        return None
+    return rect if len(rect) == 4 else None
+
+
+def _rect_contains(
+    outer: tuple[float, float, float, float],
+    inner: tuple[float, float, float, float],
+    tolerance: float = 0.75,
+) -> bool:
+    ox, oy, ow, oh = outer
+    ix, iy, iw, ih = inner
+    return (
+        ix >= ox - tolerance
+        and iy >= oy - tolerance
+        and ix + iw <= ox + ow + tolerance
+        and iy + ih <= oy + oh + tolerance
+    )
+
+
+def validate_layout_snapshot_relations(
+    snapshot_path: Path,
+) -> tuple[list[str], dict[str, int]]:
+    gpu, layout, violations = _read_layout_snapshot(snapshot_path)
+    if gpu is None or layout is None:
+        return violations, {}
+    if layout.get("schema_version") != 1:
+        violations.append(
+            f"{snapshot_path.name}: unsupported layout schema {layout.get('schema_version')!r}"
+        )
+    rects = layout.get("rects")
+    clips = layout.get("clips")
+    paint_clips = layout.get("paint_clips")
+    diagnostics = layout.get("diagnostics")
+    if not isinstance(rects, dict) or not isinstance(clips, dict):
+        return [*violations, f"{snapshot_path.name}: missing rect or clip maps"], {}
+    if not isinstance(paint_clips, dict):
+        return [*violations, f"{snapshot_path.name}: missing paint_clips"], {}
+
+    parsed_rects: dict[str, tuple[float, float, float, float]] = {}
+    for map_name, geometry_map in (
+        ("rects", rects),
+        ("clips", clips),
+        ("paint_clips", paint_clips),
+    ):
+        for widget_id, value in geometry_map.items():
+            rect = _snapshot_rect(value)
+            if rect is None or not all(math.isfinite(component) for component in rect):
+                violations.append(
+                    f"{snapshot_path.name}: {map_name}.{widget_id} is malformed or non-finite"
+                )
+                continue
+            if rect[2] < 0.0 or rect[3] < 0.0:
+                violations.append(
+                    f"{snapshot_path.name}: {map_name}.{widget_id} has negative size"
+                )
+            if map_name == "rects":
+                parsed_rects[str(widget_id)] = rect
+
+    for widget_id, clip_value in clips.items():
+        clip = _snapshot_rect(clip_value)
+        paint_clip = _snapshot_rect(paint_clips.get(widget_id))
+        if clip is not None and paint_clip is not None and not _rect_contains(paint_clip, clip):
+            violations.append(
+                f"{snapshot_path.name}: clip for {widget_id} escapes its paint clip"
+            )
+
+    tree = gpu.get("tree")
+    root_id = tree.get("id") if isinstance(tree, dict) else None
+    window = gpu.get("window")
+    if isinstance(root_id, str) and isinstance(window, dict) and root_id in parsed_rects:
+        root = parsed_rects[root_id]
+        width = safe_float(window.get("width"), -1.0)
+        height = safe_float(window.get("height"), -1.0)
+        if abs(root[2] - width) > 1.0 or abs(root[3] - height) > 1.0:
+            violations.append(
+                f"{snapshot_path.name}: root {root_id} does not match physical window size"
+            )
+
+    for axis in ("x", "y"):
+        ranges = layout.get(f"scroll_max_{axis}")
+        if not isinstance(ranges, dict):
+            violations.append(f"{snapshot_path.name}: missing scroll_max_{axis}")
+            continue
+        for owner_id, value in ranges.items():
+            maximum = safe_float(value, float("nan"))
+            if not math.isfinite(maximum) or maximum < 0.0:
+                violations.append(
+                    f"{snapshot_path.name}: invalid scroll_max_{axis} for {owner_id}"
+                )
+            if owner_id not in rects:
+                violations.append(
+                    f"{snapshot_path.name}: scroll_max_{axis} owner {owner_id} has no rect"
+                )
+
+    issue_counts: dict[str, int] = {}
+    if not isinstance(diagnostics, dict):
+        violations.append(f"{snapshot_path.name}: missing diagnostics")
+    else:
+        for diagnostic in diagnostics.values():
+            issues = diagnostic.get("issues") if isinstance(diagnostic, dict) else None
+            if not isinstance(issues, list):
+                continue
+            for issue in issues:
+                code = str(issue.get("code", "unknown")) if isinstance(issue, dict) else "unknown"
+                issue_counts[code] = issue_counts.get(code, 0) + 1
+                message = issue.get("message") if isinstance(issue, dict) else None
+                violations.append(
+                    f"{snapshot_path.name}: native {code}: {message or 'layout issue'}"
+                )
+    return violations, issue_counts
+
+
+def validate_layout_resize_round_trip(start_path: Path, final_path: Path) -> list[str]:
+    _start_gpu, start, violations = _read_layout_snapshot(start_path)
+    _final_gpu, final, final_violations = _read_layout_snapshot(final_path)
+    violations.extend(final_violations)
+    if start is None or final is None:
+        return violations
+    for map_name in (
+        "rects",
+        "clips",
+        "paint_clips",
+        "scroll_x",
+        "scroll_y",
+        "scroll_max_x",
+        "scroll_max_y",
+    ):
+        first = start.get(map_name)
+        second = final.get(map_name)
+        if not isinstance(first, dict) or not isinstance(second, dict):
+            violations.append(f"{final_path.name}: round-trip map {map_name} is missing")
+            continue
+        if set(first) != set(second):
+            violations.append(f"{final_path.name}: round-trip keys changed in {map_name}")
+            continue
+        for widget_id, first_value in first.items():
+            second_value = second[widget_id]
+            first_rect = _snapshot_rect(first_value)
+            second_rect = _snapshot_rect(second_value)
+            if first_rect is not None and second_rect is not None:
+                equal = all(
+                    abs(left - right) <= 0.75
+                    for left, right in zip(first_rect, second_rect, strict=True)
+                )
+            else:
+                left = safe_float(first_value, float("nan"))
+                right = safe_float(second_value, float("nan"))
+                equal = math.isfinite(left) and math.isfinite(right) and abs(left - right) <= 0.75
+            if not equal:
+                violations.append(
+                    f"{final_path.name}: resize round trip changed {map_name}.{widget_id}"
+                )
+                if len(violations) >= 8:
+                    return violations
+    return violations
+
+
+def _walk_snapshot_tree(node: object) -> list[dict[str, Any]]:
+    if not isinstance(node, dict):
+        return []
+    nodes = [node]
+    children = node.get("children")
+    if isinstance(children, list):
+        for child in children:
+            nodes.extend(_walk_snapshot_tree(child))
+    return nodes
+
+
+def snapshot_layout_diagnostic_entries(
+    snapshot_path: Path,
+    *,
+    size: tuple[int, int] | None,
+    scale_factor: float | None,
+    snapshot_artifact: str,
+    screenshot_artifact: str | None,
+    route: str | None = None,
+    state: str | None = None,
+    artifact_root: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Return report-ready native diagnostics with capture and page context."""
+    gpu, layout, _violations = _read_layout_snapshot(snapshot_path)
+    if gpu is None or layout is None:
+        return []
+    diagnostics = layout.get("diagnostics")
+    if not isinstance(diagnostics, dict):
+        return []
+
+    widget_types: dict[str, str] = {}
+    page_by_widget: dict[str, str | None] = {}
+    nodes_by_widget: dict[str, dict[str, Any]] = {}
+
+    def collect(node: object, active_page: str | None = None) -> None:
+        if not isinstance(node, dict):
+            return
+        widget_id = node.get("id")
+        widget_type = node.get("type")
+        if isinstance(widget_id, str):
+            widget_types[widget_id] = str(widget_type or "unknown")
+            nodes_by_widget[widget_id] = node
+            if widget_type == "page":
+                active_page = widget_id
+            page_by_widget[widget_id] = active_page
+        children = node.get("children")
+        if isinstance(children, list):
+            for child in children:
+                collect(child, active_page)
+
+    collect(gpu.get("tree"))
+    size_value = f"{size[0]}x{size[1]}" if size is not None else "default"
+    scale_value = float(scale_factor) if scale_factor is not None else 1.0
+    entries: list[dict[str, Any]] = []
+    for diagnostic_id, diagnostic in diagnostics.items():
+        if not isinstance(diagnostic_id, str) or not isinstance(diagnostic, dict):
+            continue
+        issues = diagnostic.get("issues")
+        if not isinstance(issues, list):
+            continue
+        for issue in issues:
+            if not isinstance(issue, dict):
+                continue
+            widget_id = str(issue.get("widget_id") or diagnostic_id)
+            entry = {
+                    "code": str(issue.get("code") or "unknown"),
+                    "severity": str(issue.get("severity") or "error"),
+                    "widget_id": widget_id,
+                    "widget_type": str(
+                        issue.get("widget_type")
+                        or widget_types.get(widget_id)
+                        or "unknown"
+                    ),
+                    "page_id": page_by_widget.get(widget_id),
+                    "size": size_value,
+                    "scale": scale_value,
+                    "message": str(issue.get("message") or "layout issue"),
+                    "snapshot": snapshot_artifact,
+                    "screenshot": screenshot_artifact,
+                }
+            if route is not None:
+                entry["route"] = route
+            if state is not None:
+                entry["state"] = state
+            if artifact_root is not None:
+                safe_widget = re.sub(r"[^A-Za-z0-9_.-]+", "-", widget_id).strip("-") or "node"
+                detail_path = (
+                    artifact_root
+                    / "diagnostics"
+                    / f"{snapshot_path.stem}-{safe_widget}.json"
+                )
+                detail_path.parent.mkdir(parents=True, exist_ok=True)
+                computed_styles = gpu.get("computed_styles")
+                detail_path.write_text(
+                    json.dumps(
+                        {
+                            "capture": {
+                                "size": size_value,
+                                "scale": scale_value,
+                                "route": route,
+                                "state": state,
+                            },
+                            "node": nodes_by_widget.get(widget_id),
+                            "computed_style": (
+                                computed_styles.get(widget_id)
+                                if isinstance(computed_styles, dict)
+                                else None
+                            ),
+                            "layout_diagnostic": diagnostic,
+                            "issue": issue,
+                        },
+                        indent=2,
+                        sort_keys=True,
+                    ),
+                    encoding="utf-8",
+                )
+                entry["node_data"] = relative_artifact(detail_path, artifact_root)
+            entries.append(entry)
+    return sorted(
+        entries,
+        key=lambda item: (
+            item["code"],
+            item["widget_id"],
+            str(item["page_id"] or ""),
+            item["size"],
+            item["scale"],
+        ),
+    )
+
+
+def _node_classes(node: dict[str, Any]) -> set[str]:
+    value = node.get("class")
+    return set(value.split()) if isinstance(value, str) else set()
+
+
+def validate_layout_target_relationships(snapshot_path: Path, target_id: str) -> list[str]:
+    gpu, layout, violations = _read_layout_snapshot(snapshot_path)
+    if gpu is None or layout is None:
+        return violations
+    rects = layout.get("rects")
+    clips = layout.get("clips")
+    if not isinstance(rects, dict) or not isinstance(clips, dict):
+        return [f"{snapshot_path.name}: target relationships need rect and clip maps"]
+    tree = gpu.get("tree")
+    nodes = _walk_snapshot_tree(tree)
+    by_class: dict[str, list[dict[str, Any]]] = {}
+    for node in nodes:
+        for class_name in _node_classes(node):
+            by_class.setdefault(class_name, []).append(node)
+
+    def node_rect(node: dict[str, Any]) -> tuple[float, float, float, float] | None:
+        node_id = node.get("id")
+        return _snapshot_rect(rects.get(node_id)) if isinstance(node_id, str) else None
+
+    def require_class(class_name: str) -> list[dict[str, Any]]:
+        matched = by_class.get(class_name, [])
+        if not matched:
+            violations.append(f"{snapshot_path.name}: missing .{class_name} relationship target")
+        return matched
+
+    def require_owned_scroll(class_name: str, *axes: str) -> None:
+        for node in require_class(class_name):
+            node_id = node.get("id")
+            if not isinstance(node_id, str):
+                continue
+            for axis in axes:
+                ranges = layout.get(f"scroll_max_{axis}")
+                maximum = safe_float(ranges.get(node_id), -1.0) if isinstance(ranges, dict) else -1.0
+                if maximum <= 0.5:
+                    violations.append(
+                        f"{snapshot_path.name}: .{class_name} {node_id} lacks owned {axis}-scroll"
+                    )
+
+    def content_exceeds_node(node: dict[str, object], axis: str) -> bool:
+        owner = node_rect(node)
+        if owner is None:
+            return False
+        edge_index = 0 if axis == "x" else 1
+        size_index = 2 if axis == "x" else 3
+        owner_end = owner[edge_index] + owner[size_index]
+        pending = list(node.get("children") or [])
+        while pending:
+            child = pending.pop()
+            if not isinstance(child, dict):
+                continue
+            child_rect = node_rect(child)
+            if (
+                child_rect is not None
+                and child_rect[edge_index] + child_rect[size_index] > owner_end + 1.0
+            ):
+                return True
+            pending.extend(child.get("children") or [])
+        return False
+
+    def require_children_nonoverlap(class_name: str) -> None:
+        for parent in require_class(class_name):
+            children = parent.get("children")
+            if not isinstance(children, list):
+                continue
+            child_rects = [
+                (str(child.get("id")), node_rect(child))
+                for child in children
+                if isinstance(child, dict)
+            ]
+            for index, (first_id, first) in enumerate(child_rects):
+                if first is None or first[2] <= 0.0 or first[3] <= 0.0:
+                    continue
+                for second_id, second in child_rects[index + 1 :]:
+                    if second is None or second[2] <= 0.0 or second[3] <= 0.0:
+                        continue
+                    overlap_w = min(first[0] + first[2], second[0] + second[2]) - max(
+                        first[0], second[0]
+                    )
+                    overlap_h = min(first[1] + first[3], second[1] + second[3]) - max(
+                        first[1], second[1]
+                    )
+                    if overlap_w > 1.0 and overlap_h > 1.0:
+                        violations.append(
+                            f"{snapshot_path.name}: .{class_name} children "
+                            f"{first_id} and {second_id} overlap"
+                        )
+
+    if target_id == "layout-flex-stress":
+        require_children_nonoverlap("stress-row")
+        require_children_nonoverlap("two-up")
+    elif target_id == "layout-panel-bounds":
+        for panel in require_class("fixed"):
+            panel_rect = node_rect(panel)
+            panel_id = panel.get("id")
+            clip = _snapshot_rect(clips.get(panel_id)) if isinstance(panel_id, str) else None
+            if (
+                panel_rect is not None
+                and clip is not None
+                and clip[2] > 0.0
+                and clip[3] > 0.0
+                and not _rect_contains(panel_rect, clip)
+            ):
+                violations.append(
+                    f"{snapshot_path.name}: fixed panel {panel_id} clip escapes its bounds"
+                )
+    elif target_id == "layout-grid-masonry":
+        require_children_nonoverlap("card-grid")
+    elif target_id == "layout-overlay-collision":
+        root_id = tree.get("id") if isinstance(tree, dict) else None
+        root = _snapshot_rect(rects.get(root_id)) if isinstance(root_id, str) else None
+        overlay_types = {"modal", "tooltip", "context_menu", "command_palette"}
+        for node in nodes:
+            if node.get("type") not in overlay_types:
+                continue
+            overlay = node_rect(node)
+            if (
+                root is not None
+                and overlay is not None
+                and overlay[2] > 0.0
+                and overlay[3] > 0.0
+                and not _rect_contains(root, overlay, 1.0)
+            ):
+                violations.append(
+                    f"{snapshot_path.name}: overlay {node.get('id')} escapes the root"
+                )
+    elif target_id == "layout-scrollable-composites":
+        for node in require_class("fill-scroll"):
+            node_id = node.get("id")
+            if not isinstance(node_id, str) or node_id not in clips:
+                violations.append(
+                    f"{snapshot_path.name}: fill-scroll node {node_id} has no owned clip"
+                )
+        for node in require_class("both-axis"):
+            if content_exceeds_node(node, "x"):
+                node_id = node.get("id")
+                ranges = layout.get("scroll_max_x")
+                if (
+                    not isinstance(node_id, str)
+                    or not isinstance(ranges, dict)
+                    or safe_float(ranges.get(node_id), 0.0) <= 0.0
+                ):
+                    violations.append(
+                        f"{snapshot_path.name}: .both-axis {node_id} lacks owned x-scroll"
+                    )
+    elif target_id == "layout-plot-embedding":
+        require_children_nonoverlap("split")
+        require_class("plot-column")
+        require_class("table-column")
+    elif target_id == "overflow-scrollbar":
+        require_owned_scroll("vertical-scroll", "y")
+        require_owned_scroll("horizontal-scroll", "x")
+        require_owned_scroll("both-scroll", "x", "y")
+    elif target_id == "responsive-layout":
+        for child in require_class("percent-child"):
+            child_rect = node_rect(child)
+            parent = next(
+                (
+                    node
+                    for node in nodes
+                    if child in (node.get("children") or [])
+                ),
+                None,
+            )
+            parent_rect = node_rect(parent) if parent is not None else None
+            if (
+                child_rect is not None
+                and parent_rect is not None
+                and not _rect_contains(parent_rect, child_rect, 1.0)
+            ):
+                violations.append(
+                    f"{snapshot_path.name}: percent child escapes its owning panel"
+                )
+        require_children_nonoverlap("named-grid")
+    return violations
 
 
 def validate_professional_explore_scatter_snapshot(snapshot_path: Path) -> list[str]:
@@ -675,9 +1429,10 @@ def find_primary_body_scroll_area(
         class_name = str(node.get("class") or "")
         rect = rect_as_floats(rects.get(node_id))
         if node_type == "scroll_area" and rect is not None and rect["w"] > 0 and rect["h"] > 0:
-            if "body" in class_name.split():
+            classes = class_name.split()
+            if "page-scroll" in classes:
                 return node_id, node
-            if fallback is None:
+            if fallback is None or "body" in classes:
                 fallback = (node_id, node)
         for child in node.get("children") or []:
             if isinstance(child, dict):
@@ -874,6 +1629,20 @@ def target_sizes(
     return sizes
 
 
+def target_scales(
+    target: dict[str, Any],
+    selectors: list[float | None],
+) -> list[float]:
+    manifest_scales = [float(scale) for scale in target.get("scales", [1.0])]
+    scales: list[float] = []
+    for selector in selectors:
+        candidates = manifest_scales if selector is None else [selector]
+        for scale in candidates:
+            if scale not in scales:
+                scales.append(scale)
+    return scales or [1.0]
+
+
 def screenshot_capture_available() -> tuple[bool, str]:
     if platform.system() != "Windows":
         return False, "Whole-window external capture currently supports Windows only."
@@ -946,13 +1715,19 @@ def run_probe_process(
     wait_ms: int,
     timeout_ms: int,
     size: tuple[int, int] | None,
+    scale_factor: float,
+    resize_checkpoints: list[tuple[int, int]],
     screenshot_path: Path,
     stdout_path: Path,
     stderr_path: Path,
+    route: str | None = None,
+    actions: list[str] | None = None,
 ) -> dict[str, Any]:
     wrapper = make_wrapper(script)
     screenshot_error = screenshot_error_path(screenshot_path)
     screenshot_error.unlink(missing_ok=True)
+    for checkpoint_path in snapshot_path.parent.glob(f"{snapshot_path.stem}-resize-*.json"):
+        checkpoint_path.unlink(missing_ok=True)
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT / "python") + os.pathsep + env.get("PYTHONPATH", "")
     env["DRAGONGUI_VISUAL_AUDIT"] = "1"
@@ -965,6 +1740,10 @@ def run_probe_process(
     if size is not None:
         env["DRAGONGUI_AUDIT_WIDTH"] = str(size[0])
         env["DRAGONGUI_AUDIT_HEIGHT"] = str(size[1])
+    env["DRAGONGUI_AUDIT_SCALE_FACTOR"] = f"{scale_factor:g}"
+    env["DRAGONGUI_AUDIT_RESIZE_CHECKPOINTS"] = json.dumps(resize_checkpoints)
+    env["DRAGONGUI_AUDIT_ROUTE"] = route or ""
+    env["DRAGONGUI_AUDIT_ACTIONS"] = json.dumps(actions or [])
     env.pop("DRAGONGUI_DEV_FALLBACK", None)
 
     proc = subprocess.Popen(
@@ -1132,6 +1911,8 @@ import time
 import traceback
 import struct
 import zlib
+import ctypes
+from ctypes import wintypes
 
 sys.path.insert(0, {str(ROOT / "python")!r})
 sys.path.insert(0, {str(script.parent)!r})
@@ -1190,17 +1971,174 @@ def _audited_run(self, window):
     snapshot_path = Path(os.environ["DRAGONGUI_AUDIT_SNAPSHOT"])
     screenshot_path = Path(os.environ["DRAGONGUI_AUDIT_SCREENSHOT"])
     screenshot_error_path = Path(os.environ["DRAGONGUI_AUDIT_SCREENSHOT_ERROR"])
+    resize_checkpoints = json.loads(
+        os.environ.get("DRAGONGUI_AUDIT_RESIZE_CHECKPOINTS", "[]")
+    )
+    audit_route = os.environ.get("DRAGONGUI_AUDIT_ROUTE") or None
+    audit_actions = json.loads(os.environ.get("DRAGONGUI_AUDIT_ACTIONS", "[]"))
+
+    def walk_widgets(widget):
+        yield widget
+        for child in getattr(widget, "children", ()) or ():
+            yield from walk_widgets(child)
+
+    def find_widget(selector):
+        widget_id = selector[1:] if selector.startswith("#") else selector
+        return next(
+            (candidate for candidate in walk_widgets(window) if getattr(candidate, "id", None) == widget_id),
+            None,
+        )
+
+    def current_window_handle():
+        if os.name != "nt":
+            return None
+        found = []
+        callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def callback(hwnd, _lparam):
+            process_id = wintypes.DWORD()
+            ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(process_id))
+            if process_id.value == os.getpid() and ctypes.windll.user32.IsWindowVisible(hwnd):
+                found.append(hwnd)
+                return False
+            return True
+        ctypes.windll.user32.EnumWindows(callback_type(callback), 0)
+        return found[0] if found else None
+
+    def pointer_action(selector, click=False):
+        if os.name != "nt":
+            return False
+        snapshot = self.debug_snapshot(timeout_ms=3000)
+        rect = snapshot.get("gpu", {{}}).get("layout", {{}}).get("rects", {{}}).get(selector.lstrip("#"))
+        hwnd = current_window_handle()
+        if not isinstance(rect, dict) or not hwnd:
+            return False
+        point = wintypes.POINT(
+            round(float(rect.get("x", 0)) + float(rect.get("w", 0)) * 0.5),
+            round(float(rect.get("y", 0)) + float(rect.get("h", 0)) * 0.5),
+        )
+        ctypes.windll.user32.ClientToScreen(hwnd, ctypes.byref(point))
+        ctypes.windll.user32.SetCursorPos(point.x, point.y)
+        if click:
+            ctypes.windll.user32.mouse_event(0x0002, 0, 0, 0, 0)
+            ctypes.windll.user32.mouse_event(0x0004, 0, 0, 0, 0)
+        return True
+
+    def initialize_route(route):
+        if not route:
+            return
+        for widget in walk_widgets(window):
+            if getattr(widget, "kind", None) != "pages":
+                continue
+            values = {{getattr(child, "value", None) for child in getattr(widget, "children", ())}}
+            if route in values:
+                widget.set_value(route)
+                return
+        raise RuntimeError(f"visual audit route {{route!r}} does not match any Pages child")
+
+    def perform_action(action):
+        if action.startswith("wait:"):
+            time.sleep(int(action.split(":", 1)[1]) / 1000.0)
+            return
+        if action.startswith("resize:"):
+            width, height = action.split(":", 1)[1].lower().split("x", 1)
+            self._handle.request_window_resize(int(width), int(height))
+            wait_for_logical_size(int(width), int(height))
+            return
+        command, payload = action.split(":", 1)
+        if command == "hover":
+            if not pointer_action(payload, click=False):
+                raise RuntimeError(f"could not hover visual audit target {{payload}}")
+            time.sleep(0.65)
+            return
+        if command == "click":
+            widget = find_widget(payload)
+            callback = (
+                getattr(widget, "click", None)
+                or getattr(widget, "on_click", None)
+                if widget is not None
+                else None
+            )
+            if callable(callback):
+                callback()
+            elif not pointer_action(payload, click=True):
+                raise RuntimeError(f"visual audit click target {{payload}} is not clickable")
+            time.sleep(0.15)
+            return
+        selector, value = payload.split("=", 1)
+        widget = find_widget(selector)
+        if widget is None:
+            raise RuntimeError(f"visual audit action target {{selector}} was not found")
+        if command == "type":
+            setter = getattr(widget, "set_value", None)
+            if not callable(setter):
+                raise RuntimeError(f"visual audit type target {{selector}} has no set_value")
+            setter(value)
+        elif command == "scroll":
+            x, y = value.split(",", 1)
+            scroller = getattr(widget, "scroll_to", None)
+            if not callable(scroller):
+                raise RuntimeError(f"visual audit scroll target {{selector}} has no scroll_to")
+            scroller(x=float(x), y=float(y))
+        time.sleep(0.12)
+
+    def wait_for_logical_size(width, height):
+        deadline = time.monotonic() + 3.0
+        latest = None
+        while time.monotonic() < deadline:
+            latest = self.debug_snapshot(timeout_ms=3000)
+            window_state = latest.get("gpu", {{}}).get("window", {{}})
+            scale = max(float(window_state.get("scale_factor", 1.0)), 0.001)
+            logical_width = float(window_state.get("width", 0)) / scale
+            logical_height = float(window_state.get("height", 0)) / scale
+            if abs(logical_width - width) <= 1.0 and abs(logical_height - height) <= 1.0:
+                return latest
+            time.sleep(0.025)
+        raise RuntimeError(
+            f"resize checkpoint {{width}}x{{height}} was not reached; "
+            f"last window={{latest.get('gpu', {{}}).get('window') if latest else None}}"
+        )
 
     def worker():
-        deadline = time.monotonic() + max(1.0, wait_ms / 1000.0)
+        deadline = time.monotonic() + 3.0
         while time.monotonic() < deadline:
             if getattr(self, "_handle", None) is not None:
                 break
             time.sleep(0.025)
-        remaining = deadline - time.monotonic()
-        if remaining > 0:
-            time.sleep(remaining)
         try:
+            initialize_route(audit_route)
+            for action in audit_actions:
+                perform_action(action)
+            time.sleep(max(0.0, wait_ms / 1000.0))
+            initial_snapshot = self.debug_snapshot(timeout_ms=3000)
+            initial_window = initial_snapshot.get("gpu", {{}}).get("window", {{}})
+            initial_scale = max(float(initial_window.get("scale_factor", 1.0)), 0.001)
+            initial_width = round(float(initial_window.get("width", 0)) / initial_scale)
+            initial_height = round(float(initial_window.get("height", 0)) / initial_scale)
+            if resize_checkpoints and initial_width > 0 and initial_height > 0:
+                initial_path = snapshot_path.with_name(
+                    f"{{snapshot_path.stem}}-resize-0-start-"
+                    f"{{initial_width}}x{{initial_height}}.json"
+                )
+                initial_path.write_text(
+                    json.dumps(initial_snapshot, indent=2, sort_keys=True),
+                    encoding="utf-8",
+                )
+            sequence = [
+                (int(checkpoint[0]), int(checkpoint[1]))
+                for checkpoint in resize_checkpoints
+            ]
+            if initial_width > 0 and initial_height > 0 and sequence:
+                sequence.append((initial_width, initial_height))
+            for index, (width, height) in enumerate(sequence, start=1):
+                self._handle.request_window_resize(width, height)
+                checkpoint = wait_for_logical_size(width, height)
+                checkpoint_path = snapshot_path.with_name(
+                    f"{{snapshot_path.stem}}-resize-{{index}}-{{width}}x{{height}}.json"
+                )
+                checkpoint_path.write_text(
+                    json.dumps(checkpoint, indent=2, sort_keys=True),
+                    encoding="utf-8",
+                )
             snapshot = self.debug_snapshot(timeout_ms=3000)
             snapshot_path.parent.mkdir(parents=True, exist_ok=True)
             snapshot_path.write_text(json.dumps(snapshot, indent=2, sort_keys=True), encoding="utf-8")
@@ -1380,6 +2318,48 @@ def size_label(size: tuple[int, int] | None, index: int) -> str:
     return f"{size[0]}x{size[1]}"
 
 
+def capture_label(
+    size: tuple[int, int] | None,
+    scale_factor: float,
+    index: int,
+    *,
+    state_name: str | None = None,
+) -> str:
+    label = f"{size_label(size, index)}@{scale_factor:g}x"
+    return f"{label}-{state_name}" if state_name else label
+
+
+def compare_capture_diagnostics(captures: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, float], list[dict[str, Any]]] = {}
+    for capture in captures:
+        key = (str(capture.get("size") or "default"), safe_float(capture.get("scale"), 1.0))
+        groups.setdefault(key, []).append(capture)
+    comparisons: list[dict[str, Any]] = []
+    for (size, scale), group in groups.items():
+        if len(group) < 2:
+            continue
+        baseline = group[0]
+        baseline_counts = baseline.get("diagnostic_counts") or {}
+        for capture in group[1:]:
+            current = capture.get("diagnostic_counts") or {}
+            codes = sorted(set(baseline_counts) | set(current))
+            delta = {
+                code: int(current.get(code, 0)) - int(baseline_counts.get(code, 0))
+                for code in codes
+                if int(current.get(code, 0)) != int(baseline_counts.get(code, 0))
+            }
+            comparisons.append(
+                {
+                    "size": size,
+                    "scale": scale,
+                    "from_state": baseline.get("state"),
+                    "to_state": capture.get("state"),
+                    "diagnostic_delta": delta,
+                }
+            )
+    return comparisons
+
+
 def relative_artifact(path: Path, out_dir: Path) -> str:
     return str(path.relative_to(out_dir)).replace("\\", "/")
 
@@ -1434,12 +2414,90 @@ def write_report(out_dir: Path, results: list[dict[str, Any]]) -> None:
                 f"- Screenshots: {format_paths(result['screenshots'])}",
                 f"- Debug snapshots: {format_paths(result['snapshots'])}",
                 f"- Logs: {format_paths(result['logs'])}",
+                f"- Unmatched selectors: {format_code_values(result.get('unmatched_selectors', []))}",
+                f"- Layout diagnostics by code: {format_issue_counts(result.get('layout_issue_counts', {}))}",
                 f"- Notes: {result['notes']}",
                 f"- Suspected modules: {', '.join(f'`{module}`' for module in result['suspected_modules'])}",
                 f"- Reproduction: {format_repro(result['reproduction'])}",
                 "",
             ]
         )
+        captures = result.get("captures", [])
+        screenshot_captures = [
+            capture
+            for capture in captures
+            if isinstance(capture, dict) and isinstance(capture.get("screenshot"), str)
+        ]
+        if screenshot_captures:
+            lines.extend(
+                [
+                    "#### Capture Gallery",
+                    "",
+                    "| Size | Scale | Route | State | Thumbnail |",
+                    "| --- | ---: | --- | --- | --- |",
+                ]
+            )
+            for capture in screenshot_captures:
+                screenshot = str(capture["screenshot"]).replace(" ", "%20")
+                route = str(capture.get("route") or "_default_")
+                state = str(capture.get("state") or "default")
+                alt = f"{result['id']} {capture.get('size')} {state}".replace('"', "'")
+                thumbnail = (
+                    f'<a href="{screenshot}"><img src="{screenshot}" '
+                    f'width="240" alt="{alt}"></a>'
+                )
+                lines.append(
+                    f"| `{capture.get('size', 'default')}` | "
+                    f"`{safe_float(capture.get('scale'), 1.0):g}x` | "
+                    f"`{route}` | `{state}` | {thumbnail} |"
+                )
+            lines.append("")
+        comparisons = result.get("diagnostic_comparisons", [])
+        if comparisons:
+            lines.extend(["#### Diagnostic State Comparisons", ""])
+            for comparison in comparisons:
+                delta = comparison.get("diagnostic_delta") or {}
+                rendered_delta = (
+                    ", ".join(f"`{code}` {change:+d}" for code, change in delta.items())
+                    if delta
+                    else "_no diagnostic changes_"
+                )
+                lines.append(
+                    f"- `{comparison.get('size')} @ "
+                    f"{safe_float(comparison.get('scale'), 1.0):g}x`: "
+                    f"`{comparison.get('from_state')}` → "
+                    f"`{comparison.get('to_state')}` — {rendered_delta}"
+                )
+            lines.append("")
+        layout_issues = result.get("layout_issues", [])
+        if layout_issues:
+            lines.extend(
+                [
+                    "| Code | Widget | Page | Route / state | Size / scale | Artifacts | Reason |",
+                    "| --- | --- | --- | --- | --- | --- | --- |",
+                ]
+            )
+            for issue in layout_issues:
+                artifacts = [markdown_artifact_link(issue.get("snapshot"), "snapshot")]
+                if issue.get("node_data"):
+                    artifacts.append(markdown_artifact_link(issue.get("node_data"), "node data"))
+                if issue.get("screenshot"):
+                    artifacts.append(
+                        markdown_artifact_link(issue.get("screenshot"), "screenshot")
+                    )
+                message = str(issue.get("message") or "").replace("|", "\\|")
+                page = str(issue.get("page_id") or "_root_")
+                lines.append(
+                    f"| `{issue.get('code', 'unknown')}` | "
+                    f"`{issue.get('widget_id', 'unknown')}` "
+                    f"(`{issue.get('widget_type', 'unknown')}`) | `{page}` | "
+                    f"`{issue.get('route') or '_default_'} / "
+                    f"{issue.get('state') or 'default'}` | "
+                    f"`{issue.get('size', 'default')} @ "
+                    f"{safe_float(issue.get('scale'), 1.0):g}x` | "
+                    f"{', '.join(artifacts)} | {message} |"
+                )
+            lines.append("")
 
     (out_dir / "REPORT.md").write_text("\n".join(lines), encoding="utf-8")
 
@@ -1447,7 +2505,28 @@ def write_report(out_dir: Path, results: list[dict[str, Any]]) -> None:
 def format_paths(paths: list[str]) -> str:
     if not paths:
         return "_none_"
-    return ", ".join(f"`{path}`" for path in paths)
+    return ", ".join(markdown_artifact_link(path, Path(path).name) for path in paths)
+
+
+def markdown_artifact_link(path: object, label: str) -> str:
+    if not isinstance(path, str) or not path:
+        return "_none_"
+    return f"[{label}]({path.replace(' ', '%20')})"
+
+
+def format_issue_counts(counts: object) -> str:
+    if not isinstance(counts, dict) or not counts:
+        return "_none_"
+    return ", ".join(
+        f"`{code}`: {count}"
+        for code, count in sorted(counts.items())
+    )
+
+
+def format_code_values(values: list[str]) -> str:
+    if not values:
+        return "_none_"
+    return ", ".join(f"`{value}`" for value in values)
 
 
 def format_repro(steps: list[str]) -> str:

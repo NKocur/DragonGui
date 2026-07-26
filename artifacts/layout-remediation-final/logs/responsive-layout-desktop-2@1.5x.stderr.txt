@@ -1,0 +1,22 @@
+
+thread '<unnamed>' (32436) panicked at C:\Users\nkocur\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\taffy-0.5.2\src\compute\grid\explicit_grid.rs:118:74:
+called `Option::unwrap()` on a `None` value
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+Traceback (most recent call last):
+  File "C:\Users\nkocur\AppData\Local\Temp\1\k6f51bg1_dragongui_visual_audit.py", line 196, in <module>
+    runpy.run_path('C:\\Users\\nkocur\\Desktop\\Projects\\Python\\Full Dragon\\DragonGui\\examples\\css_feature_probes\\responsive_layout_probe.py', run_name="__main__")
+  File "<frozen runpy>", line 287, in run_path
+  File "<frozen runpy>", line 98, in _run_module_code
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\nkocur\Desktop\Projects\Python\Full Dragon\DragonGui\examples\css_feature_probes\responsive_layout_probe.py", line 373, in <module>
+    print(app.run(win))
+          ^^^^^^^^^^^^
+  File "C:\Users\nkocur\AppData\Local\Temp\1\k6f51bg1_dragongui_visual_audit.py", line 191, in _audited_run
+    return _original_run(self, window)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\nkocur\Desktop\Projects\Python\Full Dragon\DragonGui\python\dragongui\app.py", line 164, in run
+    return run_document(
+           ^^^^^^^^^^^^^
+  File "C:\Users\nkocur\Desktop\Projects\Python\Full Dragon\DragonGui\python\dragongui\_backend.py", line 132, in run_document
+    _native.run_app_with_handle(
+pyo3_runtime.PanicException: called `Option::unwrap()` on a `None` value

@@ -1,0 +1,42 @@
+[
+  {
+    "category": "layout",
+    "features": [
+      "HLayout",
+      "VLayout",
+      "FlowLayout",
+      "Fixed and flexible children",
+      "Long labels"
+    ],
+    "id": "layout-flex-stress",
+    "layout_issue_counts": {},
+    "logs": [
+      "logs/layout-flex-stress-640x480@1x.stdout.txt",
+      "logs/layout-flex-stress-640x480@1x.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Layout Flex Stress",
+    "notes": "No visual issue recorded by automated first pass. Additional run: Captured with native DragonGUI window screenshot API.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target layout-flex-stress --sizes 640x480 --scales 1"
+    ],
+    "screenshots": [
+      "screenshots/layout-flex-stress-640x480@1x.png"
+    ],
+    "script": "examples\\css_feature_probes\\layout_flex_stress_probe.py",
+    "snapshots": [
+      "snapshots/layout-flex-stress-640x480@1x.json",
+      "snapshots/layout-flex-stress-640x480@1x-resize-0-start-640x480.json",
+      "snapshots/layout-flex-stress-640x480@1x-resize-1-640x480.json",
+      "snapshots/layout-flex-stress-640x480@1x-resize-2-1024x768.json",
+      "snapshots/layout-flex-stress-640x480@1x-resize-3-640x480.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/layout.rs",
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  }
+]

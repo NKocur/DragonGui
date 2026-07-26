@@ -140,7 +140,7 @@ updates instead of rebuilding the whole app.
 | `Modal` | Centered overlay container for blocking alert/confirm workflows; prefer `show()` and `close()`. |
 | `MenuBar` | Horizontal application menu strip. |
 | `ContextMenu` | Targeted right-click popup menu container. |
-| `Sidebar` | Side navigation/container region. |
+| `Sidebar` | Responsive side navigation with expanded, collapsed rail, hidden, and overlay-drawer states. |
 | `StatusBar` | Bottom/status strip container. |
 | `Separator` | Visual divider. |
 | `Spacer` | Fixed or flexible blank layout space. |
@@ -153,7 +153,7 @@ updates instead of rebuilding the whole app.
 | `Tab` | Individual tab item with optional badge text/count. |
 | `Pages` | Page container paired with navigation state and live `set_value(...)` route switching. |
 | `Page` | Individual page inside `Pages`. |
-| `NavItem` | Sidebar/page navigation item with optional badge text/count. |
+| `NavItem` | Sidebar/page navigation item with optional icon, compact label, accessible full label, and badge text/count. |
 | `Menu` | Top-level menu inside a `MenuBar`. |
 | `MenuItem` | Clickable row inside `Menu` or `ContextMenu`. |
 | `Tooltip` | Rich hover overlay attached to a target widget. |
@@ -427,6 +427,10 @@ Theme tokens include:
 - `radius`
 - `spacing`
 - `font_size`
+
+`spacing` is the base logical-pixel unit. Python exposes `space_xs`,
+`space_sm`, `space_md`, `space_lg`, and `space_xl`; application CSS can consume
+the same derived scale through `--dg-space-xs` through `--dg-space-xl`.
 
 The native renderer also resolves derived tokens such as accent mix and accent
 dark variants.

@@ -20,6 +20,16 @@ app.stylesheet(
         font-size: 14px;
     }
 
+    VLayout.root {
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding-right: 12px;
+        padding-bottom: 18px;
+    }
+
     Panel {
         background: rgba(18, 25, 39, 0.94);
         border: 1px solid rgba(255, 255, 255, 0.13);
@@ -174,7 +184,7 @@ app.stylesheet(
 
 win = dg.Window("CSS Overflow And Scrollbar Probe", width=780, height=700)
 
-with dg.VLayout(style={"gap": 12}):
+with dg.VLayout(class_="root", style={"gap": 12}):
     dg.Label("Overflow and scrollbar parts", class_="title")
     dg.Label(
         "This probe isolates overflow clipping, vertical scroll, horizontal scroll, "

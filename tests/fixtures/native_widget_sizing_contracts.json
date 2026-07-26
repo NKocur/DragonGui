@@ -1,0 +1,143 @@
+{
+  "context": {
+    "parent": "Window",
+    "parent_direction": "column",
+    "parent_size": [800.0, 600.0],
+    "basis": "auto"
+  },
+  "contracts": [
+    {
+      "widgets": ["Window"],
+      "role": "root",
+      "grow": 0.0,
+      "shrink": 1.0,
+      "min_width": 0.0,
+      "min_height": 0.0
+    },
+    {
+      "widgets": [
+        "HLayout", "VLayout", "GridLayout", "Splitter", "Pane", "Sidebar",
+        "Pages", "Page", "PieChart", "Histogram", "BarChart", "Heatmap",
+        "LinePlot", "Scatter3D", "DataFrameTable"
+      ],
+      "role": "flexible-region",
+      "grow": 1.0,
+      "shrink": 1.0,
+      "min_width": 0.0,
+      "min_height": 0.0
+    },
+    {
+      "widgets": ["ScrollArea"],
+      "role": "scroll-viewport",
+      "grow": 1.0,
+      "shrink": 1.0,
+      "min_width": 0.0,
+      "min_height": 0.0,
+      "overflow_x": "hidden",
+      "overflow_y": "scroll"
+    },
+    {
+      "widgets": ["FlowLayout", "TreeView", "DragSource", "DropTarget", "Extension"],
+      "role": "content-region",
+      "grow": 0.0,
+      "shrink": 1.0,
+      "min_width": 0.0,
+      "min_height": 0.0
+    },
+    {
+      "widgets": ["Panel"],
+      "role": "content-panel",
+      "grow": 0.0,
+      "shrink": 1.0,
+      "min_width": 0.0,
+      "min_height": 0.0
+    },
+    {
+      "widgets": ["Collapsible"],
+      "role": "fixed-content-section",
+      "grow": 0.0,
+      "shrink": 0.0,
+      "min_width": 0.0,
+      "min_height": 25.0
+    },
+    {
+      "widgets": [
+        "Modal", "Badge", "Tag", "Led", "Button", "SmallButton", "IconButton",
+        "ImageButton", "ArrowButton", "Selectable", "RadioButton", "TreeNode",
+        "Dropdown", "Label", "Slider", "RangeSlider", "NumberInput",
+        "DragNumber", "ProgressBar", "LoadingSpinner", "TextInput", "TextArea",
+        "CodeEditor", "LogView", "Separator", "Menu", "MenuItem", "ContextMenu",
+        "Tooltip", "Toast", "Tab", "NavItem"
+      ],
+      "role": "intrinsic-or-overlay",
+      "grow": 0.0,
+      "shrink": 0.0,
+      "min_width": "auto",
+      "min_height": "auto"
+    },
+    {
+      "widgets": ["Checkbox"],
+      "role": "intrinsic-control",
+      "grow": 0.0,
+      "shrink": 0.0,
+      "min_width": 25.0,
+      "min_height": "auto"
+    },
+    {
+      "widgets": ["ToggleSwitch"],
+      "role": "intrinsic-control",
+      "grow": 0.0,
+      "shrink": 0.0,
+      "min_width": 44.0,
+      "min_height": "auto"
+    },
+    {
+      "widgets": ["Spacer"],
+      "role": "flexible-spacer",
+      "grow": 1.0,
+      "shrink": 1.0,
+      "min_width": "auto",
+      "min_height": "auto"
+    },
+    {
+      "widgets": ["StatusBar", "MenuBar"],
+      "role": "fixed-chrome",
+      "grow": 0.0,
+      "shrink": 0.0,
+      "min_width": 0.0,
+      "min_height": 0.0
+    },
+    {
+      "widgets": ["Tabs"],
+      "role": "content-dependent-tabs",
+      "grow": 0.0,
+      "shrink": 0.0,
+      "min_width": 0.0,
+      "min_height": 0.0
+    },
+    {
+      "widgets": ["HtmlReport"],
+      "role": "flexible-embedded-viewport",
+      "grow": 1.0,
+      "shrink": 1.0,
+      "min_width": 240.0,
+      "min_height": 160.0
+    },
+    {
+      "widgets": ["Image"],
+      "role": "flexible-media",
+      "grow": 1.0,
+      "shrink": 1.0,
+      "min_width": 48.0,
+      "min_height": 48.0
+    },
+    {
+      "widgets": ["Unknown"],
+      "role": "legacy-flexible-fallback",
+      "grow": 1.0,
+      "shrink": 1.0,
+      "min_width": "auto",
+      "min_height": "auto"
+    }
+  ]
+}

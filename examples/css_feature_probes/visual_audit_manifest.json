@@ -232,7 +232,9 @@
     "script": "examples/css_feature_probes/layout_flex_stress_probe.py",
     "category": "layout",
     "features": ["HLayout", "VLayout", "FlowLayout", "Fixed and flexible children", "Long labels"],
-    "sizes": [[1120, 760], [390, 720]],
+    "sizes": [[1120, 760], [390, 720], [640, 480], [1024, 768], [1440, 900]],
+    "scales": [1.0, 1.5],
+    "resize_checkpoints": [[640, 480], [1024, 768]],
     "manual": false
   },
   {
@@ -244,6 +246,75 @@
     "sizes": [[1180, 760], [900, 640], [390, 720], [320, 640]],
     "manual": false,
     "notes": "Default-only visual stress target with minimal layout styling and no custom visual theme."
+  },
+  {
+    "id": "responsive-app-template",
+    "name": "Responsive Application Template",
+    "script": "examples/responsive_app_template.py",
+    "category": "layout",
+    "features": ["AppShell", "Sidebar", "WorkbenchLayout", "Toolbar", "Body", "Pages", "ScrollArea", "responsive GridLayout", "StatusBar"],
+    "sizes": [[1100, 720], [720, 640], [390, 720], [320, 640]],
+    "states": [
+      {"name": "overview", "route": "overview"},
+      {"name": "activity", "route": "activity"},
+      {"name": "settings", "route": "settings"},
+      {"name": "sidebar-collapsed", "route": "overview", "actions": ["click:#template-sidebar-toggle", "wait:200"]}
+    ],
+    "strict_css": true,
+    "manual": false,
+    "notes": "Small public-API template for responsive shells, navigation, grids, and explicit scroll ownership."
+  },
+  {
+    "id": "aurora-command-center",
+    "name": "Aurora Operations Command Center",
+    "script": "examples/aurora_command_center_demo.py",
+    "category": "layout",
+    "features": ["Sophisticated application demo", "AppShell", "Sidebar", "WorkbenchLayout", "MenuBar", "Toolbar", "Pages", "Body", "ScrollArea", "GridLayout", "FlowLayout", "DataFrameTable", "charts", "forms", "Modal", "StatusBar"],
+    "sizes": [[1440, 900], [1024, 768], [640, 480], [390, 720]],
+    "scales": [1.0, 1.5],
+    "resize_checkpoints": [[640, 480], [1024, 768]],
+    "states": [
+      {"name": "overview", "route": "overview"},
+      {"name": "analytics", "route": "analytics"},
+      {"name": "automation", "route": "automation"},
+      {"name": "settings", "route": "settings"},
+        {"name": "modal-open", "route": "overview", "actions": ["click:#new-review", "wait:200"]},
+        {"name": "sidebar-collapsed", "route": "overview", "actions": ["click:#sidebar-toggle", "wait:200"]},
+        {"name": "modal-roundtrip", "route": "overview", "actions": ["click:#new-review", "wait:100", "click:#review-cancel", "wait:100"]},
+        {"name": "sidebar-roundtrip", "route": "overview", "actions": ["click:#sidebar-toggle", "wait:100", "click:#sidebar-toggle", "wait:100"]},
+        {"name": "workspace-menu", "route": "overview", "actions": ["click:#workspace-menu", "wait:200"]},
+        {"name": "sidebar-tooltip", "route": "overview", "actions": ["hover:#sidebar-toggle"]},
+        {"name": "analytics-scrolled", "route": "analytics", "actions": ["scroll:#analytics-scroll=0,240", "wait:200"]},
+        {"name": "analytics-scroll-roundtrip", "route": "analytics", "actions": ["scroll:#analytics-scroll=0,240", "wait:100", "scroll:#analytics-scroll=0,-240", "wait:100"]}
+      ],
+    "manual": false,
+    "notes": "Sleek full-application stress demo intended to expose responsive shell, dense-card, scrolling, and intrinsic-size regressions."
+  },
+  {
+    "id": "nexus-studio-stress",
+    "name": "Nexus Studio Stress Demo",
+    "script": "examples/nexus_studio_stress_demo.py",
+    "category": "layout",
+    "features": ["Flagship stress demo", "AppShell", "Sidebar", "MenuBar", "Toolbar", "Tabs", "Pages", "Body", "ScrollArea", "responsive GridLayout", "FlowLayout", "Splitter", "DataFrameTable", "LinePlot", "Histogram", "BarChart", "Heatmap", "PieChart", "TreeView", "forms", "CodeEditor", "LogView", "Modal", "CommandPalette"],
+    "sizes": [[1440, 900], [1024, 768], [640, 480], [390, 720]],
+    "scales": [1.0, 1.5],
+    "resize_checkpoints": [[640, 480], [1024, 768]],
+    "states": [
+      {"name": "command", "route": "command"},
+      {"name": "data", "route": "data"},
+      {"name": "workflow", "route": "workflow"},
+      {"name": "controls", "route": "controls"},
+      {"name": "diagnostics", "route": "diagnostics"},
+      {"name": "modal-open", "route": "command", "actions": ["click:#nexus-launch-toolbar", "wait:200"]},
+      {"name": "modal-roundtrip", "route": "command", "actions": ["click:#nexus-launch-toolbar", "wait:100", "click:#nexus-modal-cancel", "wait:100"]},
+      {"name": "sidebar-collapsed", "route": "command", "actions": ["click:#nexus-sidebar-toggle", "wait:200"]},
+      {"name": "sidebar-roundtrip", "route": "command", "actions": ["click:#nexus-sidebar-toggle", "wait:100", "click:#nexus-sidebar-toggle", "wait:100"]},
+      {"name": "palette-open", "route": "command", "actions": ["click:#nexus-palette-button", "wait:200"]},
+      {"name": "workflow-scrolled", "route": "workflow", "actions": ["scroll:#workflow-scroll=0,320", "wait:200"]}
+    ],
+    "manual": false,
+    "strict_css": true,
+    "notes": "Five-workspace flagship demo intended to stress dense responsive layout, broad widget coverage, scrolling, overlay bounds, selector coverage, and state transitions."
   },
   {
     "id": "all-features-professional-overview",
@@ -341,7 +412,9 @@
     "script": "examples/css_feature_probes/layout_panel_bounds_probe.py",
     "category": "layout",
     "features": ["Panel", "Collapsible", "ScrollArea", "Nested panels"],
-    "sizes": [[1100, 760], [390, 720]],
+    "sizes": [[1100, 760], [390, 720], [640, 480], [1024, 768], [1440, 900]],
+    "scales": [1.0, 1.5],
+    "resize_checkpoints": [[640, 480], [1024, 768]],
     "manual": false
   },
   {
@@ -350,7 +423,9 @@
     "script": "examples/css_feature_probes/layout_grid_masonry_probe.py",
     "category": "layout",
     "features": ["GridLayout", "CSS grid", "Responsive collapse", "Nested grids"],
-    "sizes": [[1120, 760], [390, 720]],
+    "sizes": [[1120, 760], [390, 720], [640, 480], [1024, 768], [1440, 900]],
+    "scales": [1.0, 1.5],
+    "resize_checkpoints": [[640, 480], [1024, 768]],
     "manual": false
   },
   {
@@ -359,7 +434,9 @@
     "script": "examples/css_feature_probes/layout_overlay_collision_probe.py",
     "category": "layout",
     "features": ["Modal", "Tooltip", "Dropdown", "ContextMenu", "CommandPalette", "Z-index"],
-    "sizes": [[1120, 760], [390, 720]],
+    "sizes": [[1120, 760], [390, 720], [640, 480], [1024, 768], [1440, 900]],
+    "scales": [1.0, 1.5],
+    "resize_checkpoints": [[640, 480], [1024, 768]],
     "manual": true
   },
   {
@@ -368,7 +445,9 @@
     "script": "examples/css_feature_probes/layout_scrollable_composites_probe.py",
     "category": "layout",
     "features": ["ScrollArea", "DataFrameTable", "LogView", "CodeEditor", "TreeView", "PropertyGrid"],
-    "sizes": [[1120, 760], [390, 720]],
+    "sizes": [[1120, 760], [390, 720], [640, 480], [1024, 768], [1440, 900]],
+    "scales": [1.0, 1.5],
+    "resize_checkpoints": [[640, 480], [1024, 768]],
     "manual": false
   },
   {
@@ -377,7 +456,9 @@
     "script": "examples/css_feature_probes/layout_plot_embedding_probe.py",
     "category": "layout",
     "features": ["LinePlot", "ScatterPlot2D", "Heatmap", "Histogram", "BarChart", "DataFrameTable", "Splitter"],
-    "sizes": [[1200, 800], [390, 720]],
+    "sizes": [[1200, 800], [390, 720], [640, 480], [1024, 768], [1440, 900]],
+    "scales": [1.0, 1.5],
+    "resize_checkpoints": [[640, 480], [1024, 768]],
     "manual": false
   },
   {
@@ -386,7 +467,9 @@
     "script": "examples/css_feature_probes/responsive_layout_probe.py",
     "category": "layout",
     "features": ["Percent sizing", "calc()", "Grid tracks", "Named grid areas"],
-    "sizes": [[860, 700], [390, 720]],
+    "sizes": [[860, 700], [390, 720], [640, 480], [1024, 768], [1440, 900]],
+    "scales": [1.0, 1.5],
+    "resize_checkpoints": [[640, 480], [1024, 768]],
     "manual": false
   },
   {
@@ -404,7 +487,9 @@
     "script": "examples/css_feature_probes/overflow_scrollbar_probe.py",
     "category": "layout",
     "features": ["ScrollArea", "Overflow clipping", "Scrollbar parts"],
-    "sizes": [[780, 700], [390, 720]],
+    "sizes": [[780, 700], [390, 720], [640, 480], [1024, 768], [1440, 900]],
+    "scales": [1.0, 1.5],
+    "resize_checkpoints": [[640, 480], [1024, 768]],
     "manual": false
   },
   {
@@ -703,5 +788,52 @@
     "features": ["PaintWidget", "Hit testing"],
     "sizes": [[860, 420], [390, 720]],
     "manual": true
+  },
+  {
+    "id": "semantic-css-identity",
+    "name": "Semantic CSS Identity Baseline",
+    "script": "examples/css_feature_probes/semantic_css_identity_probe.py",
+    "category": "css",
+    "features": ["SearchBox", "Toolbar", "AppShell", "WorkbenchLayout", "public CSS type selectors"],
+    "sizes": [[960, 620], [640, 480], [390, 720]],
+    "scales": [1.0, 1.5],
+    "manual": false,
+    "strict_css": true,
+    "notes": "Phase 1 regression for public composite type selectors versus native render kinds."
+  },
+  {
+    "id": "cascade-origin",
+    "name": "Cascade Origin Baseline",
+    "script": "examples/css_feature_probes/cascade_origin_probe.py",
+    "category": "css",
+    "features": ["widget defaults", "application stylesheet", "author inline style", "computed style"],
+    "sizes": [[760, 520], [390, 720]],
+    "scales": [1.0, 1.5],
+    "manual": false,
+    "notes": "Phase 0 baseline for separating widget defaults from authored inline styles."
+  },
+  {
+    "id": "sidebar-flex-allocation",
+    "name": "Sidebar Flex Allocation Baseline",
+    "script": "examples/css_feature_probes/sidebar_flex_allocation_probe.py",
+    "category": "layout",
+    "features": ["Sidebar", "Panel", "AppShell", "WorkbenchLayout", "starved subtree"],
+    "sizes": [[900, 680], [390, 720]],
+    "scales": [1.0, 1.5],
+    "resize_checkpoints": [[390, 720], [900, 680]],
+    "manual": false,
+    "notes": "Phase 0 baseline for content-sized sidebar children and zero-width workbench detection."
+  },
+  {
+    "id": "responsive-grid-orphan",
+    "name": "Responsive Grid Orphan Baseline",
+    "script": "examples/css_feature_probes/responsive_grid_orphan_probe.py",
+    "category": "layout",
+    "features": ["GridLayout", "min_column_width", "responsive columns", "orphan balancing"],
+    "sizes": [[1440, 900], [1024, 768], [640, 480], [390, 720]],
+    "scales": [1.0, 1.5],
+    "resize_checkpoints": [[640, 480], [1024, 768]],
+    "manual": false,
+    "notes": "Phase 0 baseline for explicit responsive columns and optional final-row balancing."
   }
 ]

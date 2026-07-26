@@ -1,0 +1,2 @@
+wheel_package=C:\Users\nkocur\Desktop\Projects\Python\Full Dragon\DragonGui\.test-cache\wheel_extract\dragongui\__init__.py
+status=ok renderer=wgpu frame_ms=16.543469000000012 user_rules=3

@@ -1,0 +1,341 @@
+{
+  "capture": {
+    "route": "activity",
+    "scale": 1.0,
+    "size": "390x720",
+    "state": "activity"
+  },
+  "computed_style": {
+    "matched_rules": [],
+    "matched_selectors": [],
+    "provenance": {
+      "color": {
+        "overridden": [],
+        "winner": {
+          "authored_property": "color",
+          "important": false,
+          "origin": "native-fallback",
+          "source_origin": "theme",
+          "value": [
+            0.9490196108818054,
+            0.9647058844566345,
+            0.9725490212440491,
+            1.0
+          ]
+        }
+      },
+      "flex-shrink": {
+        "overridden": [],
+        "winner": {
+          "authored_property": "flex-shrink",
+          "important": false,
+          "origin": "native-fallback",
+          "value": 0.0
+        }
+      },
+      "font-size": {
+        "overridden": [],
+        "winner": {
+          "authored_property": "font-size",
+          "important": false,
+          "origin": "native-fallback",
+          "source_origin": "theme",
+          "value": 13.0
+        }
+      },
+      "font-weight": {
+        "overridden": [],
+        "winner": {
+          "authored_property": "font-weight",
+          "important": false,
+          "origin": "native-fallback",
+          "value": 400
+        }
+      },
+      "opacity": {
+        "overridden": [],
+        "winner": {
+          "authored_property": "opacity",
+          "important": false,
+          "origin": "native-fallback",
+          "value": 1.0
+        }
+      },
+      "overflow-x": {
+        "overridden": [],
+        "winner": {
+          "authored_property": "overflow-x",
+          "important": false,
+          "origin": "native-fallback",
+          "value": "hidden"
+        }
+      },
+      "overflow-y": {
+        "overridden": [],
+        "winner": {
+          "authored_property": "overflow-y",
+          "important": false,
+          "origin": "native-fallback",
+          "value": "hidden"
+        }
+      }
+    },
+    "style": {
+      "active": {},
+      "checked": {},
+      "collapsed": {},
+      "disabled": {},
+      "expanded": {},
+      "focus": {},
+      "hover": {},
+      "layout": {},
+      "open": {},
+      "selected": {},
+      "text": {},
+      "visual": {},
+      "widget": {}
+    }
+  },
+  "issue": {
+    "clip": {
+      "h": 0.0,
+      "w": 0.0,
+      "x": 14.0,
+      "y": 656.0
+    },
+    "code": "empty-paint-clip",
+    "message": "empty-paint-clip: dg-52 label has rect (14.0, 743.0, 326.0, 25.0) but final clip (14.0, 656.0, 0.0, 0.0) is empty",
+    "parent_id": "dg-34",
+    "parent_type": "scroll_area",
+    "reason": "non-zero layout rect has no final paintable area",
+    "rect": {
+      "h": 25.0,
+      "w": 326.0,
+      "x": 14.0,
+      "y": 743.0
+    },
+    "severity": "error",
+    "widget_id": "dg-52",
+    "widget_type": "label"
+  },
+  "layout_diagnostic": {
+    "available": {
+      "height": 0.0,
+      "width": 0.0,
+      "x": 14.0,
+      "y": 656.0
+    },
+    "dynamic_geometry": {
+      "available_width": 326.0,
+      "axis": "height",
+      "kind": "wrapped-text",
+      "measured_content_height": 18.0,
+      "resolved_height": 25.0,
+      "source": "layout-measurement"
+    },
+    "inspection": {
+      "final_paint_clip": {
+        "h": 522.0,
+        "w": 348.0,
+        "x": 12.0,
+        "y": 134.0
+      },
+      "final_rect": {
+        "height": 25.0,
+        "width": 326.0,
+        "x": 14.0,
+        "y": 743.0
+      },
+      "flex_allocation": {
+        "allocated_main": 25.0,
+        "axis": "y",
+        "basis": null,
+        "grow": 0.0,
+        "shrink": 1.0
+      },
+      "scroll_ownership": {
+        "x": {
+          "offset": 0.0,
+          "owns_scroll": false,
+          "policy": "visible",
+          "range": 0.0
+        },
+        "y": {
+          "offset": 0.0,
+          "owns_scroll": false,
+          "policy": "visible",
+          "range": 0.0
+        }
+      },
+      "sizing": {
+        "intrinsic": {
+          "height": null,
+          "units": "physical-px",
+          "width": 210.0
+        },
+        "preferred": {
+          "height": null,
+          "units": "physical-px",
+          "width": null
+        },
+        "semantic_minimum": {
+          "height": 0.0,
+          "units": "physical-px",
+          "width": 0.0
+        }
+      },
+      "structural_diagnostics": [
+        {
+          "clip": {
+            "h": 0.0,
+            "w": 0.0,
+            "x": 14.0,
+            "y": 656.0
+          },
+          "code": "empty-paint-clip",
+          "message": "empty-paint-clip: dg-52 label has rect (14.0, 743.0, 326.0, 25.0) but final clip (14.0, 656.0, 0.0, 0.0) is empty",
+          "parent_id": "dg-34",
+          "parent_type": "scroll_area",
+          "reason": "non-zero layout rect has no final paintable area",
+          "rect": {
+            "h": 25.0,
+            "w": 326.0,
+            "x": 14.0,
+            "y": 743.0
+          },
+          "severity": "error",
+          "widget_id": "dg-52",
+          "widget_type": "label"
+        }
+      ],
+      "usability_advisories": []
+    },
+    "issues": [
+      {
+        "clip": {
+          "h": 0.0,
+          "w": 0.0,
+          "x": 14.0,
+          "y": 656.0
+        },
+        "code": "empty-paint-clip",
+        "message": "empty-paint-clip: dg-52 label has rect (14.0, 743.0, 326.0, 25.0) but final clip (14.0, 656.0, 0.0, 0.0) is empty",
+        "parent_id": "dg-34",
+        "parent_type": "scroll_area",
+        "reason": "non-zero layout rect has no final paintable area",
+        "rect": {
+          "h": 25.0,
+          "w": 326.0,
+          "x": 14.0,
+          "y": 743.0
+        },
+        "severity": "error",
+        "widget_id": "dg-52",
+        "widget_type": "label"
+      }
+    ],
+    "overflow": {
+      "bottom": 112.0,
+      "height": 112.0,
+      "left": 0.0,
+      "right": 326.0,
+      "top": 0.0,
+      "width": 326.0
+    },
+    "resolved": {
+      "height": 25.0,
+      "width": 326.0,
+      "x": 14.0,
+      "y": 743.0
+    },
+    "scroll_range": {
+      "x": 0.0,
+      "y": 0.0
+    }
+  },
+  "node": {
+    "children": [],
+    "class": null,
+    "css_types": [
+      "Label",
+      "Widget"
+    ],
+    "default_style": {
+      "active": {},
+      "checked": {},
+      "collapsed": {},
+      "disabled": {},
+      "expanded": {},
+      "focus": {},
+      "hover": {},
+      "layout": {},
+      "open": {},
+      "selected": {},
+      "text": {},
+      "visual": {},
+      "widget": {}
+    },
+    "id": "dg-52",
+    "inline_style": {},
+    "key": null,
+    "props": {
+      "badge": null,
+      "checked": null,
+      "disabled": false,
+      "expanded": null,
+      "extension_type": null,
+      "fixed_height": null,
+      "fixed_width": null,
+      "flow_align": null,
+      "flow_cross_align": null,
+      "grid_auto_fit": false,
+      "grid_balance_last_row": false,
+      "grid_column_breakpoints": [],
+      "grid_columns": null,
+      "grid_masonry": false,
+      "grid_min_column_width": null,
+      "grid_template_columns": null,
+      "grid_template_rows": null,
+      "gutter_size": null,
+      "image_fit": null,
+      "image_path": null,
+      "intrinsic_height": null,
+      "intrinsic_width": null,
+      "items_count": 0,
+      "led_size": null,
+      "led_state": null,
+      "level": null,
+      "max": null,
+      "min": null,
+      "open": null,
+      "orientation": null,
+      "page": null,
+      "pane_flex": null,
+      "pane_max_size": null,
+      "pane_min_size": null,
+      "pane_size": null,
+      "placeholder": null,
+      "route_value": null,
+      "rows": null,
+      "step": null,
+      "table": {
+        "columns": 0,
+        "page_size": null,
+        "resizable_columns": true,
+        "resource_id": null,
+        "rows": null,
+        "sample_rows": null,
+        "sortable": true
+      },
+      "target": null,
+      "text": "Event 17 \u00b7 system check completed",
+      "toggle": null,
+      "tooltip": null,
+      "value": null,
+      "wrap": true
+    },
+    "render_kind": "label",
+    "style": {},
+    "type": "label"
+  }
+}

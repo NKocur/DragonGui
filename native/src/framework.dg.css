@@ -1,6 +1,12 @@
 :root {
     --dg-radius: 3px;
     --dg-font-size: 13px;
+    --dg-spacing: 5px;
+    --dg-space-xs: 2.5px;
+    --dg-space-sm: 5px;
+    --dg-space-md: 10px;
+    --dg-space-lg: 15px;
+    --dg-space-xl: 20px;
 }
 
 Window {
@@ -17,6 +23,13 @@ Modal {
     accent: accent;
 }
 
+Panel {
+    flex-grow: 0;
+    flex-shrink: 1;
+    min-width: 0;
+    min-height: 0;
+}
+
 Sidebar,
 StatusBar,
 MenuBar,
@@ -24,6 +37,14 @@ Tabs {
     background: background;
     border-color: border;
     border-width: 1px;
+}
+
+StatusBar,
+MenuBar {
+    flex-grow: 0;
+    flex-shrink: 0;
+    min-width: 0;
+    min-height: 0;
 }
 
 Separator,
@@ -241,10 +262,6 @@ ToggleSwitch {
     color: text;
 }
 
-Splitter {
-    gap: 3px;
-}
-
 Splitter::gutter {
     width: 2px;
     height: 2px;
@@ -278,6 +295,12 @@ DropTarget.drop-zone {
     color: text;
 }
 
+DropZone {
+    height: 142px;
+    padding: 14px;
+    gap: 6px;
+}
+
 Image {
     background: surface_alt;
 }
@@ -295,6 +318,41 @@ Menu {
    padding). Apps can override any of these per NavItem. */
 NavItem {
     border-radius: 2px;
+}
+
+/* Explicit drawer state leaves AppShell flow and is bounded by the viewport.
+   Width still comes from Sidebar's preferred-width property, so applications
+   can customize it without replacing the overlay contract. */
+Sidebar[state="drawer"] {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    max-width: 90%;
+    height: 100%;
+    flex-shrink: 0;
+    overflow-y: auto;
+}
+
+@media (max-width: 700px) {
+    Sidebar[state="auto"][compact-mode="hidden"] {
+        display: none;
+    }
+}
+
+@media (max-width: 480px) {
+    Sidebar[state="auto"][mobile-mode="drawer"] {
+        display: none;
+    }
+
+    Sidebar[state="auto"][mobile-mode="rail"] {
+        display: flex;
+        position: relative;
+    }
+
+    Sidebar[state="auto"][mobile-mode="hidden"] {
+        display: none;
+    }
 }
 
 NavItem::accent {
@@ -379,14 +437,63 @@ DataFrameTable::scrollbar-thumb {
     border-radius: 999px;
 }
 
-.app-shell {
+AppShell {
     background: background;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: hidden;
 }
 
-.workbench-layout,
-.body,
-.workbench-main {
+WorkbenchLayout {
     background: background;
+    width: 100%;
+    height: 100%;
+    flex: 1;
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: hidden;
+}
+
+ScrollArea {
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-width: 0;
+    min-height: 0;
+}
+
+Pages,
+Page {
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-width: 0;
+    min-height: 0;
+}
+
+Body {
+    background: background;
+    flex: 1;
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-width: 0;
+    min-height: 0;
+}
+
+WorkbenchMain {
+    background: background;
+    width: 100%;
+    height: 0;
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-width: 0;
+    min-height: 0;
 }
 
 .toolbar {
@@ -394,22 +501,29 @@ DataFrameTable::scrollbar-thumb {
     border: 1px solid border;
     border-radius: var(--dg-radius);
     padding: 3px;
+    flex-grow: 0;
+    flex-shrink: 0;
+    min-width: 0;
+    min-height: 0;
 }
 
 .toolbar-horizontal {
-    height: 30px;
+    min-height: 30px;
+    flex-wrap: wrap;
 }
 
 .toolbar-vertical {
     width: 30px;
 }
 
-.property-grid {
-    gap: 4px;
+PropertyGrid {
+    gap: 6px;
+    width: 100%;
 }
 
-.property-row {
-    gap: 6px;
+Property {
+    gap: 10px;
+    width: 100%;
 }
 
 .property-label {
@@ -419,4 +533,27 @@ DataFrameTable::scrollbar-thumb {
 
 .property-editor {
     gap: 5px;
+}
+
+Breadcrumbs {
+    gap: 4px;
+    width: 100%;
+}
+
+SearchBox {
+    gap: 6px;
+    height: 38px;
+}
+
+CommandPalette {
+    gap: 10px;
+}
+
+.command-palette-search {
+    width: 100%;
+}
+
+ColorPicker {
+    padding: 14px;
+    gap: 6px;
 }

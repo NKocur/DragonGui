@@ -15,11 +15,11 @@ use crate::css_style::{parse_stylesheet, StylesheetOrigin};
 use crate::document::{LinePlotPayloadFormat, ScatterPayloadFormat};
 
 /// User event sent into the winit loop when the Python/Rust runtime bridge has
-/// work waiting.  Keep this small and cloneable; all payloads stay in the
-/// command queue.
+/// work waiting or a small event-loop-owned window operation is requested.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeEvent {
     Wake,
+    ResizeLogical { width: u32, height: u32 },
 }
 
 /// Coarse invalidation classes used by future command processing.
@@ -826,6 +826,25 @@ impl CommandBridge {
         } else {
             self.wake_pending.store(false, Ordering::Release);
         }
+    }
+
+    pub fn request_window_resize(&self, width: u32, height: u32) -> bool {
+        if self.is_closed() {
+            return false;
+        }
+        let proxy = self
+            .proxy
+            .lock()
+            .expect("command bridge proxy mutex poisoned")
+            .clone();
+        proxy.is_some_and(|proxy| {
+            proxy
+                .send_event(RuntimeEvent::ResizeLogical {
+                    width: width.max(1),
+                    height: height.max(1),
+                })
+                .is_ok()
+        })
     }
 
     pub fn clear_wake_pending(&self) {
@@ -2188,6 +2207,21 @@ impl NativeCommandSender {
 
     fn enqueue_request_redraw(&self) -> PyResult<()> {
         self.enqueue(Command::RequestRedraw)
+    }
+
+    fn request_window_resize(&self, width: u32, height: u32) -> PyResult<()> {
+        if width == 0 || height == 0 {
+            return Err(PyValueError::new_err(
+                "window resize dimensions must be positive",
+            ));
+        }
+        if self.bridge.request_window_resize(width, height) {
+            Ok(())
+        } else {
+            Err(PyRuntimeError::new_err(
+                "DragonGUI window resize could not reach the native event loop",
+            ))
+        }
     }
 
     fn enqueue_request_exit(&self) -> PyResult<()> {

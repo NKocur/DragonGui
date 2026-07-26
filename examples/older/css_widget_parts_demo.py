@@ -77,7 +77,6 @@ Label {
     color: var(--text);
 }
 
-Button,
 NumberInput,
 Dropdown {
     height: 38px;
@@ -87,7 +86,6 @@ Dropdown {
     color: var(--text-hi);
 }
 
-Button:hover,
 NumberInput:hover,
 Dropdown:hover {
     border-color: var(--blue);

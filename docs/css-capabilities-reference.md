@@ -492,11 +492,24 @@ State-specific notes:
 
 ## CSS Type Selectors
 
-Supported native type selectors:
+Type selectors match stable public Python `css_types`, not only the native
+renderer kind. A node exposes its most-specific public type followed by public
+base types. For example, `ColorPicker` matches both `ColorPicker` and `Panel`;
+`SearchBox` matches both `SearchBox` and `HLayout`; and `AppShell` matches both
+`AppShell` and `FlexLayout`.
+
+Representative public type selectors:
 
 - `Window`
+- `AppShell`
+- `Body`
+- `FlexLayout`
 - `HLayout`
 - `VLayout`
+- `FlowLayout`
+- `GridLayout`
+- `ScrollArea`
+- `WorkbenchLayout`
 - `Panel`
 - `Collapsible`
 - `Modal`
@@ -519,6 +532,7 @@ Supported native type selectors:
 - `Label`
 - `Button`
 - `TextInput`
+- `SearchBox`
 - `TextArea`
 - `NumberInput`
 - `Slider`
@@ -530,11 +544,17 @@ Supported native type selectors:
 - `Scatter3D`
 - `DataFrameTable`
 - `Image`
+- `ColorPicker`
+- `PropertyGrid`
+- `Property`
 
-Notable non-type selectors:
+Public subclasses can set `CSS_TYPE` to a stable name, add
+`CSS_TYPE_ALIASES`, or set `CSS_TYPE = None` to suppress only their own type.
+Private helper classes are not exposed as CSS types. Type matching is exact and
+case-sensitive.
 
-- `ColorPicker` is a Python composite built from `Panel`, `Label`, `Slider`,
-  and `Button`. It has no `ColorPicker` type selector.
+APIs that are not type selectors:
+
 - `App`, `Theme`, `FileDialog`, `alert`, and `confirm` are Python APIs rather
   than native widget types.
 
@@ -580,6 +600,7 @@ Supported layout properties:
 | --- | --- | --- |
 | `display` | `flex`, `grid`, `block`, `none` | Sets display behavior. |
 | `flex-direction` | `row`, `column`, `row-reverse`, `column-reverse` | Sets container direction. Snake-case reverse values are also accepted internally. |
+| `flex-wrap` | `nowrap`, `wrap`, `wrap-reverse` | Controls whether flex children remain on one line or flow into additional lines. |
 | `flex` | number | Maps to `flex-grow`; clamped to at least `0`. |
 | `flex-grow` | number | Clamped to at least `0`. |
 | `flex-shrink` | number | Clamped to at least `0`. |
@@ -1320,6 +1341,20 @@ Known renderer gaps:
   "computed_styles": {
     "widget-id": {
       "matched_rules": [],
+      "matched_selectors": [
+        {
+          "selector": "Button.primary",
+          "origin": "user",
+          "line": 12,
+          "specificity": {"ids": 0, "classes": 1, "types": 1}
+        }
+      ],
+      "provenance": {
+        "background": {
+          "winner": {"origin": "user", "selector": "Button.primary"},
+          "overridden": []
+        }
+      },
       "style": {
         "layout": {},
         "visual": {},
@@ -1337,10 +1372,14 @@ Snapshot capabilities:
 - Rule counts by origin.
 - Warning count.
 - Last stylesheet parse error.
-- Matched rules per widget.
+- Matched selectors per widget with origin, source position/order, and
+  specificity.
+- Winning and overridden declarations per normalized property.
 - Matched part rules per widget part.
 - Computed layout, visual, text, widget, transition, pseudo, and part style
   fields.
+- Public `render_kind` and complete `css_types` chains.
+- Unmatched eligible user selectors.
 
 Warnings are also generated for:
 
@@ -1351,6 +1390,17 @@ Warnings are also generated for:
 - Unsupported widget parts.
 - Stateful part layout declarations.
 - Unsupported inline parts that reach the native validator.
+
+When a user selector does not apply:
+
+1. Inspect the target node's exact `css_types`.
+2. Check `stylesheets.unmatched_user_selectors`.
+3. Check warnings for unsupported syntax or parts.
+4. Inspect `matched_selectors` to distinguish “did not match” from “matched but
+   lost the cascade.”
+5. Inspect `provenance[property]` for the winner and overridden candidates.
+6. Remember that inactive media/container-query selectors are intentionally not
+   counted as currently eligible.
 
 ## Current Limitations Summary
 

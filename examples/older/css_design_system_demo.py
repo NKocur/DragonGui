@@ -367,18 +367,6 @@ Tab::accent {
     height: 4px;
 }
 
-NavItem::item {
-    background: #20262d;
-    color: #d7dde2;
-    padding: 8px;
-}
-
-NavItem::accent {
-    background: #d8a21b;
-    width: 4px;
-    border-radius: 0px;
-}
-
 DataFrameTable {
     table-row-height: 22px;
     table-header-height: 26px;
@@ -750,19 +738,6 @@ Tab::tab {
 Tab::accent {
     background: #c06a2f;
     height: 6px;
-    border-radius: 999px;
-}
-
-NavItem::item {
-    background: #fff8ed;
-    color: #24313d;
-    padding: 16px;
-    border-radius: 18px;
-}
-
-NavItem::accent {
-    background: #c06a2f;
-    width: 6px;
     border-radius: 999px;
 }
 
@@ -1146,21 +1121,6 @@ Tab::tab {
 Tab::accent {
     background: #ff3535;
     height: 5px;
-    border-radius: 2px;
-}
-
-NavItem::item {
-    background: #081725;
-    color: #ffffff;
-    padding: 10px;
-    border-color: #1bb7ff;
-    border-width: 2px;
-    border-radius: 4px;
-}
-
-NavItem::accent {
-    background: #ff3535;
-    width: 7px;
     border-radius: 2px;
 }
 
@@ -1591,19 +1551,6 @@ Tab::tab {
 Tab::accent {
     background: var(--neon-pink);
     height: 4px;
-    border-radius: 999px;
-}
-
-NavItem::item {
-    background: #161b22;
-    color: var(--text-primary);
-    padding: 10px;
-    border-radius: 10px;
-}
-
-NavItem::accent {
-    background: var(--neon-blue);
-    width: 5px;
     border-radius: 999px;
 }
 

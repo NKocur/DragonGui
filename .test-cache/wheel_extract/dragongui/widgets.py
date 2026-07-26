@@ -1370,6 +1370,59 @@ def _led_color_value(value: LedColorValue) -> str:
     return _color_hex(_normalize_color_tuple(value, alpha=True))
 
 
+_SERIALIZED_STYLE_STATES = frozenset(
+    {
+        "hover",
+        "active",
+        "focus",
+        "disabled",
+        "checked",
+        "open",
+        "expanded",
+        "collapsed",
+        "selected",
+    }
+)
+
+
+def _serialized_style_property_keys(
+    style: Mapping[str, object],
+    *,
+    state: str | None = None,
+    part: str | None = None,
+) -> tuple[str, ...]:
+    keys: list[str] = []
+    for raw_property, value in style.items():
+        property_name = str(raw_property).strip().lower().replace("_", "-")
+        if property_name == "parts" and isinstance(value, Mapping):
+            for raw_part, part_style in value.items():
+                if not isinstance(part_style, Mapping):
+                    continue
+                part_name = str(raw_part).strip().lower().replace("_", "-")
+                keys.extend(
+                    _serialized_style_property_keys(part_style, part=part_name)
+                )
+            continue
+        if property_name in _SERIALIZED_STYLE_STATES and isinstance(value, Mapping):
+            keys.extend(
+                _serialized_style_property_keys(
+                    value,
+                    state=property_name,
+                    part=part,
+                )
+            )
+            continue
+        if part is not None and state is not None:
+            keys.append(f"part({part}).{state}.{property_name}")
+        elif part is not None:
+            keys.append(f"part({part}).{property_name}")
+        elif state is not None:
+            keys.append(f"{state}.{property_name}")
+        else:
+            keys.append(property_name)
+    return tuple(keys)
+
+
 class _BuildContext:
     stack: ClassVar[list[Container]] = []
     root: ClassVar[Window | None] = None
@@ -1392,6 +1445,9 @@ class _BuildContext:
 
 
 class Widget:
+    CSS_TYPE: ClassVar[str | None] = "Widget"
+    CSS_TYPE_ALIASES: ClassVar[tuple[str, ...]] = ()
+
     kind = "widget"
 
     def __init__(
@@ -1403,6 +1459,7 @@ class Widget:
         style: Mapping[str, object] | None = None,
         tooltip: str | None = None,
         parent: "Container | None | object" = _AUTO_PARENT,
+        _default_style: Mapping[str, object] | None = None,
     ) -> None:
         if key is not None and (not isinstance(key, str) or not key):
             raise ValueError("widget key must be a non-empty string")
@@ -1412,6 +1469,7 @@ class Widget:
         self.id = id or f"dg-{next(_ids)}"
         self.key = key
         self.class_ = class_
+        self.default_style = _copy_style(_default_style, widget_kind=self.kind)
         self.style = _copy_style(style, widget_kind=self.kind)
         self.tooltip = None if tooltip is None else str(tooltip)
         self._live_handle: Any | None = None
@@ -1425,6 +1483,45 @@ class Widget:
 
     def props(self) -> dict[str, Any]:
         return {}
+
+    def css_types(self) -> tuple[str, ...]:
+        """Return the stable public type chain used for semantic CSS matching.
+
+        A subclass may set ``CSS_TYPE`` to a stable public name, set it to
+        ``None`` to suppress its own name, or add ``CSS_TYPE_ALIASES``.
+        Private helper classes remain suppressed regardless of these values.
+        """
+
+        types: list[str] = []
+        for cls in type(self).__mro__:
+            if cls is object or not issubclass(cls, Widget):
+                continue
+            name = cls.__name__
+            if name.startswith("_"):
+                continue
+            css_type = cls.__dict__.get("CSS_TYPE", name)
+            if css_type is not None:
+                if not isinstance(css_type, str) or not re.fullmatch(
+                    r"[A-Za-z_][A-Za-z0-9_-]*", css_type
+                ):
+                    raise ValueError(
+                        f"{cls.__name__}.CSS_TYPE must be a valid CSS type name or None"
+                    )
+                if css_type not in types:
+                    types.append(css_type)
+            aliases = cls.__dict__.get("CSS_TYPE_ALIASES", ())
+            if isinstance(aliases, str) or not isinstance(aliases, tuple):
+                raise TypeError(f"{cls.__name__}.CSS_TYPE_ALIASES must be a tuple of strings")
+            for alias in aliases:
+                if not isinstance(alias, str) or not re.fullmatch(
+                    r"[A-Za-z_][A-Za-z0-9_-]*", alias
+                ):
+                    raise ValueError(
+                        f"{cls.__name__}.CSS_TYPE_ALIASES must contain valid CSS type names"
+                    )
+                if alias not in types:
+                    types.append(alias)
+        return tuple(types)
 
     @property
     def is_live(self) -> bool:
@@ -1456,6 +1553,30 @@ class Widget:
         if handle is not None and patch:
             handle.enqueue_set_style(patch)
 
+    def _merge_default_style(self, style: Mapping[str, object] | None) -> None:
+        """Merge construction-time widget defaults below authored stylesheets."""
+
+        defaults = _copy_style(style, widget_kind=self.kind)
+        if defaults is None:
+            return
+        merged = dict(self.default_style or {})
+        merged.update(defaults)
+        self.default_style = merged
+
+    def _default_style_sources(self) -> dict[str, dict[str, str]]:
+        if not self.default_style:
+            return {}
+        css_types = self.css_types()
+        source = {
+            "widget_type": css_types[0] if css_types else type(self).__name__,
+            "python_class": f"{type(self).__module__}.{type(self).__qualname__}",
+            "construction": "widget-default",
+        }
+        return {
+            property_key: dict(source)
+            for property_key in _serialized_style_property_keys(self.default_style)
+        }
+
     def set_class(self, class_: str | None) -> None:
         if class_ is not None and (not isinstance(class_, str) or not class_):
             raise ValueError("widget class_ must be a non-empty string")
@@ -1471,12 +1592,16 @@ class Widget:
         data = {
             "id": self.id,
             "type": self.kind,
+            "css_types": list(self.css_types()),
             "props": props,
         }
         if self.key is not None:
             data["key"] = self.key
         if self.class_ is not None:
             data["class"] = self.class_
+        if self.default_style is not None:
+            data["default_style"] = self.default_style
+            data["default_style_sources"] = self._default_style_sources()
         if self.style is not None:
             data["style"] = self.style
         return data
@@ -1497,6 +1622,7 @@ class Container(Widget, AbstractContextManager["Container"]):
         style: Mapping[str, object] | None = None,
         tooltip: str | None = None,
         parent: "Container | None | object" = _AUTO_PARENT,
+        _default_style: Mapping[str, object] | None = None,
     ) -> None:
         self.children: list[Widget] = []
         super().__init__(
@@ -1506,6 +1632,7 @@ class Container(Widget, AbstractContextManager["Container"]):
             style=style,
             tooltip=tooltip,
             parent=parent,
+            _default_style=_default_style,
         )
 
     def add(self, child: Widget) -> Widget:
@@ -2080,6 +2207,75 @@ class VLayout(Container):
     kind = "v_layout"
 
 
+class FlexLayout(HLayout):
+    """CSS-overridable flex container with explicit construction defaults."""
+
+    _DIRECTIONS = {"row", "column", "row-reverse", "column-reverse"}
+    _ALIGNMENTS = {
+        "stretch",
+        "start",
+        "end",
+        "center",
+        "baseline",
+        "flex-start",
+        "flex-end",
+    }
+
+    def __init__(
+        self,
+        *,
+        direction: str = "row",
+        wrap: bool = False,
+        gap: int | float | None = 8,
+        align_items: str = "stretch",
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: "Container | None | object" = _AUTO_PARENT,
+        _default_style: Mapping[str, object] | None = None,
+    ) -> None:
+        direction_value = str(direction).strip().lower().replace("_", "-")
+        if direction_value not in self._DIRECTIONS:
+            raise ValueError(
+                "FlexLayout direction must be 'row', 'column', "
+                "'row-reverse', or 'column-reverse'"
+            )
+        alignment_value = str(align_items).strip().lower().replace("_", "-")
+        if alignment_value not in self._ALIGNMENTS:
+            raise ValueError(
+                "FlexLayout align_items must be stretch, start, end, center, "
+                "baseline, flex-start, or flex-end"
+            )
+        gap_value = None if gap is None else _non_negative_finite_value(
+            gap,
+            "FlexLayout gap",
+        )
+        self.direction = direction_value
+        self.wrap = bool(wrap)
+        self.gap = gap_value
+        self.align_items = alignment_value
+        defaults: dict[str, object] = {
+            "display": "flex",
+            "flex_direction": self.direction,
+            "flex_wrap": "wrap" if self.wrap else "nowrap",
+            "align_items": self.align_items,
+        }
+        if self.gap is not None:
+            defaults["gap"] = self.gap
+        defaults.update(_default_style or {})
+        super().__init__(
+            id=id,
+            key=key,
+            class_=class_,
+            style=style,
+            tooltip=tooltip,
+            parent=parent,
+            _default_style=defaults,
+        )
+
+
 
 class WorkbenchLayout(VLayout):
     """Full-height vertical shell for prompt-first workbench applications."""
@@ -2108,14 +2304,7 @@ class WorkbenchLayout(VLayout):
                 raise ValueError("WorkbenchLayout padding must be a non-negative finite number")
         else:
             padding_f = None
-        default_style: dict[str, object] = {
-            "width": "100%",
-            "height": "100%",
-            "min_width": 0,
-            "min_height": 0,
-            "overflow_x": "hidden",
-            "overflow_y": "hidden",
-        }
+        default_style: dict[str, object] = {}
         if gap_f is not None:
             default_style["gap"] = gap_f
         if padding_f is not None:
@@ -2124,12 +2313,13 @@ class WorkbenchLayout(VLayout):
             id=id,
             key=key,
             class_=_merge_widget_class("workbench-layout", class_),
-            style={**default_style, **(style or {})},
+            style=style,
             tooltip=tooltip,
             parent=parent,
+            _default_style=default_style,
         )
 
-class AppShell(HLayout):
+class AppShell(FlexLayout):
     """Bounded application root for sidebar plus main-body layouts.
 
     ``AppShell`` gives the top-level layout a definite window-sized region and
@@ -2142,6 +2332,10 @@ class AppShell(HLayout):
         self,
         *,
         gap: int | None = 0,
+        direction: str = "row",
+        wrap: bool = False,
+        min_content_width: int | float | None = 160,
+        min_content_height: int | float | None = 96,
         id: str | None = None,
         key: str | None = None,
         class_: str | None = None,
@@ -2149,27 +2343,37 @@ class AppShell(HLayout):
         tooltip: str | None = None,
         parent: "Container | None | object" = _AUTO_PARENT,
     ) -> None:
-        if gap is not None and int(gap) < 0:
-            raise ValueError("AppShell gap must be non-negative")
-        extra: dict[str, object] = {
-            "width": "100%",
-            "height": "100%",
-            "min_width": 0,
-            "min_height": 0,
-            "overflow_x": "hidden",
-            "overflow_y": "hidden",
-        }
-        if gap is not None:
-            extra["gap"] = int(gap)
-        merged: Mapping[str, object] = {**extra, **(style or {})}
+        self.min_content_width = _non_negative_finite_value(
+            min_content_width,
+            "AppShell min_content_width",
+        )
+        self.min_content_height = _non_negative_finite_value(
+            min_content_height,
+            "AppShell min_content_height",
+        )
         super().__init__(
+            direction=direction,
+            wrap=wrap,
+            gap=gap,
+            align_items="stretch",
             id=id,
             key=key,
             class_=_merge_widget_class("app-shell", class_),
-            style=merged,
+            style=style,
             tooltip=tooltip,
             parent=parent,
         )
+
+    def add(self, child: Widget) -> Widget:
+        added = super().add(child)
+        if isinstance(added, (Body, WorkbenchLayout, WorkbenchMain)):
+            safeguard: dict[str, object] = {}
+            if self.min_content_width is not None:
+                safeguard["min_width"] = self.min_content_width
+            if self.min_content_height is not None:
+                safeguard["min_height"] = self.min_content_height
+            added._merge_default_style(safeguard)
+        return added
 
 
 class ScrollArea(Container):
@@ -2197,6 +2401,7 @@ class ScrollArea(Container):
         style: "Mapping[str, object] | None" = None,
         tooltip: "str | None" = None,
         parent: "Container | None | object" = _AUTO_PARENT,
+        _default_style: "Mapping[str, object] | None" = None,
     ) -> None:
         axis_value = axis.strip().lower()
         if axis_value not in self._AXES:
@@ -2208,13 +2413,7 @@ class ScrollArea(Container):
         if height is not None and float(height) < 0:
             raise ValueError("ScrollArea height cannot be negative")
 
-        extra: "dict[str, object]" = {
-            "display": "flex",
-            "flex_direction": "column",
-            "flex_grow": 1,
-            "flex_shrink": 1,
-            "min_height": 0,
-        }
+        extra: "dict[str, object]" = {}
         extra["overflow_x"] = "auto" if axis_value in {"x", "both"} else "hidden"
         extra["overflow_y"] = "auto" if axis_value in {"y", "both"} else "hidden"
         if gap is not None:
@@ -2223,8 +2422,16 @@ class ScrollArea(Container):
             extra["width"] = float(width)
         if height is not None:
             extra["height"] = float(height)
-        merged: "Mapping[str, object]" = {**extra, **(style or {})}
-        super().__init__(id=id, key=key, class_=class_, style=merged, tooltip=tooltip, parent=parent)
+        merged_defaults: "Mapping[str, object]" = {**extra, **(_default_style or {})}
+        super().__init__(
+            id=id,
+            key=key,
+            class_=class_,
+            style=style,
+            tooltip=tooltip,
+            parent=parent,
+            _default_style=merged_defaults,
+        )
 
     def scroll_to(
         self,
@@ -2264,16 +2471,6 @@ class Body(ScrollArea):
         tooltip: str | None = None,
         parent: "Container | None | object" = _AUTO_PARENT,
     ) -> None:
-        extra: dict[str, object] = {
-            "flex": 1,
-            "flex_grow": 1,
-            "flex_shrink": 1,
-            "min_width": 0,
-            "min_height": 0,
-        }
-        if width is None:
-            extra["width"] = 0
-        merged: Mapping[str, object] = {**extra, **(style or {})}
         super().__init__(
             axis=scroll,
             gap=gap,
@@ -2282,7 +2479,7 @@ class Body(ScrollArea):
             id=id,
             key=key,
             class_=_merge_widget_class("body", class_),
-            style=merged,
+            style=style,
             tooltip=tooltip,
             parent=parent,
         )
@@ -2304,22 +2501,13 @@ class WorkbenchMain(ScrollArea):
         tooltip: str | None = None,
         parent: "Container | None | object" = _AUTO_PARENT,
     ) -> None:
-        default_style: dict[str, object] = {
-            "width": "100%",
-            "height": 0,
-            "flex": 1,
-            "flex_grow": 1,
-            "flex_shrink": 1,
-            "min_width": 0,
-            "min_height": 0,
-        }
         super().__init__(
             axis=scroll,
             gap=gap,
             id=id,
             key=key,
             class_=_merge_widget_class("workbench-main", class_),
-            style={**default_style, **(style or {})},
+            style=style,
             tooltip=tooltip,
             parent=parent,
         )
@@ -2476,13 +2664,69 @@ def _normalize_grid_template_tracks(value: object, name: str) -> list[object]:
     return [_normalize_grid_track(track, name) for track in raw_tracks]
 
 
+def _normalize_grid_columns(
+    value: object,
+) -> "tuple[int | str, list[dict[str, int | float]] | None]":
+    if isinstance(value, Mapping):
+        if "default" not in value:
+            raise ValueError("GridLayout responsive columns must include a 'default' entry")
+        default = value["default"]
+        if isinstance(default, bool) or not isinstance(default, int) or default < 1:
+            raise ValueError("GridLayout responsive columns 'default' must be a positive integer")
+        breakpoints: list[dict[str, int | float]] = []
+        seen: set[float] = set()
+        for raw_width, raw_columns in value.items():
+            if raw_width == "default":
+                continue
+            if isinstance(raw_width, bool) or not isinstance(raw_width, (int, float)):
+                raise ValueError(
+                    "GridLayout responsive column breakpoint keys must be positive numbers"
+                )
+            width = float(raw_width)
+            if not math.isfinite(width) or width <= 0:
+                raise ValueError(
+                    "GridLayout responsive column breakpoint keys must be positive finite numbers"
+                )
+            if width in seen:
+                raise ValueError(f"GridLayout responsive column breakpoint {raw_width!r} is duplicated")
+            if isinstance(raw_columns, bool) or not isinstance(raw_columns, int) or raw_columns < 1:
+                raise ValueError(
+                    "GridLayout responsive column counts must be positive integers"
+                )
+            seen.add(width)
+            breakpoints.append(
+                {
+                    "max_width": int(width) if width.is_integer() else width,
+                    "columns": raw_columns,
+                }
+            )
+        breakpoints.sort(key=lambda item: float(item["max_width"]))
+        return default, breakpoints
+    if isinstance(value, str):
+        if value not in {"auto", "auto-fit"}:
+            raise ValueError(
+                "GridLayout columns must be a positive integer, responsive mapping, "
+                "'auto', or 'auto-fit'"
+            )
+        return value, None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(
+            "GridLayout columns must be a positive integer, responsive mapping, "
+            "'auto', or 'auto-fit'"
+        )
+    return value, None
+
+
 class GridLayout(Container):
     """Responsive CSS-grid container.
 
-    ``columns`` may be a positive integer (maximum column count) or the string
-    ``"auto"`` (auto-fill based on ``min_column_width``).  When both an integer
-    column count and ``min_column_width`` are given, the layout uses up to that
-    many columns and collapses to fewer columns when there is not enough space.
+    ``columns`` may be a positive integer (maximum column count), ``"auto"``
+    (auto-fill), ``"auto-fit"``, or a responsive mapping such as
+    ``{"default": 4, 1100: 2, 700: 1}``. Numeric mapping keys are inclusive
+    logical-viewport ``max-width`` thresholds. They are normalized in ascending
+    order and ``"default"`` applies above every threshold. When both a column
+    count and ``min_column_width`` are given, the layout uses up to that many
+    columns and collapses further when its own content box cannot fit them.
 
     When ``masonry=True``, children are packed into the shortest column after
     their responsive column widths are resolved.  This keeps card galleries
@@ -2502,11 +2746,12 @@ class GridLayout(Container):
     def __init__(
         self,
         *,
-        columns: "int | str" = 2,
+        columns: "int | str | Mapping[object, int]" = 2,
         min_column_width: "int | None" = 320,
         template_columns: "GridTrackTemplate | None" = None,
         template_rows: "GridTrackTemplate | None" = None,
         masonry: bool = False,
+        balance_last_row: bool = False,
         gap: "int | None" = None,
         row_gap: "int | None" = None,
         id: "str | None" = None,
@@ -2516,21 +2761,15 @@ class GridLayout(Container):
         tooltip: "str | None" = None,
         parent: "Container | None | object" = _AUTO_PARENT,
     ) -> None:
-        if isinstance(columns, str):
-            if columns != "auto":
-                raise ValueError("GridLayout columns must be a positive integer or 'auto'")
-        elif isinstance(columns, int):
-            if columns < 1:
-                raise ValueError("GridLayout columns must be a positive integer or 'auto'")
-        else:
-            raise ValueError("GridLayout columns must be a positive integer or 'auto'")
+        normalized_columns, column_breakpoints = _normalize_grid_columns(columns)
         if min_column_width is not None and int(min_column_width) <= 0:
             raise ValueError("GridLayout min_column_width must be positive")
         if gap is not None and int(gap) < 0:
             raise ValueError("GridLayout gap must be non-negative")
         if row_gap is not None and int(row_gap) < 0:
             raise ValueError("GridLayout row_gap must be non-negative")
-        self._grid_columns = columns
+        self._grid_columns = normalized_columns
+        self._grid_column_breakpoints = column_breakpoints
         self._grid_min_column_width = min_column_width
         self._grid_template_columns = (
             _normalize_grid_template_tracks(template_columns, "template_columns")
@@ -2543,13 +2782,21 @@ class GridLayout(Container):
             else None
         )
         self._grid_masonry = bool(masonry)
+        self._grid_balance_last_row = bool(balance_last_row)
         extra: "dict[str, object]" = {}
         if gap is not None:
             extra["gap"] = int(gap)
         if row_gap is not None:
             extra["row_gap"] = int(row_gap)
-        merged: "Mapping[str, object] | None" = ({**extra, **(style or {})} if extra else style)
-        super().__init__(id=id, key=key, class_=class_, style=merged, tooltip=tooltip, parent=parent)
+        super().__init__(
+            id=id,
+            key=key,
+            class_=class_,
+            style=style,
+            tooltip=tooltip,
+            parent=parent,
+            _default_style=extra or None,
+        )
 
     def props(self) -> "dict[str, Any]":
         p: "dict[str, Any]" = {}
@@ -2557,12 +2804,18 @@ class GridLayout(Container):
             p["template_columns"] = self._grid_template_columns
         elif self._grid_columns != "auto" and isinstance(self._grid_columns, int):
             p["columns"] = self._grid_columns
+        if self._grid_template_columns is None and self._grid_column_breakpoints is not None:
+            p["column_breakpoints"] = self._grid_column_breakpoints
+        if self._grid_template_columns is None and self._grid_columns == "auto-fit":
+            p["auto_fit"] = True
         if self._grid_template_rows is not None:
             p["template_rows"] = self._grid_template_rows
         if self._grid_template_columns is None and self._grid_min_column_width is not None:
             p["min_column_width"] = int(self._grid_min_column_width)
         if self._grid_masonry:
             p["masonry"] = True
+        if self._grid_balance_last_row:
+            p["balance_last_row"] = True
         return p
 
 
@@ -2608,8 +2861,15 @@ class FlowLayout(Container):
             extra["gap"] = int(gap)
         if row_gap is not None:
             extra["row_gap"] = int(row_gap)
-        merged: "Mapping[str, object] | None" = ({**extra, **(style or {})} if extra else style)
-        super().__init__(id=id, key=key, class_=class_, style=merged, tooltip=tooltip, parent=parent)
+        super().__init__(
+            id=id,
+            key=key,
+            class_=class_,
+            style=style,
+            tooltip=tooltip,
+            parent=parent,
+            _default_style=extra or None,
+        )
 
     def props(self) -> "dict[str, Any]":
         p: "dict[str, Any]" = {}
@@ -2649,6 +2909,8 @@ def _normalize_splitter_size(value: SplitterSize) -> float | str | None:
     size = float(value)
     if not math.isfinite(size) or size < 0:
         raise ValueError("Splitter sizes must be non-negative finite values")
+    if 0 < size < 1:
+        return f"{size:g}fr"
     return size
 
 
@@ -2720,7 +2982,7 @@ class Splitter(Container):
             size = self.sizes[index]
             if isinstance(size, str):
                 child.set_size(None)
-                child.flex = _splitter_size_to_flex(size)
+                child.set_flex(_splitter_size_to_flex(size))
             else:
                 child.set_size(size)
 
@@ -2769,7 +3031,7 @@ class Pane(Container):
         tooltip: str | None = None,
         parent: Container | None | object = _AUTO_PARENT,
     ) -> None:
-        self._explicit_size = self._normalize_optional_size(size, "size")
+        self._explicit_size, size_flex = self._normalize_size_and_flex(size)
         if min_size is _UNSET:
             self._explicit_min_size = None
             self._default_min_size: float | None = 80.0
@@ -2777,7 +3039,7 @@ class Pane(Container):
             self._explicit_min_size = self._normalize_optional_size(min_size, "min_size")
             self._default_min_size = None
         self._explicit_max_size = self._normalize_optional_size(max_size, "max_size")
-        flex_value = float(flex)
+        flex_value = size_flex if size_flex is not None else float(flex)
         if not math.isfinite(flex_value) or flex_value <= 0:
             raise ValueError("Pane flex must be a positive finite value")
         self.flex = flex_value
@@ -2798,6 +3060,13 @@ class Pane(Container):
             raise ValueError(f"Pane {name} must be a non-negative finite value")
         return size
 
+    @staticmethod
+    def _normalize_size_and_flex(value: float | None) -> tuple[float | None, float | None]:
+        size = Pane._normalize_optional_size(value, "size")
+        if size is not None and 0 < size < 1:
+            return None, size
+        return size, None
+
     def _effective_size(self) -> float | None:
         return self._explicit_size if self._explicit_size is not None else self._splitter_size
 
@@ -2817,9 +3086,19 @@ class Pane(Container):
         return self._splitter_flex if self._splitter_flex is not None else self.flex
 
     def set_size(self, size: float | None) -> None:
-        self._explicit_size = self._normalize_optional_size(size, "size")
+        self._explicit_size, size_flex = self._normalize_size_and_flex(size)
+        if size_flex is not None:
+            self.set_flex(size_flex)
         if (handle := self._live()) is not None:
             handle.enqueue_set_prop("size", self._explicit_size)
+
+    def set_flex(self, flex: float) -> None:
+        flex_value = float(flex)
+        if not math.isfinite(flex_value) or flex_value <= 0:
+            raise ValueError("Pane flex must be a positive finite value")
+        self.flex = flex_value
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("flex", self.flex)
 
     def props(self) -> dict[str, Any]:
         return {
@@ -2844,11 +3123,20 @@ class Separator(Widget):
         style: Mapping[str, object] | None = None,
         tooltip: str | None = None,
         parent: Container | None | object = _AUTO_PARENT,
+        _default_style: Mapping[str, object] | None = None,
     ) -> None:
         if orientation not in {"auto", "horizontal", "vertical"}:
             raise ValueError("Separator orientation must be 'auto', 'horizontal', or 'vertical'")
         self.orientation = orientation
-        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+        super().__init__(
+            id=id,
+            key=key,
+            class_=class_,
+            style=style,
+            tooltip=tooltip,
+            parent=parent,
+            _default_style=_default_style,
+        )
 
     def props(self) -> dict[str, Any]:
         return {"orientation": self.orientation}
@@ -2888,14 +3176,13 @@ class Toolbar(HLayout):
             "display": "flex",
             "flex_direction": direction,
             "align_items": "center",
-            "min_width": 0,
-            "min_height": 0,
         }
         if gap_f is not None:
             default_style["gap"] = gap_f
         if value == "horizontal":
             default_style["width"] = "100%"
-            default_style["height"] = 38 if compact else 44
+            default_style["min_height"] = 38 if compact else 44
+            default_style["flex_wrap"] = "wrap"
         else:
             default_style["width"] = 38 if compact else 44
             default_style["height"] = "100%"
@@ -2907,9 +3194,10 @@ class Toolbar(HLayout):
             id=id,
             key=key,
             class_=merged_class,
-            style={**default_style, **(style or {})},
+            style=style,
             tooltip=tooltip,
             parent=parent,
+            _default_style=default_style,
         )
 
     def props(self) -> dict[str, Any]:
@@ -2949,9 +3237,10 @@ class ToolbarSeparator(Separator):
             id=id,
             key=key,
             class_=_merge_widget_class("toolbar-separator", class_),
-            style={**default_style, **(style or {})} or None,
+            style=style,
             tooltip=tooltip,
             parent=resolved_parent,
+            _default_style=default_style or None,
         )
 
 
@@ -3371,12 +3660,20 @@ class Page(Container):
 
 class Sidebar(Container):
     kind = "sidebar"
+    _STATES = frozenset({"auto", "expanded", "collapsed", "hidden", "drawer"})
+    _COMPACT_MODES = frozenset({"rail", "hidden"})
+    _MOBILE_MODES = frozenset({"drawer", "rail", "hidden"})
 
     def __init__(
         self,
         *,
         title: str | None = None,
         width: int = 220,
+        collapsed_width: int = 56,
+        state: str = "auto",
+        collapsible: bool = True,
+        compact_mode: str = "rail",
+        mobile_mode: str = "drawer",
         id: str | None = None,
         key: str | None = None,
         class_: str | None = None,
@@ -3386,15 +3683,96 @@ class Sidebar(Container):
     ) -> None:
         if width <= 0:
             raise ValueError("Sidebar width must be greater than zero")
+        if collapsed_width <= 0:
+            raise ValueError("Sidebar collapsed_width must be greater than zero")
+        if collapsed_width > width:
+            raise ValueError("Sidebar collapsed_width cannot exceed width")
         self.title = title
         self.width = int(width)
+        self.collapsed_width = int(collapsed_width)
+        self.state = self._normalize_choice("state", state, self._STATES)
+        self.collapsible = bool(collapsible)
+        self.compact_mode = self._normalize_choice(
+            "compact_mode", compact_mode, self._COMPACT_MODES
+        )
+        self.mobile_mode = self._normalize_choice(
+            "mobile_mode", mobile_mode, self._MOBILE_MODES
+        )
+        self._state_before_drawer: str | None = None
+        if not self.collapsible and self.state in {"collapsed", "hidden"}:
+            raise ValueError("a non-collapsible Sidebar cannot be collapsed or hidden")
         super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    @staticmethod
+    def _normalize_choice(name: str, value: str, choices: frozenset[str]) -> str:
+        normalized = str(value).strip().lower().replace("-", "_")
+        if normalized == "overlay_drawer":
+            normalized = "drawer"
+        if normalized not in choices:
+            allowed = ", ".join(sorted(choices))
+            raise ValueError(f"Sidebar {name} must be one of: {allowed}")
+        return normalized
 
     def props(self) -> dict[str, Any]:
         return {
             "title": self.title,
             "width": self.width,
+            "collapsed_width": self.collapsed_width,
+            "state": self.state,
+            "collapsible": self.collapsible,
+            "compact_mode": self.compact_mode,
+            "mobile_mode": self.mobile_mode,
         }
+
+    def set_state(self, state: str) -> None:
+        """Set the explicit navigation state without rebuilding its children."""
+
+        next_state = self._normalize_choice("state", state, self._STATES)
+        if next_state == self.state:
+            return
+        if not self.collapsible and next_state in {"collapsed", "hidden"}:
+            raise ValueError("a non-collapsible Sidebar cannot be collapsed or hidden")
+        if next_state == "drawer" and self.state != "drawer":
+            self._state_before_drawer = self.state
+        elif self.state == "drawer" and next_state != "drawer":
+            self._state_before_drawer = None
+        self.state = next_state
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("state", self.state)
+
+    def open_drawer(self) -> None:
+        self.set_state("drawer")
+
+    def close_drawer(self) -> None:
+        return_state = self._state_before_drawer or "hidden"
+        self.set_state(return_state)
+
+    def toggle_collapsed(self) -> None:
+        self.set_state("expanded" if self.state == "collapsed" else "collapsed")
+
+    def menu_button(
+        self,
+        *,
+        icon: str = "menu",
+        tooltip: str = "Open navigation",
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = "sidebar-menu-button",
+        style: Mapping[str, object] | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> "IconButton":
+        """Create an accessible menu button wired to open this Sidebar drawer."""
+
+        return IconButton(
+            icon,
+            on_click=self.open_drawer,
+            id=id,
+            key=key,
+            class_=class_,
+            style=style,
+            tooltip=tooltip,
+            parent=parent,
+        )
 
 
 class NavItem(Widget):
@@ -3405,6 +3783,8 @@ class NavItem(Widget):
         label: str,
         *,
         page: str,
+        icon: str | None = None,
+        compact_label: str | None = None,
         badge: BadgeValue = None,
         disabled: bool = False,
         id: str | None = None,
@@ -3418,14 +3798,32 @@ class NavItem(Widget):
         self.page = str(page)
         if not self.page:
             raise ValueError("NavItem page cannot be empty")
+        self.icon = self._normalize_optional_text("icon", icon)
+        self.compact_label = self._normalize_optional_text("compact_label", compact_label)
         self.badge = _badge_value(badge)
         self.disabled = disabled
+        if tooltip is None and self.icon is not None:
+            tooltip = self.label
         super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    @staticmethod
+    def _normalize_optional_text(name: str, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        if not normalized:
+            raise ValueError(f"NavItem {name} cannot be empty")
+        if name == "icon":
+            normalized = normalized.lower().replace("_", "-")
+        return normalized
 
     def props(self) -> dict[str, Any]:
         return {
             "label": self.label,
             "page": self.page,
+            "icon": self.icon,
+            "compact_label": self.compact_label,
+            "accessible_name": self.label,
             "badge": self.badge,
             "disabled": self.disabled,
         }
@@ -3528,11 +3926,8 @@ class DropZone(DropTarget):
     """Styled drop target convenience widget with a centered label."""
 
     _DEFAULT_STYLE: ClassVar[dict[str, object]] = {
-        "height": 142,
-        "padding": 14,
         "align_items": "center",
         "justify_content": "center",
-        "gap": 6,
     }
 
     def __init__(
@@ -3550,7 +3945,6 @@ class DropZone(DropTarget):
         parent: Container | None | object = _AUTO_PARENT,
     ) -> None:
         self.label = str(label)
-        merged_style = {**self._DEFAULT_STYLE, **(style or {})}
         super().__init__(
             accept=accept,
             on_drop=on_drop,
@@ -3558,10 +3952,11 @@ class DropZone(DropTarget):
             id=id,
             key=key,
             class_=_merge_widget_class("drop-zone", class_),
-            style=merged_style,
+            style=style,
             tooltip=tooltip,
             parent=parent,
         )
+        self._merge_default_style(self._DEFAULT_STYLE)
         Label(self.label, parent=self, class_="drop-zone-label")
 
     def props(self) -> dict[str, Any]:
@@ -4372,7 +4767,6 @@ class LogView(Widget):
         if max_lines_i < 1:
             raise ValueError("LogView max_lines must be at least 1")
         variant_style = defaults.get("style")
-        merged_style = {**variant_style, **(style or {})} if isinstance(variant_style, Mapping) else style
         variant_class = str(defaults.get("class", "") or "")
         merged_class = class_ if not variant_class else _merge_widget_class(variant_class, class_)
         self.variant = variant_value
@@ -4389,7 +4783,15 @@ class LogView(Widget):
         self._terminal_rewritten_rows: set[int] = set()
         self._trim()
         self.value = self._joined()
-        super().__init__(id=id, key=key, class_=merged_class, style=merged_style, tooltip=tooltip, parent=parent)
+        super().__init__(
+            id=id,
+            key=key,
+            class_=merged_class,
+            style=style,
+            tooltip=tooltip,
+            parent=parent,
+            _default_style=variant_style if isinstance(variant_style, Mapping) else None,
+        )
 
     @staticmethod
     def _normalize_lines(lines: str | Iterable[object]) -> list[str]:
@@ -5191,6 +5593,40 @@ class DragNumber(Widget):
         }
 
 
+def _composite_sizing_style(
+    *,
+    width: int | float | None,
+    min_width: int | float | None,
+    max_width: int | float | None,
+    grow: bool,
+    shrink: bool,
+    name: str,
+) -> tuple[dict[str, object], float | None, float | None, float | None]:
+    """Build validated, author-overridable defaults for a compound widget."""
+
+    width_value = None if width is None else _positive_finite_value(width, f"{name} width")
+    min_width_value = _non_negative_finite_value(min_width, f"{name} min_width")
+    max_width_value = _non_negative_finite_value(max_width, f"{name} max_width")
+    if (
+        min_width_value is not None
+        and max_width_value is not None
+        and max_width_value < min_width_value
+    ):
+        raise ValueError(f"{name} max_width must be greater than or equal to min_width")
+
+    sizing: dict[str, object] = {
+        "flex_grow": 1 if grow else 0,
+        "flex_shrink": 1 if shrink else 0,
+    }
+    if width_value is not None:
+        sizing["width"] = width_value
+    if min_width_value is not None:
+        sizing["min_width"] = min_width_value
+    if max_width_value is not None:
+        sizing["max_width"] = max_width_value
+    return sizing, width_value, min_width_value, max_width_value
+
+
 class DragVector(FlowLayout):
     """Compact vector editor built from DragNumber components."""
 
@@ -5211,6 +5647,11 @@ class DragVector(FlowLayout):
         row_gap: int | float | None = 6,
         component_gap: int | float = 4,
         component_width: int | float | None = 88,
+        width: int | float | None = None,
+        min_width: int | float | None = 0,
+        max_width: int | float | None = None,
+        grow: bool = False,
+        shrink: bool = True,
         id: str | None = None,
         key: str | None = None,
         class_: str | None = None,
@@ -5256,12 +5697,22 @@ class DragVector(FlowLayout):
         self.component_width = (
             None if component_width is None else self._positive_finite(component_width, "component_width")
         )
+        sizing_style, self.width, self.min_width, self.max_width = _composite_sizing_style(
+            width=width,
+            min_width=min_width,
+            max_width=max_width,
+            grow=bool(grow),
+            shrink=bool(shrink),
+            name="DragVector",
+        )
+        self.grow = bool(grow)
+        self.shrink = bool(shrink)
 
-        merged_style = dict(style or {})
+        default_style: dict[str, object] = dict(sizing_style)
         if gap is not None:
-            merged_style.setdefault("gap", self._non_negative_finite(gap, "gap"))
+            default_style["gap"] = self._non_negative_finite(gap, "gap")
         if row_gap is not None:
-            merged_style.setdefault("row_gap", self._non_negative_finite(row_gap, "row_gap"))
+            default_style["row_gap"] = self._non_negative_finite(row_gap, "row_gap")
 
         super().__init__(
             gap=None,
@@ -5270,10 +5721,11 @@ class DragVector(FlowLayout):
             id=id,
             key=key,
             class_=class_,
-            style=merged_style or None,
+            style=style,
             tooltip=tooltip,
             parent=parent,
         )
+        self._merge_default_style(default_style or None)
         self._sync_children(live=False)
 
     @staticmethod
@@ -5408,6 +5860,11 @@ class Property(HLayout):
         editor: Widget | None = None,
         *,
         label_width: int | float | None = None,
+        width: int | float | None = None,
+        min_width: int | float | None = 0,
+        max_width: int | float | None = None,
+        grow: bool = False,
+        shrink: bool = True,
         id: str | None = None,
         key: str | None = None,
         class_: str | None = None,
@@ -5420,30 +5877,45 @@ class Property(HLayout):
             raise ValueError("Property label cannot be empty")
         actual_parent = _BuildContext.parent() if parent is _AUTO_PARENT else parent
         grid = actual_parent if isinstance(actual_parent, PropertyGrid) else None
-        width = grid.label_width if label_width is None and grid is not None else label_width
-        if width is None:
-            width = 140.0
-        width_f = float(width)
-        if not math.isfinite(width_f) or width_f <= 0:
+        label_width_value = (
+            grid.label_width if label_width is None and grid is not None else label_width
+        )
+        if label_width_value is None:
+            label_width_value = 140.0
+        label_width_f = float(label_width_value)
+        if not math.isfinite(label_width_f) or label_width_f <= 0:
             raise ValueError("Property label_width must be a positive finite number")
-        row_style = {
-            "gap": 10,
+        sizing_style, self.width, self.min_width, self.max_width = _composite_sizing_style(
+            width=width,
+            min_width=min_width,
+            max_width=max_width,
+            grow=bool(grow),
+            shrink=bool(shrink),
+            name="Property",
+        )
+        self.grow = bool(grow)
+        self.shrink = bool(shrink)
+        row_defaults = {
             "align_items": "center",
-            "width": "100%",
-            **(style or {}),
+            **sizing_style,
         }
         super().__init__(
             id=id,
             key=key,
             class_=_merge_widget_class("property-row", class_),
-            style=row_style,
+            style=style,
+            _default_style=row_defaults,
             tooltip=tooltip,
             parent=actual_parent,
         )
         Label(
             self.label,
             class_="property-label",
-            style={"width": width_f, "flex_shrink": 0, "text_overflow": "ellipsis"},
+            style={
+                "width": label_width_f,
+                "flex_shrink": 0,
+                "text_overflow": "ellipsis",
+            },
             parent=self,
         )
         self._editor_slot = HLayout(
@@ -5451,6 +5923,7 @@ class Property(HLayout):
             style={
                 "gap": 8,
                 "align_items": "center",
+                "width": 0,
                 "flex": 1,
                 "min_width": 0,
             },
@@ -5473,7 +5946,7 @@ class Property(HLayout):
 
 
 class PropertyGrid(VLayout):
-    """Structured property inspector built from existing controls."""
+    """Structured property inspector with shrink-safe editor rows."""
 
     def __init__(
         self,
@@ -5484,6 +5957,11 @@ class PropertyGrid(VLayout):
         on_change: Callable[[PropertyChange], None] | None = None,
         label_width: int | float = 140,
         disabled: bool = False,
+        width: int | float | None = None,
+        min_width: int | float | None = 0,
+        max_width: int | float | None = None,
+        grow: bool = False,
+        shrink: bool = True,
         id: str | None = None,
         key: str | None = None,
         class_: str | None = None,
@@ -5502,13 +5980,23 @@ class PropertyGrid(VLayout):
         self.on_change = on_change
         self.label_width = label_width_f
         self.disabled = bool(disabled)
+        sizing_style, self.width, self.min_width, self.max_width = _composite_sizing_style(
+            width=width,
+            min_width=min_width,
+            max_width=max_width,
+            grow=bool(grow),
+            shrink=bool(shrink),
+            name="PropertyGrid",
+        )
+        self.grow = bool(grow)
+        self.shrink = bool(shrink)
         self._editors: dict[str, Widget] = {}
-        merged_style = {"gap": 6, "width": "100%", **(style or {})}
         super().__init__(
             id=id,
             key=key,
             class_=_merge_widget_class("property-grid", class_),
-            style=merged_style,
+            style=style,
+            _default_style=sizing_style,
             tooltip=tooltip,
             parent=parent,
         )
@@ -5958,6 +6446,11 @@ class SelectableList(VLayout):
         on_change: Callable[[object], None] | None = None,
         disabled: bool = False,
         max_height: int | float | None = None,
+        width: int | float | None = None,
+        min_width: int | float | None = 0,
+        max_width: int | float | None = None,
+        grow: bool = False,
+        shrink: bool = True,
         id: str | None = None,
         key: str | None = None,
         class_: str | None = None,
@@ -5994,22 +6487,33 @@ class SelectableList(VLayout):
             self.value = None
             self._selected_values = selected_values
 
-        merged_style = dict(style or {})
+        sizing_style, self.width, self.min_width, self.max_width = _composite_sizing_style(
+            width=width,
+            min_width=min_width,
+            max_width=max_width,
+            grow=bool(grow),
+            shrink=bool(shrink),
+            name="SelectableList",
+        )
+        self.grow = bool(grow)
+        self.shrink = bool(shrink)
+        default_style: dict[str, object] = dict(sizing_style)
         if max_height is not None:
             height = float(max_height)
             if not math.isfinite(height) or height <= 0:
                 raise ValueError("SelectableList max_height must be a positive finite number")
-            merged_style.setdefault("max_height", height)
-            merged_style.setdefault("overflow_y", "auto")
-            merged_style.setdefault("min_height", 0)
+            default_style["max_height"] = height
+            default_style["overflow_y"] = "auto"
+            default_style["min_height"] = 0
 
         super().__init__(
             id=id,
             key=key,
             class_=_merge_widget_class(f"selectable-list selectable-list-{mode}", class_),
-            style=merged_style or None,
+            style=style,
             tooltip=tooltip,
             parent=parent,
+            _default_style=default_style or None,
         )
         self._sync_children(live=False)
 
@@ -6149,6 +6653,11 @@ class Breadcrumbs(HLayout):
         click_current: bool = False,
         on_select: BreadcrumbCallback | None = None,
         disabled: bool = False,
+        width: int | float | None = None,
+        min_width: int | float | None = 0,
+        max_width: int | float | None = None,
+        grow: bool = False,
+        shrink: bool = True,
         id: str | None = None,
         key: str | None = None,
         class_: str | None = None,
@@ -6165,20 +6674,28 @@ class Breadcrumbs(HLayout):
         self.on_select = on_select
         self.disabled = bool(disabled)
         self.current_index = self._normalize_current(current)
-        merged_style = {
-            "gap": 4,
+        sizing_style, self.width, self.min_width, self.max_width = _composite_sizing_style(
+            width=width,
+            min_width=min_width,
+            max_width=max_width,
+            grow=bool(grow),
+            shrink=bool(shrink),
+            name="Breadcrumbs",
+        )
+        self.grow = bool(grow)
+        self.shrink = bool(shrink)
+        default_style = {
             "align_items": "center",
-            "width": "100%",
-            "min_width": 0,
-            **(style or {}),
+            **sizing_style,
         }
         super().__init__(
             id=id,
             key=key,
             class_=_merge_widget_class("breadcrumbs", class_),
-            style=merged_style,
+            style=style,
             tooltip=tooltip,
             parent=parent,
+            _default_style=default_style,
         )
         self._sync_children(live=False)
 
@@ -6316,7 +6833,13 @@ class Breadcrumbs(HLayout):
 
 
 class SearchBox(HLayout):
-    """Search input with leading search affordance and a clear button."""
+    """Search input with predictable standalone and toolbar sizing.
+
+    ``width`` is the standalone preferred width. The box shrinks to
+    ``min_width`` under pressure by default; ``grow=True`` lets it consume
+    remaining row or toolbar space. Explicit ``style`` declarations remain
+    authoritative over these widget defaults.
+    """
 
     def __init__(
         self,
@@ -6326,6 +6849,11 @@ class SearchBox(HLayout):
         on_change: StringCallback | None = None,
         disabled: bool = False,
         clearable: bool = True,
+        width: int | float | None = 340,
+        min_width: int | float | None = 180,
+        max_width: int | float | None = None,
+        grow: bool = False,
+        shrink: bool = True,
         id: str | None = None,
         key: str | None = None,
         class_: str | None = None,
@@ -6338,24 +6866,30 @@ class SearchBox(HLayout):
         self.on_change = on_change
         self.disabled = bool(disabled)
         self.clearable = bool(clearable)
+        sizing_style, self.width, self.min_width, self.max_width = _composite_sizing_style(
+            width=width,
+            min_width=min_width,
+            max_width=max_width,
+            grow=bool(grow),
+            shrink=bool(shrink),
+            name="SearchBox",
+        )
+        self.grow = bool(grow)
+        self.shrink = bool(shrink)
         self.input: TextInput | None = None
         self.clear_button: IconButton | None = None
-        merged_style = {
-            "gap": 6,
+        default_style = {
             "align_items": "center",
-            "height": 38,
-            "flex_grow": 0,
-            "flex_shrink": 0,
-            "width": "100%",
-            **(style or {}),
+            **sizing_style,
         }
         super().__init__(
             id=id,
             key=key,
             class_=_merge_widget_class("search-box", class_),
-            style=merged_style,
+            style=style,
             tooltip=tooltip,
             parent=parent,
+            _default_style=default_style,
         )
         IconButton(
             "search",
@@ -6370,7 +6904,7 @@ class SearchBox(HLayout):
             on_change=self._handle_input_change,
             disabled=self.disabled,
             class_="search-box-input",
-            style={"flex": 1, "min_width": 0},
+            style={"width": 0, "flex": 1, "min_width": 0},
             parent=self,
         )
         if self.clearable:
@@ -6482,10 +7016,6 @@ class CommandPalette(Modal):
         self.selected: str | None = None
         self.search_box: SearchBox | None = None
         self.results: VLayout | None = None
-        merged_style = {
-            "gap": 10,
-            **(style or {}),
-        }
         super().__init__(
             title,
             open=open,
@@ -6495,7 +7025,7 @@ class CommandPalette(Modal):
             id=id,
             key=key,
             class_=_merge_widget_class("command-palette", class_),
-            style=merged_style,
+            style=style,
             tooltip=tooltip,
             parent=parent,
         )
@@ -6503,8 +7033,10 @@ class CommandPalette(Modal):
             self.query,
             placeholder=self.placeholder,
             on_change=self._handle_query_change,
+            width=None,
+            min_width=0,
             class_="command-palette-search",
-            style={"width": "100%", "height": 38},
+            style={"height": 38},
             parent=self,
         )
         self.results = VLayout(
@@ -6644,6 +7176,11 @@ class RadioGroup(VLayout):
         on_change: StringCallback | None = None,
         disabled: bool = False,
         gap: int | float | None = None,
+        width: int | float | None = None,
+        min_width: int | float | None = 0,
+        max_width: int | float | None = None,
+        grow: bool = False,
+        shrink: bool = True,
         id: str | None = None,
         key: str | None = None,
         class_: str | None = None,
@@ -6669,17 +7206,28 @@ class RadioGroup(VLayout):
         self.disabled = bool(disabled)
         self._button_widgets: list[RadioButton] = []
 
-        merged_style = dict(style or {})
+        sizing_style, self.width, self.min_width, self.max_width = _composite_sizing_style(
+            width=width,
+            min_width=min_width,
+            max_width=max_width,
+            grow=bool(grow),
+            shrink=bool(shrink),
+            name="RadioGroup",
+        )
+        self.grow = bool(grow)
+        self.shrink = bool(shrink)
+        default_style: dict[str, object] = dict(sizing_style)
         if orientation_value == "horizontal":
-            merged_style.setdefault("display", "flex")
-            merged_style.setdefault("flex_direction", "row")
-            merged_style.setdefault("align_items", "center")
-            merged_style.setdefault("height", "auto")
+            default_style["display"] = "flex"
+            default_style["flex_direction"] = "row"
+            default_style["flex_wrap"] = "wrap"
+            default_style["align_items"] = "center"
+            default_style["height"] = "auto"
         if gap is not None:
             gap_value = float(gap)
             if not math.isfinite(gap_value) or gap_value < 0:
                 raise ValueError("RadioGroup gap must be a non-negative finite number")
-            merged_style.setdefault("gap", gap_value)
+            default_style["gap"] = gap_value
 
         super().__init__(
             id=id,
@@ -6688,10 +7236,11 @@ class RadioGroup(VLayout):
                 f"radio-group radio-group-{orientation_value}",
                 class_,
             ),
-            style=merged_style or None,
+            style=style,
             tooltip=tooltip,
             parent=parent,
         )
+        self._merge_default_style(default_style or None)
         self._sync_children(live=False)
 
     @staticmethod
@@ -6892,6 +7441,11 @@ class TreeView(Container):
         selected: str | None = None,
         on_select: StringCallback | None = None,
         disabled: bool = False,
+        width: int | float | None = None,
+        min_width: int | float | None = 0,
+        max_width: int | float | None = None,
+        grow: bool = True,
+        shrink: bool = True,
         id: str | None = None,
         key: str | None = None,
         class_: str | None = None,
@@ -6902,7 +7456,25 @@ class TreeView(Container):
         self.selected = None if selected is None else str(selected)
         self.on_select = on_select
         self.disabled = bool(disabled)
-        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+        sizing_style, self.width, self.min_width, self.max_width = _composite_sizing_style(
+            width=width,
+            min_width=min_width,
+            max_width=max_width,
+            grow=bool(grow),
+            shrink=bool(shrink),
+            name="TreeView",
+        )
+        self.grow = bool(grow)
+        self.shrink = bool(shrink)
+        super().__init__(
+            id=id,
+            key=key,
+            class_=class_,
+            style=style,
+            tooltip=tooltip,
+            parent=parent,
+            _default_style=sizing_style,
+        )
         if items is not None:
             for item in items:
                 self.add(self._node_from_item(item))
@@ -7012,9 +7584,9 @@ class ColorPicker(Panel):
     """Composite RGB/RGBA color picker built from DragonGUI controls.
 
     Integer channels are treated as 0..255 values. Floating-point channels in
-    the 0.0..1.0 range are treated as normalized colors. The ``width`` argument
-    is treated as a preferred maximum width so the picker can shrink inside
-    narrow parent panels instead of overflowing them.
+    the 0.0..1.0 range are treated as normalized colors. The picker uses an
+    explicit preferred/minimum/maximum width contract and remains shrink-safe
+    inside narrow parent panels.
     """
 
     _CHANNEL_INDEX = {"r": 0, "g": 1, "b": 2, "a": 3}
@@ -7026,7 +7598,11 @@ class ColorPicker(Panel):
         alpha: bool = True,
         on_change: ColorCallback | None = None,
         title: str | None = "Color",
-        width: int | None = 320,
+        width: int | float | None = 320,
+        min_width: int | float | None = 180,
+        max_width: int | float | None = None,
+        grow: bool = False,
+        shrink: bool = True,
         id: str | None = None,
         key: str | None = None,
         class_: str | None = None,
@@ -7039,26 +7615,27 @@ class ColorPicker(Panel):
         self.on_change = on_change
         self._sliders: dict[str, Slider] = {}
         self._value_labels: dict[str, Label] = {}
-        base_style: dict[str, object] = {
-            "padding": 14,
-            "gap": 6,
-            "flex_grow": 0,
-            "flex_shrink": 1,
-        }
-        if width is not None:
-            base_style["max_width"] = int(width)
-        if style is not None:
-            base_style.update(_copy_style(style, widget_kind=self.kind) or {})
+        base_style, self.width, self.min_width, self.max_width = _composite_sizing_style(
+            width=width,
+            min_width=min_width,
+            max_width=max_width,
+            grow=bool(grow),
+            shrink=bool(shrink),
+            name="ColorPicker",
+        )
+        self.grow = bool(grow)
+        self.shrink = bool(shrink)
         super().__init__(
             title,
             width=None,
             id=id,
             key=key,
             class_=class_,
-            style=base_style,
+            style=style,
             tooltip=tooltip,
             parent=parent,
         )
+        self._merge_default_style(base_style)
 
         with self:
             self._swatch = Button(
@@ -7087,6 +7664,7 @@ class ColorPicker(Panel):
                 style={
                     "width": 26,
                     "height": 32,
+                    "flex_shrink": 0,
                     "color": "text",
                     "font_weight": 700,
                     "text_align": "center",
@@ -7098,9 +7676,12 @@ class ColorPicker(Panel):
                 max=255,
                 step=1,
                 on_change=lambda new_value, ch=channel: self._set_channel(ch, new_value),
-                style={"flex": 1},
+                style=_property_fill_style(),
             )
-            value_label = Label(str(value), style={"width": 38, "text_align": "right"})
+            value_label = Label(
+                str(value),
+                style={"width": 38, "flex_shrink": 0, "text_align": "right"},
+            )
         self._sliders[channel] = slider
         self._value_labels[channel] = value_label
 
@@ -11445,6 +12026,9 @@ class Scatter3D(Widget):
         finally:
             self._propagating = False
 
+    def _startup_fit_primary_points(self) -> bool:
+        return True
+
     def _queue_startup_resources(self) -> None:
         """Replay scene operations that were queued before the widget went live."""
         import base64 as _base64
@@ -11481,6 +12065,7 @@ class Scatter3D(Widget):
                     colormap=self.colormap,
                     payload_format=self.data_format,
                     coalesce=False,
+                    fit=self._startup_fit_primary_points(),
                 )
                 record_phase("enqueue_points_ms", enqueue_t0)
                 timings["payload_bytes"] = len(payload)
@@ -11845,6 +12430,9 @@ class ScatterPlot2D(Scatter3D):
             handle.enqueue_set_scatter_parallel_projection(True)
             handle.enqueue_set_scatter_view_direction("xy")
             handle.enqueue_set_scatter_axis_visibility(True, True, False)
+
+    def _startup_fit_primary_points(self) -> bool:
+        return False
 
     def _queue_startup_resources(self) -> None:
         super()._queue_startup_resources()

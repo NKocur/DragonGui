@@ -51,7 +51,7 @@ schema = {
 
 
 with dg.Window(title="Default Polish Stress", width=1180, height=760) as win:
-    with dg.AppShell(class_="default-shell", style={"width": "100%", "height": "100%", "overflow": "hidden"}):
+    with dg.AppShell(class_="default-shell"):
         with dg.Sidebar(title="Audit", width=132, class_="default-sidebar"):
             dg.Label("Default UI")
             dg.NavItem("Overview", page="overview", badge="12")
@@ -69,12 +69,12 @@ with dg.Window(title="Default Polish Stress", width=1180, height=760) as win:
                 dg.SmallButton("Dep")
                 dg.SmallButton("Run")
 
-            with dg.Body(scroll="y", gap=8, style={"height": 0, "flex": 1, "min_width": 0}):
-                dg.TextInput("filter routes, owners, status", style={"width": "100%", "min_width": 0})
+            with dg.Body(scroll="y", gap=8, style={"height": 0}):
+                dg.TextInput("filter routes, owners, status", style={"width": "100%"})
                 dg.Label(
                     "Default polish stress: long labels, dense cards, tables, tabs, navigation, and nested scroll areas"
                 )
-                with dg.FlowLayout(gap=8, row_gap=8, style={"width": "100%", "min_width": 0}):
+                with dg.FlowLayout(gap=8, row_gap=8, style={"width": "100%"}):
                     for label, value, detail in [
                         ("Open incidents", "12", "Queue pressure and owner handoff"),
                         ("Long-running route", "plant-zone-west", "Should wrap or ellipsize without overlap"),
@@ -93,7 +93,7 @@ with dg.Window(title="Default Polish Stress", width=1180, height=760) as win:
                     with dg.Tab("Disabled destination", value="disabled", disabled=True):
                         dg.Label("Disabled tab.")
 
-                with dg.FlowLayout(gap=8, row_gap=8, style={"width": "100%", "min_width": 0}):
+                with dg.FlowLayout(gap=8, row_gap=8, style={"width": "100%"}):
                     with dg.Panel("Table", style={"width": 170, "flex_shrink": 0, "height": 230}):
                         dg.DataFrameTable(rows, page_size=36, sample_rows=36, style={"width": "100%", "height": 178})
                     with dg.Panel("Properties", style={"width": 170, "flex_shrink": 0, "height": 230, "overflow_y": "auto"}):
@@ -101,7 +101,7 @@ with dg.Window(title="Default Polish Stress", width=1180, height=760) as win:
 
                 with dg.Panel("Nested scroll and long text", style={"height": 220, "overflow_y": "auto"}):
                     for index in range(1, 9):
-                        with dg.Panel(style={"width": "100%", "min_width": 0}):
+                        with dg.Panel(style={"width": "100%"}):
                             dg.Label(f"Workbench row {index}")
                             dg.Label(
                                 "This default-only row keeps long body copy visible inside nested scroll ownership "

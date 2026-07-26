@@ -247,6 +247,16 @@ app.stylesheet(
         font-weight: 760;
         padding: 7px 9px;
     }
+
+    @media (max-width: 520px) {
+        Label.field-label {
+            width: 72px;
+        }
+
+        SmallButton.shrink {
+            min-width: 48px;
+        }
+    }
     """
 )
 

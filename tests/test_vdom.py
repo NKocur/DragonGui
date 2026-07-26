@@ -32,6 +32,25 @@ def test_widget_tree_converts_to_vnode_document_shape() -> None:
     assert app.document(win)["window"] == vnode.to_dict()
 
 
+def test_vnode_preserves_default_style_separately_from_inline_style() -> None:
+    search = dg.SearchBox(style={"width": 220}, parent=None)
+
+    vnode = widget_to_vnode(search)
+
+    assert vnode.default_style is search.default_style
+    assert vnode.default_style_sources == search._default_style_sources()
+    assert vnode.style == {"width": 220}
+    assert vnode.to_dict()["default_style"] == {
+        "align_items": "center",
+        "flex_grow": 0,
+        "flex_shrink": 1,
+        "width": 340.0,
+        "min_width": 180.0,
+    }
+    assert vnode.to_dict()["default_style_sources"]["align-items"]["widget_type"] == "SearchBox"
+    assert vnode.to_dict()["style"] == {"width": 220}
+
+
 def test_vdom_diff_emits_targeted_prop_and_style_patches() -> None:
     old = widget_to_vnode(
         dg.Button(

@@ -16,8 +16,18 @@ extension points.
 - Text and date inputs: `TextInput`, `TextArea`, `SearchBox`, `CodeEditor`,
   `LogView`, `DateInput`, `TimeInput`, `DateTimeInput`.
 - Composite controls: `ColorPicker`, `PropertyGrid`, `Property`.
+
+Composite widgets expose their own public CSS type and their public base-type
+chain. For example, `ColorPicker` can be styled through `ColorPicker` for its
+outer contract and also participates in intentional `Panel` rules.
 - Commands and navigation controls: `CommandPalette`, `Breadcrumbs`,
   `TreeView`, `TreeNode`.
+
+`SearchBox` has an explicit composite-sizing contract: its default preferred
+width is 340 logical pixels, it shrinks to a 180-pixel minimum, and
+`grow=True` consumes remaining row or toolbar space. Use `width=None` for an
+intrinsic starting size, `max_width` to cap growth, and `clearable=False` to
+release the clear-button slot. Inline `style` sizing overrides these defaults.
 
 ## Data And Visualization
 
@@ -36,7 +46,8 @@ extension points.
 
 - Root and structural containers: `Window`, `Panel`, `Pane`, `ScrollArea`,
   `Splitter`, `Separator`, `Spacer`.
-- Layout containers: `HLayout`, `VLayout`, `FlowLayout`, `GridLayout`.
+- Layout containers: `FlexLayout`, `HLayout`, `VLayout`, `FlowLayout`,
+  `GridLayout`.
 - Page navigation: `Tabs`, `Tab`, `Pages`, `Page`, `Sidebar`, `NavItem`.
 - Menus and toolbars: `MenuBar`, `Menu`, `MenuItem`, `ContextMenu`,
   `Toolbar`, `ToolbarSeparator`.

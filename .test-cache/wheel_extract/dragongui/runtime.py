@@ -1306,6 +1306,14 @@ class AppHandle:
         """Request one native redraw without changing widget state."""
         self._send_or_queue_native("enqueue_request_redraw")
 
+    def request_window_resize(self, width: int, height: int) -> None:
+        """Request a logical window size on the native event-loop thread."""
+        width = int(width)
+        height = int(height)
+        if width <= 0 or height <= 0:
+            raise ValueError("window resize dimensions must be positive")
+        self._send_or_queue_native("request_window_resize", width, height)
+
     def request_exit(self) -> None:
         """Request the native event loop to exit."""
         self._send_or_queue_native("enqueue_request_exit")

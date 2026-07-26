@@ -23,7 +23,7 @@ app.stylesheet(
     VLayout.scroll-root {
         width: 100%;
         height: 100%;
-        min-height: 520px;
+        min-height: 0;
         overflow-y: auto;
         padding-right: 18px;
         padding-bottom: 84px;

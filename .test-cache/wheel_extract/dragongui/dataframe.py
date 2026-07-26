@@ -104,7 +104,7 @@ def extract_table_column_buffers(
         return []
 
     buffers: list[dict[str, object]] = []
-    for column in summary.columns:
+    for index, column in enumerate(summary.columns):
         column_data = _column_data(frame, column)
         if column_data is None:
             continue
@@ -112,6 +112,16 @@ def extract_table_column_buffers(
             arr = np.asarray(column_data)
         except (TypeError, ValueError):
             continue
+        declared_dtype = (
+            summary.dtypes[index].strip().lower()
+            if index < len(summary.dtypes)
+            else ""
+        )
+        # A generic Python ``int`` column has no authored fixed width. Normalize
+        # it to i64 so its wire contract does not depend on NumPy's platform
+        # default (i32 on 64-bit Windows, i64 on most Unix platforms).
+        if declared_dtype in {"int", "integer"} and arr.dtype.kind == "i":
+            arr = np.asarray(column_data, dtype="<i8")
         if arr.ndim != 1 or arr.shape[0] < summary.rows:
             continue
         packed = _pack_numpy_column(np, arr[: summary.rows])
@@ -171,6 +181,18 @@ def _pack_utf8_column(arr: Any) -> bytes:
 
 
 def _columns(frame: Any) -> tuple[str, ...]:
+    if isinstance(frame, list) and frame and all(isinstance(row, dict) for row in frame):
+        columns: list[str] = []
+        seen: set[str] = set()
+        for row in frame:
+            for column in row:
+                text = str(column)
+                if text in seen:
+                    continue
+                seen.add(text)
+                columns.append(text)
+        return tuple(columns)
+
     columns = getattr(frame, "columns", None)
     if columns is not None:
         return tuple(str(column) for column in columns)
@@ -184,6 +206,18 @@ def _columns(frame: Any) -> tuple[str, ...]:
 
 
 def _dtypes(frame: Any, columns: tuple[str, ...]) -> tuple[str, ...]:
+    if isinstance(frame, list) and frame and all(isinstance(row, dict) for row in frame):
+        values: list[str] = []
+        for column in columns:
+            dtype = ""
+            for row in frame:
+                value = row.get(column)
+                if value is not None:
+                    dtype = type(value).__name__
+                    break
+            values.append(dtype)
+        return tuple(values)
+
     dtypes = getattr(frame, "dtypes", None)
     if dtypes is not None:
         try:
@@ -223,6 +257,9 @@ def _row_count(frame: Any) -> int | None:
 
 
 def _column_data(frame: Any, column: str) -> Any:
+    if isinstance(frame, list) and all(isinstance(row, dict) for row in frame):
+        return [row.get(column, _MISSING) for row in frame]
+
     try:
         return frame[column]
     except (AttributeError, KeyError, TypeError, IndexError):

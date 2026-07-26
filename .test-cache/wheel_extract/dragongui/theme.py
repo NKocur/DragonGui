@@ -15,21 +15,46 @@ class Theme:
     Numeric values are logical (device-independent) pixels.
     """
 
-    background: str = "#12121a"
-    surface: str = "#1e1e2e"
-    surface_alt: str = "#32324a"
-    text: str = "#f0f0f7"
-    muted_text: str = "#a8a8ba"
-    accent: str = "#7b73ff"
-    border: str = "#383850"
-    danger: str = "#ff5c7a"
-    warning: str = "#ffbf47"
-    success: str = "#43d48f"
-    focus: str = "#6bdcff"
-    disabled: str = "#66667a"
-    radius: float = 6.0
-    spacing: float = 8.0
-    font_size: float = 14.0
+    background: str = "#0a0f14"
+    surface: str = "#121922"
+    surface_alt: str = "#1d2833"
+    text: str = "#f2f6f8"
+    muted_text: str = "#91a0ad"
+    accent: str = "#37c6d0"
+    border: str = "#263543"
+    danger: str = "#ff5f72"
+    warning: str = "#f4b84a"
+    success: str = "#45c48a"
+    focus: str = "#7bdcff"
+    disabled: str = "#5d6a75"
+    radius: float = 3.0
+    spacing: float = 5.0
+    font_size: float = 13.0
+
+    @property
+    def space_xs(self) -> float:
+        """Extra-small layout spacing derived from :attr:`spacing`."""
+        return self.spacing * 0.5
+
+    @property
+    def space_sm(self) -> float:
+        """Small layout spacing; equivalent to the base :attr:`spacing`."""
+        return self.spacing
+
+    @property
+    def space_md(self) -> float:
+        """Medium layout spacing derived from :attr:`spacing`."""
+        return self.spacing * 2.0
+
+    @property
+    def space_lg(self) -> float:
+        """Large layout spacing derived from :attr:`spacing`."""
+        return self.spacing * 3.0
+
+    @property
+    def space_xl(self) -> float:
+        """Extra-large layout spacing derived from :attr:`spacing`."""
+        return self.spacing * 4.0
 
     @classmethod
     def dark(cls, **overrides: object) -> "Theme":
@@ -47,19 +72,19 @@ class Theme:
         values = {
             "background": "#f6f7fb",
             "surface": "#ffffff",
-            "surface_alt": "#eef1f7",
+            "surface_alt": "#e8eef5",
             "text": "#171821",
-            "muted_text": "#646879",
-            "accent": "#245cff",
-            "border": "#d7dbe7",
+            "muted_text": "#5f6b7a",
+            "accent": "#087ea4",
+            "border": "#cfd8e3",
             "danger": "#cf2445",
             "warning": "#a86f00",
             "success": "#137a4a",
-            "focus": "#0077c8",
+            "focus": "#0a86c8",
             "disabled": "#aeb4c2",
-            "radius": 6.0,
-            "spacing": 8.0,
-            "font_size": 14.0,
+            "radius": 3.0,
+            "spacing": 5.0,
+            "font_size": 13.0,
         }
         values.update(overrides)
         return cls(**values)

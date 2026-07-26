@@ -1216,6 +1216,75 @@ pub enum WidgetKind {
     Unknown,
 }
 
+#[cfg(test)]
+pub(crate) const ALL_WIDGET_KINDS: &[WidgetKind] = &[
+    WidgetKind::Window,
+    WidgetKind::HLayout,
+    WidgetKind::VLayout,
+    WidgetKind::ScrollArea,
+    WidgetKind::GridLayout,
+    WidgetKind::FlowLayout,
+    WidgetKind::Splitter,
+    WidgetKind::Pane,
+    WidgetKind::Panel,
+    WidgetKind::Collapsible,
+    WidgetKind::Modal,
+    WidgetKind::Badge,
+    WidgetKind::Tag,
+    WidgetKind::Led,
+    WidgetKind::Button,
+    WidgetKind::SmallButton,
+    WidgetKind::IconButton,
+    WidgetKind::ImageButton,
+    WidgetKind::ArrowButton,
+    WidgetKind::Selectable,
+    WidgetKind::RadioButton,
+    WidgetKind::TreeView,
+    WidgetKind::TreeNode,
+    WidgetKind::DragSource,
+    WidgetKind::DropTarget,
+    WidgetKind::Checkbox,
+    WidgetKind::ToggleSwitch,
+    WidgetKind::Dropdown,
+    WidgetKind::Label,
+    WidgetKind::Slider,
+    WidgetKind::RangeSlider,
+    WidgetKind::NumberInput,
+    WidgetKind::DragNumber,
+    WidgetKind::ProgressBar,
+    WidgetKind::LoadingSpinner,
+    WidgetKind::TextInput,
+    WidgetKind::TextArea,
+    WidgetKind::CodeEditor,
+    WidgetKind::LogView,
+    WidgetKind::Separator,
+    WidgetKind::Spacer,
+    WidgetKind::StatusBar,
+    WidgetKind::MenuBar,
+    WidgetKind::Menu,
+    WidgetKind::MenuItem,
+    WidgetKind::ContextMenu,
+    WidgetKind::Tooltip,
+    WidgetKind::Toast,
+    WidgetKind::Tabs,
+    WidgetKind::Tab,
+    WidgetKind::Pages,
+    WidgetKind::Page,
+    WidgetKind::Sidebar,
+    WidgetKind::NavItem,
+    WidgetKind::PieChart,
+    WidgetKind::Histogram,
+    WidgetKind::BarChart,
+    WidgetKind::Heatmap,
+    WidgetKind::LinePlot,
+    WidgetKind::Scatter3D,
+    WidgetKind::DataFrameTable,
+    WidgetKind::HtmlReport,
+    WidgetKind::Image,
+    WidgetKind::Extension,
+    WidgetKind::Unknown,
+];
+
 impl WidgetKind {
     fn from_str(s: &str) -> Self {
         match s {
@@ -1288,6 +1357,13 @@ impl WidgetKind {
     }
 }
 
+/// One inclusive logical-viewport max-width rule for a responsive GridLayout.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GridColumnBreakpoint {
+    pub max_width: f32,
+    pub columns: u16,
+}
+
 /// Layout-relevant properties extracted from each node's `props` object.
 #[derive(Debug, Clone, Default)]
 pub struct NodeProps {
@@ -1305,6 +1381,8 @@ pub struct NodeProps {
     pub intrinsic_height: Option<f32>,
     /// GridLayout: fixed column count (None → auto-fill).
     pub grid_columns: Option<u16>,
+    /// GridLayout: ascending logical-viewport max-width column rules.
+    pub grid_column_breakpoints: Vec<GridColumnBreakpoint>,
     /// GridLayout: minimum column width in logical pixels for minmax tracks.
     pub grid_min_column_width: Option<f32>,
     /// GridLayout: explicit column track template.
@@ -1313,6 +1391,10 @@ pub struct NodeProps {
     pub grid_template_rows: Option<Vec<GridTrackSize>>,
     /// GridLayout: pack auto-placed children into shortest columns.
     pub grid_masonry: bool,
+    /// GridLayout: use auto-fit rather than auto-fill for adaptive tracks.
+    pub grid_auto_fit: bool,
+    /// GridLayout: center an incomplete final row within the resolved tracks.
+    pub grid_balance_last_row: bool,
     /// FlowLayout main-axis alignment: start, center, or end.
     pub flow_align: Option<String>,
     /// FlowLayout cross-axis alignment: start, center, end, or stretch.
@@ -1482,11 +1564,16 @@ pub struct WidgetNode {
     /// Semantic class label for debug snapshots and future stylesheet targeting.
     #[allow(dead_code)]
     pub class_name: Option<String>,
+    /// Public Python widget type chain used for semantic CSS matching.
+    pub css_types: Vec<String>,
     pub kind: WidgetKind,
     pub props: NodeProps,
     /// Raw structured style map retained so live style patches can merge and
     /// reparse computed style without rebuilding the whole document.
     pub style_json: Map<String, Value>,
+    /// Parsed widget defaults. These sit above framework rules but below
+    /// theme/application stylesheets in the cascade.
+    pub default_style: NodeStyle,
     /// Parsed inline style, kept separate from the computed stylesheet result.
     pub inline_style: NodeStyle,
     pub style: NodeStyle,
@@ -1511,12 +1598,40 @@ pub fn parse_widget_node(v: &serde_json::Value) -> Option<WidgetNode> {
         .get("class")
         .and_then(|k| k.as_str())
         .map(|s| s.to_string());
+    let css_types = v
+        .get("css_types")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|name| !name.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
     let kind = WidgetKind::from_str(v.get("type").and_then(|t| t.as_str()).unwrap_or(""));
     let props_val = v.get("props").unwrap_or(&serde_json::Value::Null);
     let props = parse_props(&kind, props_val);
+    let default_style_json = style_map_from_value(v.get("default_style"));
+    let default_style_sources = style_map_from_value(v.get("default_style_sources"));
+    let mut default_style = NodeStyle::from_json(Some(&Value::Object(default_style_json.clone())));
+    crate::css_style::record_serialized_style_provenance(
+        &mut default_style,
+        &default_style_json,
+        crate::css_style::StylesheetOrigin::WidgetDefault,
+        Some(&default_style_sources),
+    );
     let style_json = style_map_from_value(v.get("style"));
-    let inline_style = NodeStyle::from_json(Some(&Value::Object(style_json.clone())));
-    let style = inline_style.clone();
+    let mut inline_style = NodeStyle::from_json(Some(&Value::Object(style_json.clone())));
+    crate::css_style::record_serialized_style_provenance(
+        &mut inline_style,
+        &style_json,
+        crate::css_style::StylesheetOrigin::Inline,
+        None,
+    );
+    let mut style = default_style.clone();
+    crate::css_style::merge_node_style(&mut style, &inline_style);
     let children = v
         .get("children")
         .and_then(|c| c.as_array())
@@ -1526,9 +1641,11 @@ pub fn parse_widget_node(v: &serde_json::Value) -> Option<WidgetNode> {
         id,
         key,
         class_name,
+        css_types,
         kind,
         props,
         style_json,
+        default_style,
         inline_style,
         style,
         children,
@@ -1576,6 +1693,23 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         .get("columns")
         .and_then(|v| v.as_u64())
         .map(|v| v.min(256) as u16);
+    let mut grid_column_breakpoints = props
+        .get("column_breakpoints")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let max_width = entry.get("max_width")?.as_f64()? as f32;
+            let columns = entry.get("columns")?.as_u64()?.min(256) as u16;
+            (max_width.is_finite() && max_width > 0.0 && columns > 0)
+                .then_some(GridColumnBreakpoint { max_width, columns })
+        })
+        .collect::<Vec<_>>();
+    grid_column_breakpoints.sort_by(|left, right| {
+        left.max_width
+            .partial_cmp(&right.max_width)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let grid_min_column_width = props
         .get("min_column_width")
         .and_then(|v| v.as_f64())
@@ -1591,6 +1725,14 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
     let grid_masonry = props
         .get("masonry")
         .or_else(|| props.get("grid_masonry"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let grid_auto_fit = props
+        .get("auto_fit")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let grid_balance_last_row = props
+        .get("balance_last_row")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     let flow_align = props
@@ -2255,10 +2397,13 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         intrinsic_width,
         intrinsic_height,
         grid_columns,
+        grid_column_breakpoints,
         grid_min_column_width,
         grid_template_columns,
         grid_template_rows,
         grid_masonry,
+        grid_auto_fit,
+        grid_balance_last_row,
         flow_align,
         flow_cross_align,
         orientation,
@@ -2436,6 +2581,24 @@ mod tests {
     }
 
     #[test]
+    fn parse_widget_node_retains_public_css_type_chain() {
+        let node = parse_widget_node(&json!({
+            "id": "search",
+            "type": "h_layout",
+            "css_types": ["SearchBox", "HLayout", "Container", "Widget"],
+            "class": "search-box command-search",
+            "props": {}
+        }))
+        .expect("search node");
+
+        assert_eq!(node.kind, WidgetKind::HLayout);
+        assert_eq!(
+            node.css_types,
+            ["SearchBox", "HLayout", "Container", "Widget"]
+        );
+    }
+
+    #[test]
     fn line_plot_y_range_bounds_uses_cached_full_blocks_and_edge_scans() {
         let mut points: Vec<[f32; 2]> = (0..1500).map(|i| [i as f32, (i % 17) as f32]).collect();
         points[20][1] = -9.0;
@@ -2499,6 +2662,41 @@ mod tests {
             node.props.grid_template_rows,
             Some(vec![GridTrackSize::LogicalPx(18.0), GridTrackSize::Auto])
         );
+    }
+
+    #[test]
+    fn parse_responsive_grid_props() {
+        let node = parse_widget_node(&json!({
+            "id": "metrics",
+            "type": "grid_layout",
+            "props": {
+                "columns": 4,
+                "column_breakpoints": [
+                    {"max_width": 1100, "columns": 2},
+                    {"max_width": 700, "columns": 1}
+                ],
+                "auto_fit": true,
+                "balance_last_row": true
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(node.props.grid_columns, Some(4));
+        assert_eq!(
+            node.props.grid_column_breakpoints,
+            vec![
+                GridColumnBreakpoint {
+                    max_width: 700.0,
+                    columns: 1
+                },
+                GridColumnBreakpoint {
+                    max_width: 1100.0,
+                    columns: 2
+                },
+            ]
+        );
+        assert!(node.props.grid_auto_fit);
+        assert!(node.props.grid_balance_last_row);
     }
 
     #[test]

@@ -2247,7 +2247,11 @@ class NodeGraph(HtmlReport):
         binding = self.runtime_binding(registry)
         binding_signature = json.dumps(binding.to_dict(), sort_keys=True)
         session = self._managed_runtime_session
-        if session is not None and self._managed_runtime_binding_signature != binding_signature:
+        if (
+            session is not None
+            and self._managed_runtime_binding_signature is not None
+            and self._managed_runtime_binding_signature != binding_signature
+        ):
             self.cleanup_managed_runtime()
             session = None
         if session is None or session.status in {"stopped", "failed"}:

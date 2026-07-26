@@ -8,6 +8,7 @@ pub(crate) mod html_report_webview;
 pub(crate) mod image_widget;
 pub(crate) mod layout;
 pub(crate) mod overlays;
+pub(crate) mod paint;
 pub(crate) mod primitives;
 pub(crate) mod resources;
 mod runtime;

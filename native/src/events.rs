@@ -210,6 +210,10 @@ pub struct WidgetState {
     pub nav_targets: HashMap<String, String>,
     /// First Pages widget that owns each page route value.
     pub page_owner: HashMap<String, String>,
+    /// Focused opener remembered for each Sidebar while it is an overlay drawer.
+    pub sidebar_drawer_openers: HashMap<String, String>,
+    /// Sidebar state to restore after closing each overlay drawer.
+    pub sidebar_drawer_return_states: HashMap<String, String>,
 }
 
 impl WidgetState {
@@ -1174,6 +1178,14 @@ impl WidgetState {
             }
         }
 
+        self.sidebar_drawer_openers = previous
+            .sidebar_drawer_openers
+            .iter()
+            .filter(|(_, opener)| self.focus_order.iter().any(|id| id == *opener))
+            .map(|(sidebar, opener)| (sidebar.clone(), opener.clone()))
+            .collect();
+        self.sidebar_drawer_return_states = previous.sidebar_drawer_return_states.clone();
+
         for (id, previous_table) in &previous.tables {
             let Some(table) = self.tables.get_mut(id) else {
                 continue;
@@ -1924,7 +1936,7 @@ where
     None
 }
 
-fn is_interactive_node(node: &WidgetNode) -> bool {
+pub(crate) fn is_interactive_node(node: &WidgetNode) -> bool {
     is_interactive(&node.kind)
         || (node.kind == WidgetKind::Extension
             && ["click", "pointer_down", "pointer_up", "key_down", "change"]
@@ -2241,9 +2253,11 @@ mod tests {
             id: id.to_string(),
             key: None,
             class_name: None,
+            css_types: Vec::new(),
             kind,
             props,
             style_json: Default::default(),
+            default_style: Default::default(),
             inline_style: Default::default(),
             style: Default::default(),
             children,

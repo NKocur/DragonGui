@@ -1,9 +1,12 @@
 use crate::document::{WidgetKind, WidgetNode};
 use crate::events::{NavigationItem, WidgetState};
 use crate::layout::{LayoutResult, Rect};
+use crate::style::TextStyle;
+use crate::text::measure_text_for_layout;
 use crate::theme::Theme;
 
 pub(crate) fn dropdown_overlay_rect(
+    tree: &WidgetNode,
     layout: &LayoutResult,
     state: &WidgetState,
     theme: &Theme,
@@ -12,12 +15,139 @@ pub(crate) fn dropdown_overlay_rect(
     let id = state.open_dropdown.as_ref()?;
     let r = layout.rects.get(id)?;
     let items = state.dropdown_items.get(id)?;
-    Some(Rect {
-        x: r.x,
-        y: r.y + r.h,
-        w: r.w,
-        h: theme.control_height() * sf * items.len() as f32,
-    })
+    let root = layout.rects.get(&tree.id).copied().unwrap_or(Rect {
+        x: 0.0,
+        y: 0.0,
+        w: r.x + r.w,
+        h: r.y + r.h,
+    });
+    let height = theme.control_height() * sf * items.len() as f32;
+    let below_y = r.y + r.h;
+    let above_y = r.y - height;
+    let y = if below_y + height <= root.y + root.h {
+        below_y
+    } else if above_y >= root.y {
+        above_y
+    } else {
+        below_y
+    };
+    Some(clamp_rect_to_root(
+        Rect {
+            x: r.x,
+            y,
+            w: r.w,
+            h: height,
+        },
+        root,
+        0.0,
+    ))
+}
+
+fn clamp_rect_to_root(rect: Rect, root: Rect, margin: f32) -> Rect {
+    let available_w = (root.w - margin * 2.0).max(0.0);
+    let available_h = (root.h - margin * 2.0).max(0.0);
+    let rect = Rect {
+        w: rect.w.max(0.0).min(available_w),
+        h: rect.h.max(0.0).min(available_h),
+        ..rect
+    };
+    let min_x = root.x + margin;
+    let max_x = (root.x + root.w - rect.w - margin).max(min_x);
+    let min_y = root.y + margin;
+    let max_y = (root.y + root.h - rect.h - margin).max(min_y);
+    Rect {
+        x: rect.x.clamp(min_x, max_x),
+        y: rect.y.clamp(min_y, max_y),
+        ..rect
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::document::NodeProps;
+
+    fn node(id: &str, kind: WidgetKind, children: Vec<WidgetNode>) -> WidgetNode {
+        WidgetNode {
+            id: id.to_string(),
+            key: None,
+            class_name: None,
+            css_types: Vec::new(),
+            kind,
+            props: NodeProps::default(),
+            style_json: Default::default(),
+            default_style: Default::default(),
+            inline_style: Default::default(),
+            style: Default::default(),
+            children,
+        }
+    }
+
+    #[test]
+    fn dropdown_popup_flips_and_clamps_to_viewport() {
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            vec![node("dropdown", WidgetKind::Dropdown, vec![])],
+        );
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "window".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 120.0,
+                h: 100.0,
+            },
+        );
+        layout.rects.insert(
+            "dropdown".to_string(),
+            Rect {
+                x: 90.0,
+                y: 70.0,
+                w: 60.0,
+                h: 24.0,
+            },
+        );
+        let mut state = WidgetState::default();
+        state.open_dropdown = Some("dropdown".to_string());
+        state.dropdown_items.insert(
+            "dropdown".to_string(),
+            (0..6).map(|index| format!("Item {index}")).collect(),
+        );
+
+        let rect =
+            dropdown_overlay_rect(&root, &layout, &state, &Theme::dark(), 1.0).expect("popup");
+
+        assert!(rect.x >= 0.0 && rect.y >= 0.0);
+        assert!(rect.x + rect.w <= 120.0);
+        assert!(rect.y + rect.h <= 100.0);
+        assert_eq!(rect.h, 100.0);
+    }
+
+    #[test]
+    fn oversized_menu_popup_is_bounded_by_viewport() {
+        let root = Rect {
+            x: 10.0,
+            y: 20.0,
+            w: 100.0,
+            h: 80.0,
+        };
+        let rect = clamp_rect_to_root(
+            Rect {
+                x: 90.0,
+                y: 90.0,
+                w: 180.0,
+                h: 160.0,
+            },
+            root,
+            0.0,
+        );
+        assert_eq!(
+            [rect.x, rect.y, rect.w, rect.h],
+            [root.x, root.y, root.w, root.h]
+        );
+    }
 }
 
 pub(crate) fn active_menu_overlay_rects(
@@ -62,7 +192,7 @@ pub(crate) fn menu_popup_rect(
         h: 600.0 * sf,
     });
 
-    let (mut x, mut y) = if node.kind == WidgetKind::Menu {
+    let (x, y) = if node.kind == WidgetKind::Menu {
         let r = layout.rects.get(id)?;
         width = width.max(r.w);
         (r.x, r.y + r.h)
@@ -70,14 +200,16 @@ pub(crate) fn menu_popup_rect(
         let pos = state.context_menu_pos?;
         (pos[0], pos[1])
     };
-    x = x.clamp(root.x, (root.x + root.w - width).max(root.x));
-    y = y.clamp(root.y, (root.y + root.h - height).max(root.y));
-    Some(Rect {
-        x,
-        y,
-        w: width,
-        h: height,
-    })
+    Some(clamp_rect_to_root(
+        Rect {
+            x,
+            y,
+            w: width,
+            h: height,
+        },
+        root,
+        0.0,
+    ))
 }
 
 pub(crate) fn menu_popup_width(
@@ -92,7 +224,7 @@ pub(crate) fn menu_popup_width(
     let pad = theme.spacing * sf * 2.5;
     let text_w = items
         .iter()
-        .map(|item| estimate_text_width(&item.value, theme.font_size * sf))
+        .map(|item| measure_text_for_layout(&item.value, &TextStyle::default(), theme).width * sf)
         .fold(0.0, f32::max);
     (text_w + pad).clamp(120.0 * sf, 360.0 * sf)
 }
@@ -119,13 +251,13 @@ pub(crate) fn tooltip_target<'a>(
     });
     let margin = theme.spacing * sf;
     let pad = theme.spacing * sf * 1.25;
-    let natural_width = estimate_text_width(text, theme.font_size * sf) + pad * 2.0;
+    let text_width = measure_text_for_layout(text, &TextStyle::default(), theme).width * sf;
+    let natural_width = text_width + pad * 2.0;
     let max_width = (root.w - margin * 2.0).max(48.0 * sf).min(420.0 * sf);
     let min_width = (96.0 * sf).min(max_width);
     let width = natural_width.max(min_width).min(max_width);
     let line_height = (theme.font_size * sf + 5.0 * sf).max((theme.font_size + 3.0) * sf);
     let content_width = (width - pad * 2.0).max(1.0);
-    let text_width = estimate_text_width(text, theme.font_size * sf);
     let lines = (text_width / content_width).ceil().clamp(1.0, 4.0);
     let height = (line_height * lines + pad * 2.0).max(28.0 * sf);
     let mut obstacles = Vec::new();
@@ -167,28 +299,11 @@ fn active_rich_tooltip<'a>(node: &'a WidgetNode, hovered: &str) -> Option<&'a Wi
         .then_some(node)
 }
 
-pub(crate) fn estimate_text_width(text: &str, font_size: f32) -> f32 {
-    text.chars()
-        .map(|ch| char_width_factor(ch) * font_size)
-        .sum()
-}
-
 pub(crate) fn find_node<'a>(node: &'a WidgetNode, id: &str) -> Option<&'a WidgetNode> {
     if node.id == id {
         return Some(node);
     }
     node.children.iter().find_map(|child| find_node(child, id))
-}
-
-fn char_width_factor(ch: char) -> f32 {
-    match ch {
-        ' ' | '\t' => 0.35,
-        'i' | 'j' | 'l' | 'I' | '1' | '!' | '|' | '.' | ',' | ':' | ';' | '\'' => 0.32,
-        'm' | 'w' | 'M' | 'W' | '@' | '#' | '%' | '&' => 0.82,
-        'A'..='Z' => 0.64,
-        '0'..='9' => 0.56,
-        _ => 0.54,
-    }
 }
 
 fn choose_tooltip_rect(
@@ -278,18 +393,6 @@ fn choose_tooltip_rect(
             w: width,
             h: height,
         })
-}
-
-fn clamp_rect_to_root(rect: Rect, root: Rect, margin: f32) -> Rect {
-    let min_x = root.x + margin;
-    let max_x = (root.x + root.w - rect.w - margin).max(min_x);
-    let min_y = root.y + margin;
-    let max_y = (root.y + root.h - rect.h - margin).max(min_y);
-    Rect {
-        x: rect.x.clamp(min_x, max_x),
-        y: rect.y.clamp(min_y, max_y),
-        ..rect
-    }
 }
 
 fn collect_tooltip_obstacles(

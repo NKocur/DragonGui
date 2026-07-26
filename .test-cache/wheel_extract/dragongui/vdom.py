@@ -59,10 +59,13 @@ class VNode:
     """Typed virtual node used by the future component diff layer."""
 
     type: str
+    css_types: tuple[str, ...] = ()
     id: str | None = None
     key: str | None = None
     props: Mapping[str, object] = field(default_factory=dict)
     style: Mapping[str, object] | None = None
+    default_style: Mapping[str, object] | None = None
+    default_style_sources: Mapping[str, object] | None = None
     class_name: str | None = None
     children: tuple[VNode, ...] = ()
     container: bool = False
@@ -78,6 +81,12 @@ class VNode:
             "type": self.type,
             "props": dict(self.props),
         }
+        if self.css_types:
+            data["css_types"] = list(self.css_types)
+        if self.default_style is not None:
+            data["default_style"] = _mapping_to_dict(self.default_style)
+        if self.default_style_sources is not None:
+            data["default_style_sources"] = _mapping_to_dict(self.default_style_sources)
         if self.key is not None:
             data["key"] = self.key
         if self.class_name is not None:
@@ -121,6 +130,9 @@ def widget_to_vnode(widget: object) -> VNode:
         children = tuple(widget_to_vnode(child) for child in widget.children)
     return VNode(
         type=widget.kind,
+        css_types=widget.css_types(),
+        default_style=widget.default_style,
+        default_style_sources=widget._default_style_sources() or None,
         id=widget.id,
         key=widget.key,
         props=widget.props(),
@@ -149,6 +161,9 @@ def retain_old_ids(old: VNode, new: VNode) -> VNode:
     children = _retain_child_ids(old.children, new.children)
     return VNode(
         type=new.type,
+        css_types=new.css_types,
+        default_style=new.default_style,
+        default_style_sources=new.default_style_sources,
         id=old.id,
         key=new.key,
         props=new.props,
@@ -185,6 +200,14 @@ def shallow_value_equal(left: object, right: object) -> bool:
 
 def _diff_node(old: VNode, new: VNode, *, path: tuple[str, ...]) -> list[Patch]:
     if not same_identity(old, new):
+        return [Patch(kind=Patch.REPLACE_NODE, path=path, node_id=old.id, node=new)]
+    if (
+        old.css_types != new.css_types
+        or not shallow_value_equal(old.default_style, new.default_style)
+        or not shallow_value_equal(
+            old.default_style_sources, new.default_style_sources
+        )
+    ):
         return [Patch(kind=Patch.REPLACE_NODE, path=path, node_id=old.id, node=new)]
 
     patches: list[Patch] = []

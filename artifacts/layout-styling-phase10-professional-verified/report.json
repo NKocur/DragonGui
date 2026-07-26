@@ -1,0 +1,77 @@
+[
+  {
+    "captures": [
+      {
+        "actions": [],
+        "diagnostic_counts": {},
+        "name": "1440x900@1x",
+        "route": null,
+        "scale": 1.0,
+        "screenshot": "screenshots/all-features-professional-overview-1440x900@1x.png",
+        "size": "1440x900",
+        "snapshot": "snapshots/all-features-professional-overview-1440x900@1x.json",
+        "state": "default"
+      },
+      {
+        "actions": [],
+        "diagnostic_counts": {},
+        "name": "390x720@1x",
+        "route": null,
+        "scale": 1.0,
+        "screenshot": "screenshots/all-features-professional-overview-390x720@1x.png",
+        "size": "390x720",
+        "snapshot": "snapshots/all-features-professional-overview-390x720@1x.json",
+        "state": "default"
+      }
+    ],
+    "category": "layout",
+    "diagnostic_comparisons": [],
+    "features": [
+      "Professional demo",
+      "AppShell",
+      "Sidebar",
+      "Toolbar",
+      "Tabs",
+      "Body",
+      "StatusBar",
+      "LinePlot",
+      "PieChart",
+      "DataFrameTable"
+    ],
+    "id": "all-features-professional-overview",
+    "layout_issue_counts": {},
+    "layout_issues": [],
+    "logs": [
+      "logs/all-features-professional-overview-1440x900@1x.stdout.txt",
+      "logs/all-features-professional-overview-1440x900@1x.stderr.txt",
+      "logs/all-features-professional-overview-390x720@1x.stdout.txt",
+      "logs/all-features-professional-overview-390x720@1x.stderr.txt"
+    ],
+    "manual": false,
+    "name": "All Features Professional Demo - Overview",
+    "notes": "Route-specific capture for the professional all-features demo overview page. Additional run: Captured with native DragonGUI window screenshot API.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target all-features-professional-overview --sizes 1440x900 --scales 1",
+      "python tools/visual_audit.py --target all-features-professional-overview --sizes 390x720 --scales 1"
+    ],
+    "screenshots": [
+      "screenshots/all-features-professional-overview-1440x900@1x.png",
+      "screenshots/all-features-professional-overview-390x720@1x.png"
+    ],
+    "script": "examples\\css_feature_probes\\all_features_professional_demo_probe.py",
+    "snapshots": [
+      "snapshots/all-features-professional-overview-1440x900@1x.json",
+      "snapshots/all-features-professional-overview-390x720@1x.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/layout.rs",
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs",
+      "native/src/scatter/mod.rs",
+      "native/src/table.rs"
+    ],
+    "unmatched_selectors": []
+  }
+]

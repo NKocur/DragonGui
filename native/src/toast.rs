@@ -1,4 +1,8 @@
+use crate::document::WidgetKind;
 use crate::layout::Rect;
+use crate::paint::{native_widget_paint_fallback_with_level, PaintInteraction};
+use crate::style::TextStyle;
+use crate::text::measure_text_for_layout;
 use crate::theme::{Color, Theme};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,59 +118,68 @@ pub(crate) fn toast_rect(
     sf: f32,
     position: ToastPosition,
     padding: Option<f32>,
+    text_style: &TextStyle,
+    theme: &Theme,
 ) -> Rect {
-    let margin = 16.0 * sf;
+    let margin_x = (16.0 * sf).min(window_w.max(0.0) * 0.5);
+    let margin_y = (16.0 * sf).min(window_h.max(0.0) * 0.5);
     let gap = 8.0 * sf;
     let pad = toast_padding(padding, sf);
-    let min_w = 220.0 * sf;
-    let max_w = (window_w - margin * 2.0).max(min_w).min(420.0 * sf);
-    let estimated_w = message.chars().count() as f32 * 7.5 * sf + pad * 2.0;
-    let width = estimated_w.clamp(min_w, max_w);
-    let height = (DEFAULT_TOAST_HEIGHT_TEXT_LP * sf + pad * 2.0).max(44.0 * sf);
+    let available_w = (window_w - margin_x * 2.0).max(0.0);
+    let available_h = (window_h - margin_y * 2.0).max(0.0);
+    let min_w = (220.0 * sf).min(available_w);
+    let max_w = available_w.min(420.0 * sf);
+    let estimated_w = measure_text_for_layout(message, text_style, theme)
+        .width
+        .ceil()
+        * sf
+        + pad * 2.0;
+    let width = if max_w > 0.0 {
+        estimated_w.clamp(min_w, max_w)
+    } else {
+        0.0
+    };
+    let height = (DEFAULT_TOAST_HEIGHT_TEXT_LP * sf + pad * 2.0)
+        .max(44.0 * sf)
+        .min(available_h);
     let x = match position {
-        ToastPosition::TopLeft | ToastPosition::BottomLeft => margin,
+        ToastPosition::TopLeft | ToastPosition::BottomLeft => margin_x,
         ToastPosition::TopRight | ToastPosition::BottomRight => {
-            (window_w - margin - width).max(margin)
+            (window_w - margin_x - width).max(margin_x)
         }
     };
     let stack_offset = index as f32 * (height + gap);
-    let y = match position {
-        ToastPosition::TopLeft | ToastPosition::TopRight => margin + stack_offset,
+    let (y, fits_stack) = match position {
+        ToastPosition::TopLeft | ToastPosition::TopRight => {
+            let y = margin_y + stack_offset;
+            (y, y + height <= window_h - margin_y + 0.001)
+        }
         ToastPosition::BottomLeft | ToastPosition::BottomRight => {
-            (window_h - margin - height - stack_offset).max(margin)
+            let y = window_h - margin_y - height - stack_offset;
+            (y, y + 0.001 >= margin_y)
         }
     };
     Rect {
         x,
         y,
         w: width,
-        h: height,
+        h: if fits_stack { height } else { 0.0 },
     }
 }
 
 pub(crate) fn toast_colors(level: ToastLevel, theme: &Theme, opacity: f32) -> ToastColors {
-    let accent = match level {
-        ToastLevel::Info => theme.accent,
-        ToastLevel::Success => theme.success,
-        ToastLevel::Warning => theme.warning,
-        ToastLevel::Error => theme.danger,
-    };
+    let fallback = native_widget_paint_fallback_with_level(
+        WidgetKind::Toast,
+        Some(level.as_str()),
+        theme,
+        PaintInteraction::Resting,
+    );
     let opacity = opacity.clamp(0.0, 1.0);
     ToastColors {
-        fill: with_alpha(mix(theme.surface, accent, 0.18), opacity),
-        border: with_alpha(mix(theme.border, accent, 0.62), opacity),
+        fill: with_alpha(fallback.background.unwrap_or(theme.surface), opacity),
+        border: with_alpha(fallback.border_color.unwrap_or(theme.border), opacity),
         text: with_alpha(theme.text, opacity),
     }
-}
-
-fn mix(a: Color, b: Color, t: f32) -> Color {
-    let t = t.clamp(0.0, 1.0);
-    [
-        a[0] + (b[0] - a[0]) * t,
-        a[1] + (b[1] - a[1]) * t,
-        a[2] + (b[2] - a[2]) * t,
-        a[3] + (b[3] - a[3]) * t,
-    ]
 }
 
 fn with_alpha(mut color: Color, opacity: f32) -> Color {
@@ -189,8 +202,28 @@ mod tests {
 
     #[test]
     fn toast_rect_stacks_inside_window() {
-        let first = toast_rect(0, "Saved", 800.0, 600.0, 1.0, ToastPosition::TopRight, None);
-        let second = toast_rect(1, "Saved", 800.0, 600.0, 1.0, ToastPosition::TopRight, None);
+        let first = toast_rect(
+            0,
+            "Saved",
+            800.0,
+            600.0,
+            1.0,
+            ToastPosition::TopRight,
+            None,
+            &TextStyle::default(),
+            &Theme::dark(),
+        );
+        let second = toast_rect(
+            1,
+            "Saved",
+            800.0,
+            600.0,
+            1.0,
+            ToastPosition::TopRight,
+            None,
+            &TextStyle::default(),
+            &Theme::dark(),
+        );
 
         assert!(first.x >= 16.0);
         assert!(first.x + first.w <= 800.0 - 16.0);
@@ -207,6 +240,8 @@ mod tests {
             1.0,
             ToastPosition::BottomLeft,
             None,
+            &TextStyle::default(),
+            &Theme::dark(),
         );
         let second = toast_rect(
             1,
@@ -216,10 +251,60 @@ mod tests {
             1.0,
             ToastPosition::BottomLeft,
             None,
+            &TextStyle::default(),
+            &Theme::dark(),
         );
 
         assert_eq!(first.x, 16.0);
         assert!(second.y < first.y);
+    }
+
+    #[test]
+    fn toast_rect_stays_inside_small_viewport() {
+        let rect = toast_rect(
+            0,
+            "A message that would normally produce a wide toast",
+            140.0,
+            80.0,
+            1.0,
+            ToastPosition::TopRight,
+            None,
+            &TextStyle::default(),
+            &Theme::dark(),
+        );
+
+        assert!(rect.x >= 0.0 && rect.y >= 0.0);
+        assert!(rect.x + rect.w <= 140.0);
+        assert!(rect.y + rect.h <= 80.0);
+    }
+
+    #[test]
+    fn toast_stack_hides_entries_that_cannot_fit_without_overlap() {
+        let first = toast_rect(
+            0,
+            "Saved",
+            240.0,
+            100.0,
+            1.0,
+            ToastPosition::BottomRight,
+            None,
+            &TextStyle::default(),
+            &Theme::dark(),
+        );
+        let second = toast_rect(
+            1,
+            "Saved again",
+            240.0,
+            100.0,
+            1.0,
+            ToastPosition::BottomRight,
+            None,
+            &TextStyle::default(),
+            &Theme::dark(),
+        );
+
+        assert!(first.h > 0.0);
+        assert_eq!(second.h, 0.0);
     }
 
     #[test]

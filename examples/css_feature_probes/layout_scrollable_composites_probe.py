@@ -424,13 +424,13 @@ with dg.VLayout(class_="root"):
 
         with dg.Panel("Log and code scroll owners", class_="case"):
             dg.Label("The log and code gutter should stay clipped to this card while the card height stays fixed.", class_="caption")
-            with dg.HLayout(style={"width": "100%", "flex": 1, "min_height": 0, "gap": 8}):
+            with dg.HLayout(style={"width": "100%", "flex": 1, "gap": 8}):
                 dg.LogView(LOG_LINES, follow=False, rows=8, wrap=False, class_="log")
                 dg.CodeEditor(CODE_SAMPLE, language="python", rows=8, wrap=False, class_="code")
 
         with dg.Panel("Tree and selectable list", class_="case short"):
             dg.Label("Two scrollable list widgets share one card without either bleeding into the other.", class_="caption")
-            with dg.HLayout(style={"width": "100%", "flex": 1, "min_height": 0, "gap": 10}):
+            with dg.HLayout(style={"width": "100%", "flex": 1, "gap": 10}):
                 with dg.ScrollArea(axis="y", class_="fill-scroll"):
                     with dg.TreeView(class_="compact-tree", on_select=lambda node_id: mark(f"Tree: {node_id}")):
                         with dg.TreeNode("Plant", node_id="plant", expanded=True):
@@ -529,7 +529,7 @@ with dg.VLayout(class_="root"):
             dg.Label("The outer scroll area contains fixed inner scroll areas; wheel and clipping should remain local.", class_="caption")
             with dg.ScrollArea(axis="y", class_="fill-scroll"):
                 for section in range(1, 5):
-                    with dg.Panel(f"Inner scroller {section}", class_="short", style={"height": 162, "width": "100%", "min_width": 0}):
+                    with dg.Panel(f"Inner scroller {section}", class_="short", style={"height": 162, "width": "100%"}):
                         with dg.ScrollArea(axis="y", class_="fill-scroll"):
                             for row in range(1, 10):
                                 with dg.HLayout(class_="field-row"):

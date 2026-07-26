@@ -1,0 +1,3490 @@
+{
+  "gpu": {
+    "computed_styles": {
+      "dg-1": {
+        "matched_rules": [
+          "framework: Window",
+          "user: Window"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {
+            "gap": 14.0,
+            "padding": 18.0,
+            "padding_bottom": 18.0,
+            "padding_left": 18.0,
+            "padding_right": 18.0,
+            "padding_top": 18.0
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.9372549057006836,
+                0.9725490212440491,
+                1.0,
+                1.0
+              ]
+            }
+          },
+          "visual": {
+            "background": {
+              "rgba": [
+                0.06666667014360428,
+                0.09803921729326248,
+                0.13725490868091583,
+                1.0
+              ]
+            },
+            "background_paint": {
+              "color": {
+                "rgba": [
+                  0.06666667014360428,
+                  0.09803921729326248,
+                  0.13725490868091583,
+                  1.0
+                ]
+              },
+              "type": "color"
+            }
+          },
+          "widget": {}
+        }
+      },
+      "dg-10": {
+        "matched_rules": [
+          "framework: Panel",
+          "framework: Panel::scrollbar-track",
+          "framework: Panel::scrollbar-thumb",
+          "user: .origin-card"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {
+            "flex_grow": 0.0,
+            "gap": 8.0,
+            "padding": 12.0,
+            "padding_bottom": 12.0,
+            "padding_left": 12.0,
+            "padding_right": 12.0,
+            "padding_top": 12.0
+          },
+          "open": {},
+          "parts": {
+            "scrollbar-thumb": {
+              "matched_rules": [
+                "framework: Panel::scrollbar-thumb"
+              ],
+              "visual": {
+                "background": {
+                  "token": "border"
+                },
+                "background_paint": {
+                  "color": {
+                    "token": "border"
+                  },
+                  "type": "color"
+                },
+                "border_radius": 999.0
+              }
+            },
+            "scrollbar-track": {
+              "layout": {
+                "padding": 1.0
+              },
+              "matched_rules": [
+                "framework: Panel::scrollbar-track"
+              ],
+              "visual": {
+                "background": {
+                  "rgba": [
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0
+                  ]
+                },
+                "background_paint": {
+                  "color": {
+                    "rgba": [
+                      0.0,
+                      0.0,
+                      0.0,
+                      0.0
+                    ]
+                  },
+                  "type": "color"
+                }
+              }
+            }
+          },
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.9372549057006836,
+                0.9725490212440491,
+                1.0,
+                1.0
+              ]
+            }
+          },
+          "visual": {
+            "accent": {
+              "token": "accent"
+            },
+            "background": {
+              "rgba": [
+                1.0,
+                1.0,
+                1.0,
+                0.054901961237192154
+              ]
+            },
+            "background_paint": {
+              "color": {
+                "rgba": [
+                  1.0,
+                  1.0,
+                  1.0,
+                  0.054901961237192154
+                ]
+              },
+              "type": "color"
+            },
+            "border_color": {
+              "rgba": [
+                1.0,
+                1.0,
+                1.0,
+                0.1411764770746231
+              ]
+            },
+            "border_radius": 3.0,
+            "border_width": 1.0
+          },
+          "widget": {}
+        }
+      },
+      "dg-11": {
+        "matched_rules": [
+          "user: .inline-wins"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {
+            "align_items": "center",
+            "flex_grow": 0.0,
+            "flex_shrink": 0.0,
+            "gap": 6.0,
+            "height": 38.0,
+            "min_width": 164.0,
+            "width": 220.0
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.9372549057006836,
+                0.9725490212440491,
+                1.0,
+                1.0
+              ]
+            }
+          },
+          "visual": {
+            "border_color": {
+              "rgba": [
+                0.35686275362968445,
+                0.6078431606292725,
+                1.0,
+                1.0
+              ]
+            },
+            "border_width": 2.0
+          },
+          "widget": {}
+        }
+      },
+      "dg-12": {
+        "matched_rules": [
+          "framework: IconButton",
+          "framework: IconButton",
+          "framework: IconButton:hover",
+          "framework: IconButton:focus",
+          "framework: IconButton:active",
+          "framework: IconButton:disabled"
+        ],
+        "style": {
+          "active": {
+            "background": {
+              "token": "accent_dark"
+            },
+            "background_paint": {
+              "color": {
+                "token": "accent_dark"
+              },
+              "type": "color"
+            },
+            "border_color": {
+              "token": "accent_dark"
+            }
+          },
+          "checked": {},
+          "collapsed": {},
+          "disabled": {
+            "border_color": {
+              "token": "disabled"
+            },
+            "opacity": 0.6200000047683716
+          },
+          "expanded": {},
+          "focus": {
+            "border_color": {
+              "token": "focus"
+            }
+          },
+          "hover": {
+            "background": {
+              "token": "accent_mix_12"
+            },
+            "background_paint": {
+              "color": {
+                "token": "accent_mix_12"
+              },
+              "type": "color"
+            },
+            "border_color": {
+              "token": "accent_mix_20"
+            }
+          },
+          "layout": {
+            "height": 25.0,
+            "padding": 3.0,
+            "padding_bottom": 3.0,
+            "padding_left": 3.0,
+            "padding_right": 3.0,
+            "padding_top": 3.0,
+            "width": 25.0
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "token": "text"
+            }
+          },
+          "visual": {
+            "accent": {
+              "token": "accent"
+            },
+            "background": {
+              "token": "surface_alt"
+            },
+            "background_paint": {
+              "color": {
+                "token": "surface_alt"
+              },
+              "type": "color"
+            },
+            "border_color": {
+              "token": "border"
+            },
+            "border_radius": 3.0,
+            "border_width": 1.0
+          },
+          "widget": {}
+        }
+      },
+      "dg-13": {
+        "matched_rules": [
+          "framework: TextInput:focus",
+          "framework: TextInput:disabled",
+          "framework: TextInput",
+          "framework: TextInput:hover"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {
+            "border_color": {
+              "token": "disabled"
+            },
+            "opacity": 0.6200000047683716
+          },
+          "expanded": {},
+          "focus": {
+            "border_color": {
+              "token": "focus"
+            }
+          },
+          "hover": {
+            "border_color": {
+              "token": "accent_mix_20"
+            }
+          },
+          "layout": {
+            "flex_basis": 0.0,
+            "flex_grow": 1.0,
+            "flex_shrink": 1.0,
+            "min_width": 0.0,
+            "padding_bottom": 4.0,
+            "padding_left": 7.0,
+            "padding_right": 7.0,
+            "padding_top": 4.0
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "token": "text"
+            }
+          },
+          "visual": {
+            "accent": {
+              "token": "accent"
+            },
+            "background": {
+              "token": "surface"
+            },
+            "background_paint": {
+              "color": {
+                "token": "surface"
+              },
+              "type": "color"
+            },
+            "border_color": {
+              "token": "border"
+            },
+            "border_radius": 3.0,
+            "border_width": 1.0
+          },
+          "widget": {}
+        }
+      },
+      "dg-14": {
+        "matched_rules": [
+          "framework: IconButton",
+          "framework: IconButton",
+          "framework: IconButton:hover",
+          "framework: IconButton:focus",
+          "framework: IconButton:active",
+          "framework: IconButton:disabled"
+        ],
+        "style": {
+          "active": {
+            "background": {
+              "token": "accent_dark"
+            },
+            "background_paint": {
+              "color": {
+                "token": "accent_dark"
+              },
+              "type": "color"
+            },
+            "border_color": {
+              "token": "accent_dark"
+            }
+          },
+          "checked": {},
+          "collapsed": {},
+          "disabled": {
+            "border_color": {
+              "token": "disabled"
+            },
+            "opacity": 0.6200000047683716
+          },
+          "expanded": {},
+          "focus": {
+            "border_color": {
+              "token": "focus"
+            }
+          },
+          "hover": {
+            "background": {
+              "token": "accent_mix_12"
+            },
+            "background_paint": {
+              "color": {
+                "token": "accent_mix_12"
+              },
+              "type": "color"
+            },
+            "border_color": {
+              "token": "accent_mix_20"
+            }
+          },
+          "layout": {
+            "height": 25.0,
+            "padding": 3.0,
+            "padding_bottom": 3.0,
+            "padding_left": 3.0,
+            "padding_right": 3.0,
+            "padding_top": 3.0,
+            "width": 25.0
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "token": "text"
+            }
+          },
+          "visual": {
+            "accent": {
+              "token": "accent"
+            },
+            "background": {
+              "token": "surface_alt"
+            },
+            "background_paint": {
+              "color": {
+                "token": "surface_alt"
+              },
+              "type": "color"
+            },
+            "border_color": {
+              "token": "border"
+            },
+            "border_radius": 3.0,
+            "border_width": 1.0
+          },
+          "widget": {}
+        }
+      },
+      "dg-15": {
+        "matched_rules": [
+          "framework: Panel",
+          "framework: Panel::scrollbar-track",
+          "framework: Panel::scrollbar-thumb",
+          "user: .origin-card"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {
+            "flex_grow": 0.0,
+            "gap": 8.0,
+            "padding": 12.0,
+            "padding_bottom": 12.0,
+            "padding_left": 12.0,
+            "padding_right": 12.0,
+            "padding_top": 12.0
+          },
+          "open": {},
+          "parts": {
+            "scrollbar-thumb": {
+              "matched_rules": [
+                "framework: Panel::scrollbar-thumb"
+              ],
+              "visual": {
+                "background": {
+                  "token": "border"
+                },
+                "background_paint": {
+                  "color": {
+                    "token": "border"
+                  },
+                  "type": "color"
+                },
+                "border_radius": 999.0
+              }
+            },
+            "scrollbar-track": {
+              "layout": {
+                "padding": 1.0
+              },
+              "matched_rules": [
+                "framework: Panel::scrollbar-track"
+              ],
+              "visual": {
+                "background": {
+                  "rgba": [
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0
+                  ]
+                },
+                "background_paint": {
+                  "color": {
+                    "rgba": [
+                      0.0,
+                      0.0,
+                      0.0,
+                      0.0
+                    ]
+                  },
+                  "type": "color"
+                }
+              }
+            }
+          },
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.9372549057006836,
+                0.9725490212440491,
+                1.0,
+                1.0
+              ]
+            }
+          },
+          "visual": {
+            "accent": {
+              "token": "accent"
+            },
+            "background": {
+              "rgba": [
+                1.0,
+                1.0,
+                1.0,
+                0.054901961237192154
+              ]
+            },
+            "background_paint": {
+              "color": {
+                "rgba": [
+                  1.0,
+                  1.0,
+                  1.0,
+                  0.054901961237192154
+                ]
+              },
+              "type": "color"
+            },
+            "border_color": {
+              "rgba": [
+                1.0,
+                1.0,
+                1.0,
+                0.1411764770746231
+              ]
+            },
+            "border_radius": 3.0,
+            "border_width": 1.0
+          },
+          "widget": {}
+        }
+      },
+      "dg-16": {
+        "matched_rules": [],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {},
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.9372549057006836,
+                0.9725490212440491,
+                1.0,
+                1.0
+              ]
+            }
+          },
+          "visual": {},
+          "widget": {}
+        }
+      },
+      "dg-2": {
+        "matched_rules": [],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {
+            "gap": 12.0
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.9372549057006836,
+                0.9725490212440491,
+                1.0,
+                1.0
+              ]
+            }
+          },
+          "visual": {},
+          "widget": {}
+        }
+      },
+      "dg-3": {
+        "matched_rules": [],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {},
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.9372549057006836,
+                0.9725490212440491,
+                1.0,
+                1.0
+              ]
+            },
+            "font_size": 22.0,
+            "font_weight": 850
+          },
+          "visual": {},
+          "widget": {}
+        }
+      },
+      "dg-4": {
+        "matched_rules": [],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {},
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.9372549057006836,
+                0.9725490212440491,
+                1.0,
+                1.0
+              ]
+            }
+          },
+          "visual": {},
+          "widget": {}
+        }
+      },
+      "dg-5": {
+        "matched_rules": [
+          "framework: Panel",
+          "framework: Panel::scrollbar-track",
+          "framework: Panel::scrollbar-thumb",
+          "user: .origin-card"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {
+            "flex_grow": 0.0,
+            "gap": 8.0,
+            "padding": 12.0,
+            "padding_bottom": 12.0,
+            "padding_left": 12.0,
+            "padding_right": 12.0,
+            "padding_top": 12.0
+          },
+          "open": {},
+          "parts": {
+            "scrollbar-thumb": {
+              "matched_rules": [
+                "framework: Panel::scrollbar-thumb"
+              ],
+              "visual": {
+                "background": {
+                  "token": "border"
+                },
+                "background_paint": {
+                  "color": {
+                    "token": "border"
+                  },
+                  "type": "color"
+                },
+                "border_radius": 999.0
+              }
+            },
+            "scrollbar-track": {
+              "layout": {
+                "padding": 1.0
+              },
+              "matched_rules": [
+                "framework: Panel::scrollbar-track"
+              ],
+              "visual": {
+                "background": {
+                  "rgba": [
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0
+                  ]
+                },
+                "background_paint": {
+                  "color": {
+                    "rgba": [
+                      0.0,
+                      0.0,
+                      0.0,
+                      0.0
+                    ]
+                  },
+                  "type": "color"
+                }
+              }
+            }
+          },
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.9372549057006836,
+                0.9725490212440491,
+                1.0,
+                1.0
+              ]
+            }
+          },
+          "visual": {
+            "accent": {
+              "token": "accent"
+            },
+            "background": {
+              "rgba": [
+                1.0,
+                1.0,
+                1.0,
+                0.054901961237192154
+              ]
+            },
+            "background_paint": {
+              "color": {
+                "rgba": [
+                  1.0,
+                  1.0,
+                  1.0,
+                  0.054901961237192154
+                ]
+              },
+              "type": "color"
+            },
+            "border_color": {
+              "rgba": [
+                1.0,
+                1.0,
+                1.0,
+                0.1411764770746231
+              ]
+            },
+            "border_radius": 3.0,
+            "border_width": 1.0
+          },
+          "widget": {}
+        }
+      },
+      "dg-6": {
+        "matched_rules": [
+          "user: .stylesheet-width"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {
+            "align_items": "center",
+            "flex_grow": 0.0,
+            "flex_shrink": 0.0,
+            "gap": 6.0,
+            "height": 38.0,
+            "min_width": 164.0,
+            "width": 360.0
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.9372549057006836,
+                0.9725490212440491,
+                1.0,
+                1.0
+              ]
+            }
+          },
+          "visual": {
+            "border_color": {
+              "rgba": [
+                0.3019607961177826,
+                0.8274509906768799,
+                0.6941176652908325,
+                1.0
+              ]
+            },
+            "border_width": 2.0
+          },
+          "widget": {}
+        }
+      },
+      "dg-7": {
+        "matched_rules": [
+          "framework: IconButton",
+          "framework: IconButton",
+          "framework: IconButton:hover",
+          "framework: IconButton:focus",
+          "framework: IconButton:active",
+          "framework: IconButton:disabled"
+        ],
+        "style": {
+          "active": {
+            "background": {
+              "token": "accent_dark"
+            },
+            "background_paint": {
+              "color": {
+                "token": "accent_dark"
+              },
+              "type": "color"
+            },
+            "border_color": {
+              "token": "accent_dark"
+            }
+          },
+          "checked": {},
+          "collapsed": {},
+          "disabled": {
+            "border_color": {
+              "token": "disabled"
+            },
+            "opacity": 0.6200000047683716
+          },
+          "expanded": {},
+          "focus": {
+            "border_color": {
+              "token": "focus"
+            }
+          },
+          "hover": {
+            "background": {
+              "token": "accent_mix_12"
+            },
+            "background_paint": {
+              "color": {
+                "token": "accent_mix_12"
+              },
+              "type": "color"
+            },
+            "border_color": {
+              "token": "accent_mix_20"
+            }
+          },
+          "layout": {
+            "height": 25.0,
+            "padding": 3.0,
+            "padding_bottom": 3.0,
+            "padding_left": 3.0,
+            "padding_right": 3.0,
+            "padding_top": 3.0,
+            "width": 25.0
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "token": "text"
+            }
+          },
+          "visual": {
+            "accent": {
+              "token": "accent"
+            },
+            "background": {
+              "token": "surface_alt"
+            },
+            "background_paint": {
+              "color": {
+                "token": "surface_alt"
+              },
+              "type": "color"
+            },
+            "border_color": {
+              "token": "border"
+            },
+            "border_radius": 3.0,
+            "border_width": 1.0
+          },
+          "widget": {}
+        }
+      },
+      "dg-8": {
+        "matched_rules": [
+          "framework: TextInput:focus",
+          "framework: TextInput:disabled",
+          "framework: TextInput",
+          "framework: TextInput:hover"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {
+            "border_color": {
+              "token": "disabled"
+            },
+            "opacity": 0.6200000047683716
+          },
+          "expanded": {},
+          "focus": {
+            "border_color": {
+              "token": "focus"
+            }
+          },
+          "hover": {
+            "border_color": {
+              "token": "accent_mix_20"
+            }
+          },
+          "layout": {
+            "flex_basis": 0.0,
+            "flex_grow": 1.0,
+            "flex_shrink": 1.0,
+            "min_width": 0.0,
+            "padding_bottom": 4.0,
+            "padding_left": 7.0,
+            "padding_right": 7.0,
+            "padding_top": 4.0
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "token": "text"
+            }
+          },
+          "visual": {
+            "accent": {
+              "token": "accent"
+            },
+            "background": {
+              "token": "surface"
+            },
+            "background_paint": {
+              "color": {
+                "token": "surface"
+              },
+              "type": "color"
+            },
+            "border_color": {
+              "token": "border"
+            },
+            "border_radius": 3.0,
+            "border_width": 1.0
+          },
+          "widget": {}
+        }
+      },
+      "dg-9": {
+        "matched_rules": [
+          "framework: IconButton",
+          "framework: IconButton",
+          "framework: IconButton:hover",
+          "framework: IconButton:focus",
+          "framework: IconButton:active",
+          "framework: IconButton:disabled"
+        ],
+        "style": {
+          "active": {
+            "background": {
+              "token": "accent_dark"
+            },
+            "background_paint": {
+              "color": {
+                "token": "accent_dark"
+              },
+              "type": "color"
+            },
+            "border_color": {
+              "token": "accent_dark"
+            }
+          },
+          "checked": {},
+          "collapsed": {},
+          "disabled": {
+            "border_color": {
+              "token": "disabled"
+            },
+            "opacity": 0.6200000047683716
+          },
+          "expanded": {},
+          "focus": {
+            "border_color": {
+              "token": "focus"
+            }
+          },
+          "hover": {
+            "background": {
+              "token": "accent_mix_12"
+            },
+            "background_paint": {
+              "color": {
+                "token": "accent_mix_12"
+              },
+              "type": "color"
+            },
+            "border_color": {
+              "token": "accent_mix_20"
+            }
+          },
+          "layout": {
+            "height": 25.0,
+            "padding": 3.0,
+            "padding_bottom": 3.0,
+            "padding_left": 3.0,
+            "padding_right": 3.0,
+            "padding_top": 3.0,
+            "width": 25.0
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "token": "text"
+            }
+          },
+          "visual": {
+            "accent": {
+              "token": "accent"
+            },
+            "background": {
+              "token": "surface_alt"
+            },
+            "background_paint": {
+              "color": {
+                "token": "surface_alt"
+              },
+              "type": "color"
+            },
+            "border_color": {
+              "token": "border"
+            },
+            "border_radius": 3.0,
+            "border_width": 1.0
+          },
+          "widget": {}
+        }
+      }
+    },
+    "framework": {
+      "apply_layout": {
+        "avg_ms": 16.45573333333333,
+        "count": 3,
+        "last_ms": 1.421,
+        "total_ms": 49.3672
+      },
+      "container_style": {
+        "avg_ms": 0.004533333333333334,
+        "count": 3,
+        "last_ms": 0.00019999999999999998,
+        "total_ms": 0.013600000000000001
+      },
+      "image_rebuild": {
+        "avg_ms": 0.13566666666666666,
+        "count": 3,
+        "last_ms": 0.0881,
+        "total_ms": 0.407
+      },
+      "layout_compute": {
+        "avg_ms": 2.4441666666666664,
+        "count": 3,
+        "last_ms": 0.4598,
+        "total_ms": 7.3325
+      },
+      "line_plot_rebuild": {
+        "avg_ms": 0.0229,
+        "count": 3,
+        "last_ms": 0.0189,
+        "total_ms": 0.0687
+      },
+      "prewarm_scatter_widgets": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "primitive_rebuild": {
+        "avg_ms": 0.23466666666666666,
+        "count": 3,
+        "last_ms": 0.1375,
+        "total_ms": 0.704
+      },
+      "rebuild_primitives": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "rebuild_text": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "rebuild_visuals": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "replace_children_maps": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "replace_children_parse": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "replace_children_swap": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "replace_node_maps": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "replace_node_parse": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "replace_node_swap": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_line_plot_sync": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_maps": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_resources": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_scatter_chrome": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_scatter_collect": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_scatter_decode": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_scatter_new_widget": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_scatter_retain": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_scatter_sync": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_scatter_upload": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_state_preserve": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_widget_kinds": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_widget_state": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "scatter_layout": {
+        "avg_ms": 0.007466666666666667,
+        "count": 3,
+        "last_ms": 0.0058000000000000005,
+        "total_ms": 0.0224
+      },
+      "style_reapply": {
+        "avg_ms": 0.10690000000000001,
+        "count": 3,
+        "last_ms": 0.0129,
+        "total_ms": 0.32070000000000004
+      },
+      "text_rebuild": {
+        "avg_ms": 2.3051999999999997,
+        "count": 3,
+        "last_ms": 0.6484000000000001,
+        "total_ms": 6.9155999999999995
+      },
+      "transition_sync": {
+        "avg_ms": 0.02723333333333333,
+        "count": 3,
+        "last_ms": 0.0204,
+        "total_ms": 0.0817
+      }
+    },
+    "layout": {
+      "clips": {
+        "dg-1": {
+          "h": 520.0,
+          "w": 760.0,
+          "x": 0.0,
+          "y": 0.0
+        },
+        "dg-10": {
+          "h": 89.0,
+          "w": 724.0,
+          "x": 18.0,
+          "y": 202.0
+        },
+        "dg-11": {
+          "h": 38.0,
+          "w": 220.0,
+          "x": 30.0,
+          "y": 241.0
+        },
+        "dg-12": {
+          "h": 25.0,
+          "w": 25.0,
+          "x": 30.0,
+          "y": 248.0
+        },
+        "dg-13": {
+          "h": 25.0,
+          "w": 158.0,
+          "x": 61.0,
+          "y": 248.0
+        },
+        "dg-14": {
+          "h": 25.0,
+          "w": 25.0,
+          "x": 225.0,
+          "y": 248.0
+        },
+        "dg-15": {
+          "h": 76.0,
+          "w": 724.0,
+          "x": 18.0,
+          "y": 303.0
+        },
+        "dg-16": {
+          "h": 25.0,
+          "w": 700.0,
+          "x": 30.0,
+          "y": 342.0
+        },
+        "dg-2": {
+          "h": 484.0,
+          "w": 724.0,
+          "x": 18.0,
+          "y": 18.0
+        },
+        "dg-3": {
+          "h": 34.0,
+          "w": 724.0,
+          "x": 18.0,
+          "y": 18.0
+        },
+        "dg-4": {
+          "h": 25.0,
+          "w": 724.0,
+          "x": 18.0,
+          "y": 64.0
+        },
+        "dg-5": {
+          "h": 89.0,
+          "w": 724.0,
+          "x": 18.0,
+          "y": 101.0
+        },
+        "dg-6": {
+          "h": 38.0,
+          "w": 360.0,
+          "x": 30.0,
+          "y": 140.0
+        },
+        "dg-7": {
+          "h": 25.0,
+          "w": 25.0,
+          "x": 30.0,
+          "y": 147.0
+        },
+        "dg-8": {
+          "h": 25.0,
+          "w": 298.0,
+          "x": 61.0,
+          "y": 147.0
+        },
+        "dg-9": {
+          "h": 25.0,
+          "w": 25.0,
+          "x": 365.0,
+          "y": 147.0
+        }
+      },
+      "diagnostics": {
+        "dg-1": {
+          "available": {
+            "height": 520.0,
+            "width": 760.0,
+            "x": 0.0,
+            "y": 0.0
+          },
+          "issues": [],
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 520.0,
+            "width": 760.0,
+            "x": 0.0,
+            "y": 0.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-10": {
+          "available": {
+            "height": 89.0,
+            "width": 724.0,
+            "x": 18.0,
+            "y": 202.0
+          },
+          "issues": [],
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 89.0,
+            "width": 724.0,
+            "x": 18.0,
+            "y": 202.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-11": {
+          "available": {
+            "height": 38.0,
+            "width": 220.0,
+            "x": 30.0,
+            "y": 241.0
+          },
+          "issues": [],
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 38.0,
+            "width": 220.0,
+            "x": 30.0,
+            "y": 241.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-12": {
+          "available": {
+            "height": 25.0,
+            "width": 25.0,
+            "x": 30.0,
+            "y": 248.0
+          },
+          "issues": [],
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 25.0,
+            "width": 25.0,
+            "x": 30.0,
+            "y": 248.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-13": {
+          "available": {
+            "height": 25.0,
+            "width": 158.0,
+            "x": 61.0,
+            "y": 248.0
+          },
+          "issues": [],
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 25.0,
+            "width": 158.0,
+            "x": 61.0,
+            "y": 248.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-14": {
+          "available": {
+            "height": 25.0,
+            "width": 25.0,
+            "x": 225.0,
+            "y": 248.0
+          },
+          "issues": [],
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 25.0,
+            "width": 25.0,
+            "x": 225.0,
+            "y": 248.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-15": {
+          "available": {
+            "height": 76.0,
+            "width": 724.0,
+            "x": 18.0,
+            "y": 303.0
+          },
+          "issues": [],
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 76.0,
+            "width": 724.0,
+            "x": 18.0,
+            "y": 303.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-16": {
+          "available": {
+            "height": 25.0,
+            "width": 700.0,
+            "x": 30.0,
+            "y": 342.0
+          },
+          "issues": [],
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 25.0,
+            "width": 700.0,
+            "x": 30.0,
+            "y": 342.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-2": {
+          "available": {
+            "height": 484.0,
+            "width": 724.0,
+            "x": 18.0,
+            "y": 18.0
+          },
+          "issues": [],
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 484.0,
+            "width": 724.0,
+            "x": 18.0,
+            "y": 18.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-3": {
+          "available": {
+            "height": 34.0,
+            "width": 724.0,
+            "x": 18.0,
+            "y": 18.0
+          },
+          "issues": [],
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 34.0,
+            "width": 724.0,
+            "x": 18.0,
+            "y": 18.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-4": {
+          "available": {
+            "height": 25.0,
+            "width": 724.0,
+            "x": 18.0,
+            "y": 64.0
+          },
+          "issues": [],
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 25.0,
+            "width": 724.0,
+            "x": 18.0,
+            "y": 64.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-5": {
+          "available": {
+            "height": 89.0,
+            "width": 724.0,
+            "x": 18.0,
+            "y": 101.0
+          },
+          "issues": [],
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 89.0,
+            "width": 724.0,
+            "x": 18.0,
+            "y": 101.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-6": {
+          "available": {
+            "height": 38.0,
+            "width": 360.0,
+            "x": 30.0,
+            "y": 140.0
+          },
+          "issues": [],
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 38.0,
+            "width": 360.0,
+            "x": 30.0,
+            "y": 140.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-7": {
+          "available": {
+            "height": 25.0,
+            "width": 25.0,
+            "x": 30.0,
+            "y": 147.0
+          },
+          "issues": [],
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 25.0,
+            "width": 25.0,
+            "x": 30.0,
+            "y": 147.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-8": {
+          "available": {
+            "height": 25.0,
+            "width": 298.0,
+            "x": 61.0,
+            "y": 147.0
+          },
+          "issues": [],
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 25.0,
+            "width": 298.0,
+            "x": 61.0,
+            "y": 147.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-9": {
+          "available": {
+            "height": 25.0,
+            "width": 25.0,
+            "x": 365.0,
+            "y": 147.0
+          },
+          "issues": [],
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 25.0,
+            "width": 25.0,
+            "x": 365.0,
+            "y": 147.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        }
+      },
+      "paint_clips": {
+        "dg-1": {
+          "h": 520.0,
+          "w": 760.0,
+          "x": 0.0,
+          "y": 0.0
+        },
+        "dg-10": {
+          "h": 520.0,
+          "w": 760.0,
+          "x": 0.0,
+          "y": 0.0
+        },
+        "dg-11": {
+          "h": 51.0,
+          "w": 724.0,
+          "x": 18.0,
+          "y": 240.0
+        },
+        "dg-12": {
+          "h": 51.0,
+          "w": 724.0,
+          "x": 18.0,
+          "y": 240.0
+        },
+        "dg-13": {
+          "h": 51.0,
+          "w": 724.0,
+          "x": 18.0,
+          "y": 240.0
+        },
+        "dg-14": {
+          "h": 51.0,
+          "w": 724.0,
+          "x": 18.0,
+          "y": 240.0
+        },
+        "dg-15": {
+          "h": 520.0,
+          "w": 760.0,
+          "x": 0.0,
+          "y": 0.0
+        },
+        "dg-16": {
+          "h": 38.0,
+          "w": 724.0,
+          "x": 18.0,
+          "y": 341.0
+        },
+        "dg-2": {
+          "h": 520.0,
+          "w": 760.0,
+          "x": 0.0,
+          "y": 0.0
+        },
+        "dg-3": {
+          "h": 520.0,
+          "w": 760.0,
+          "x": 0.0,
+          "y": 0.0
+        },
+        "dg-4": {
+          "h": 520.0,
+          "w": 760.0,
+          "x": 0.0,
+          "y": 0.0
+        },
+        "dg-5": {
+          "h": 520.0,
+          "w": 760.0,
+          "x": 0.0,
+          "y": 0.0
+        },
+        "dg-6": {
+          "h": 51.0,
+          "w": 724.0,
+          "x": 18.0,
+          "y": 139.0
+        },
+        "dg-7": {
+          "h": 51.0,
+          "w": 724.0,
+          "x": 18.0,
+          "y": 139.0
+        },
+        "dg-8": {
+          "h": 51.0,
+          "w": 724.0,
+          "x": 18.0,
+          "y": 139.0
+        },
+        "dg-9": {
+          "h": 51.0,
+          "w": 724.0,
+          "x": 18.0,
+          "y": 139.0
+        }
+      },
+      "reconciliation": {
+        "converged": true,
+        "iterations": 0
+      },
+      "rects": {
+        "dg-1": {
+          "h": 520.0,
+          "w": 760.0,
+          "x": 0.0,
+          "y": 0.0
+        },
+        "dg-10": {
+          "h": 89.0,
+          "w": 724.0,
+          "x": 18.0,
+          "y": 202.0
+        },
+        "dg-11": {
+          "h": 38.0,
+          "w": 220.0,
+          "x": 30.0,
+          "y": 241.0
+        },
+        "dg-12": {
+          "h": 25.0,
+          "w": 25.0,
+          "x": 30.0,
+          "y": 248.0
+        },
+        "dg-13": {
+          "h": 25.0,
+          "w": 158.0,
+          "x": 61.0,
+          "y": 248.0
+        },
+        "dg-14": {
+          "h": 25.0,
+          "w": 25.0,
+          "x": 225.0,
+          "y": 248.0
+        },
+        "dg-15": {
+          "h": 76.0,
+          "w": 724.0,
+          "x": 18.0,
+          "y": 303.0
+        },
+        "dg-16": {
+          "h": 25.0,
+          "w": 700.0,
+          "x": 30.0,
+          "y": 342.0
+        },
+        "dg-2": {
+          "h": 484.0,
+          "w": 724.0,
+          "x": 18.0,
+          "y": 18.0
+        },
+        "dg-3": {
+          "h": 34.0,
+          "w": 724.0,
+          "x": 18.0,
+          "y": 18.0
+        },
+        "dg-4": {
+          "h": 25.0,
+          "w": 724.0,
+          "x": 18.0,
+          "y": 64.0
+        },
+        "dg-5": {
+          "h": 89.0,
+          "w": 724.0,
+          "x": 18.0,
+          "y": 101.0
+        },
+        "dg-6": {
+          "h": 38.0,
+          "w": 360.0,
+          "x": 30.0,
+          "y": 140.0
+        },
+        "dg-7": {
+          "h": 25.0,
+          "w": 25.0,
+          "x": 30.0,
+          "y": 147.0
+        },
+        "dg-8": {
+          "h": 25.0,
+          "w": 298.0,
+          "x": 61.0,
+          "y": 147.0
+        },
+        "dg-9": {
+          "h": 25.0,
+          "w": 25.0,
+          "x": 365.0,
+          "y": 147.0
+        }
+      },
+      "schema_version": 1,
+      "scroll_max_x": {
+        "dg-10": 0.0,
+        "dg-15": 0.0,
+        "dg-5": 0.0
+      },
+      "scroll_max_y": {
+        "dg-10": 0.0,
+        "dg-15": 0.0,
+        "dg-5": 0.0
+      },
+      "scroll_x": {
+        "dg-10": 0.0,
+        "dg-15": 0.0,
+        "dg-5": 0.0
+      },
+      "scroll_y": {
+        "dg-10": 0.0,
+        "dg-15": 0.0,
+        "dg-5": 0.0
+      }
+    },
+    "renderer": {
+      "caret_positions": {
+        "dg-13": [
+          0.0,
+          0.0
+        ],
+        "dg-8": [
+          0.0,
+          0.0
+        ]
+      },
+      "desired_maximum_frame_latency": 2,
+      "font_warnings": [],
+      "has_primitives": true,
+      "has_scatter": false,
+      "has_text": true,
+      "html_reports": {
+        "enabled": true,
+        "environment_ready": false,
+        "instances": {},
+        "last_error": null,
+        "platform": "windows",
+        "profile_generation": 0,
+        "profile_recovered": false,
+        "reason": null,
+        "user_data_dir": null
+      },
+      "line_plot_renderer": {
+        "aa_width": 1.0,
+        "buffer_bytes": 0,
+        "decimated_series_count": 0,
+        "decimation_mode": "auto",
+        "enabled": true,
+        "last_decimate_ms": 0.0,
+        "last_emit_ms": 0.0042,
+        "last_encode_ms": 0.0,
+        "last_upload_ms": 0.0,
+        "max_segments_per_series": 8192,
+        "point_bytes": 0,
+        "point_count": 0,
+        "segment_count": 0,
+        "series_bytes": 0,
+        "series_count": 0,
+        "source_point_count": 0
+      },
+      "present_mode": "fifo",
+      "present_mode_env": null,
+      "primitives": {
+        "base_batches": 22,
+        "buffer_bytes": 4816,
+        "complex_batches": 11,
+        "complex_bytes": 3600,
+        "complex_count": 15,
+        "last_base_encode_ms": 0.0,
+        "last_emit_ms": 0.0742,
+        "last_overlay_encode_ms": 0.0,
+        "last_split_ms": 0.0070999999999999995,
+        "last_upload_ms": 0.022,
+        "line_batches": 0,
+        "line_bytes": 0,
+        "line_count": 0,
+        "overlay_batches": 0,
+        "rect_count": 34,
+        "simple_batches": 11,
+        "simple_bytes": 1216,
+        "simple_count": 19,
+        "source_bytes": 8160,
+        "split_collapsed": false,
+        "split_enabled": true
+      },
+      "scatter_count": 0,
+      "scatter_widget_id": null,
+      "scatter_widget_pool": 0,
+      "supported_present_modes": [
+        "fifo",
+        "fifo-relaxed",
+        "mailbox",
+        "immediate"
+      ],
+      "surface_format": "Bgra8UnormSrgb",
+      "widget_count": 16
+    },
+    "resources": {
+      "buffers": {
+        "resources": 0
+      },
+      "line_plot": null,
+      "line_plots": {},
+      "registry": {
+        "buffers": {
+          "count": 0,
+          "items": {}
+        },
+        "tables": {
+          "count": 0,
+          "items": {}
+        }
+      },
+      "scatter": null,
+      "scatters": {},
+      "tables": {
+        "resources": 0,
+        "widgets": 0
+      }
+    },
+    "state": {
+      "active_pages": {},
+      "active_t": {},
+      "active_tabs": {},
+      "checked": {},
+      "checked_t": {},
+      "container_scroll_x": {
+        "dg-10": 0.0,
+        "dg-15": 0.0,
+        "dg-5": 0.0
+      },
+      "container_scroll_y": {
+        "dg-10": 0.0,
+        "dg-15": 0.0,
+        "dg-5": 0.0
+      },
+      "context_menu_pos": null,
+      "context_targets": {},
+      "disabled": [
+        "dg-12",
+        "dg-7"
+      ],
+      "drag_hover_target": null,
+      "drag_kind": null,
+      "drag_pos": null,
+      "drag_source": null,
+      "dropdown_hover": null,
+      "dropdown_index": {},
+      "dropdown_items_count": {},
+      "expanded": {},
+      "expanded_t": {},
+      "float_range": {},
+      "float_val": {},
+      "focus_order": [
+        "dg-8",
+        "dg-9",
+        "dg-13",
+        "dg-14"
+      ],
+      "focus_t": {},
+      "focused": null,
+      "hover_t": {},
+      "hovered": null,
+      "menu_items_count": {},
+      "open_context_menu": null,
+      "open_dropdown": null,
+      "open_menu": null,
+      "open_t": {},
+      "pane_sizes": {},
+      "pressed": null,
+      "range_val": {},
+      "selectable_selected": {},
+      "selected_t": {},
+      "tables": {},
+      "text_cursor": {
+        "dg-13": 0,
+        "dg-8": 0
+      },
+      "text_scroll_x": {},
+      "text_scroll_y": {},
+      "text_val": {
+        "dg-13": "",
+        "dg-8": ""
+      }
+    },
+    "stylesheets": {
+      "framework_rules": 145,
+      "last_error": null,
+      "theme_rules": 0,
+      "user_rules": 4,
+      "warning_count": 0
+    },
+    "theme": {
+      "accent": [
+        0.21568627655506134,
+        0.7764706015586853,
+        0.8156862854957581,
+        1.0
+      ],
+      "background": [
+        0.03921568766236305,
+        0.05882352963089943,
+        0.0784313753247261,
+        1.0
+      ],
+      "border": [
+        0.14901961386203766,
+        0.2078431397676468,
+        0.26274511218070984,
+        1.0
+      ],
+      "danger": [
+        1.0,
+        0.37254902720451355,
+        0.4470588266849518,
+        1.0
+      ],
+      "disabled": [
+        0.364705890417099,
+        0.4156862795352936,
+        0.4588235318660736,
+        1.0
+      ],
+      "focus": [
+        0.48235294222831726,
+        0.8627451062202454,
+        1.0,
+        1.0
+      ],
+      "font_size": 13.0,
+      "muted_text": [
+        0.5686274766921997,
+        0.6274510025978088,
+        0.6784313917160034,
+        1.0
+      ],
+      "radius": 3.0,
+      "spacing": 5.0,
+      "success": [
+        0.2705882489681244,
+        0.7686274647712708,
+        0.5411764979362488,
+        1.0
+      ],
+      "surface": [
+        0.07058823853731155,
+        0.09803921729326248,
+        0.13333334028720856,
+        1.0
+      ],
+      "surface_alt": [
+        0.11372549086809158,
+        0.1568627506494522,
+        0.20000000298023224,
+        1.0
+      ],
+      "text": [
+        0.9490196108818054,
+        0.9647058844566345,
+        0.9725490212440491,
+        1.0
+      ],
+      "warning": [
+        0.95686274766922,
+        0.7215686440467834,
+        0.29019609093666077,
+        1.0
+      ]
+    },
+    "toasts": {
+      "count": 0,
+      "items": []
+    },
+    "tree": {
+      "children": [
+        {
+          "children": [
+            {
+              "children": [],
+              "class": null,
+              "id": "dg-3",
+              "key": null,
+              "props": {
+                "badge": null,
+                "checked": null,
+                "disabled": false,
+                "expanded": null,
+                "extension_type": null,
+                "fixed_height": null,
+                "fixed_width": null,
+                "flow_align": null,
+                "flow_cross_align": null,
+                "grid_columns": null,
+                "grid_masonry": false,
+                "grid_min_column_width": null,
+                "grid_template_columns": null,
+                "grid_template_rows": null,
+                "gutter_size": null,
+                "image_fit": null,
+                "image_path": null,
+                "intrinsic_height": null,
+                "intrinsic_width": null,
+                "items_count": 0,
+                "led_size": null,
+                "led_state": null,
+                "level": null,
+                "max": null,
+                "min": null,
+                "open": null,
+                "orientation": null,
+                "page": null,
+                "pane_flex": null,
+                "pane_max_size": null,
+                "pane_min_size": null,
+                "pane_size": null,
+                "placeholder": null,
+                "route_value": null,
+                "rows": null,
+                "step": null,
+                "table": {
+                  "columns": 0,
+                  "page_size": null,
+                  "resizable_columns": true,
+                  "resource_id": null,
+                  "rows": null,
+                  "sample_rows": null,
+                  "sortable": true
+                },
+                "target": null,
+                "text": "Widget defaults versus authored styles",
+                "toggle": null,
+                "tooltip": null,
+                "value": null,
+                "wrap": true
+              },
+              "style": {
+                "font_size": 22,
+                "font_weight": 850
+              },
+              "type": "label"
+            },
+            {
+              "children": [],
+              "class": null,
+              "id": "dg-4",
+              "key": null,
+              "props": {
+                "badge": null,
+                "checked": null,
+                "disabled": false,
+                "expanded": null,
+                "extension_type": null,
+                "fixed_height": null,
+                "fixed_width": null,
+                "flow_align": null,
+                "flow_cross_align": null,
+                "grid_columns": null,
+                "grid_masonry": false,
+                "grid_min_column_width": null,
+                "grid_template_columns": null,
+                "grid_template_rows": null,
+                "gutter_size": null,
+                "image_fit": null,
+                "image_path": null,
+                "intrinsic_height": null,
+                "intrinsic_width": null,
+                "items_count": 0,
+                "led_size": null,
+                "led_state": null,
+                "level": null,
+                "max": null,
+                "min": null,
+                "open": null,
+                "orientation": null,
+                "page": null,
+                "pane_flex": null,
+                "pane_max_size": null,
+                "pane_min_size": null,
+                "pane_size": null,
+                "placeholder": null,
+                "route_value": null,
+                "rows": null,
+                "step": null,
+                "table": {
+                  "columns": 0,
+                  "page_size": null,
+                  "resizable_columns": true,
+                  "resource_id": null,
+                  "rows": null,
+                  "sample_rows": null,
+                  "sortable": true
+                },
+                "target": null,
+                "text": "Green should resolve to the application stylesheet width. Blue should resolve to the explicit 220px inline width.",
+                "toggle": null,
+                "tooltip": null,
+                "value": null,
+                "wrap": true
+              },
+              "style": {},
+              "type": "label"
+            },
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "children": [],
+                      "class": "search-box-icon",
+                      "id": "dg-7",
+                      "key": null,
+                      "props": {
+                        "badge": null,
+                        "checked": null,
+                        "disabled": true,
+                        "expanded": null,
+                        "extension_type": null,
+                        "fixed_height": 28.0,
+                        "fixed_width": 28.0,
+                        "flow_align": null,
+                        "flow_cross_align": null,
+                        "grid_columns": null,
+                        "grid_masonry": false,
+                        "grid_min_column_width": null,
+                        "grid_template_columns": null,
+                        "grid_template_rows": null,
+                        "gutter_size": null,
+                        "image_fit": null,
+                        "image_path": null,
+                        "intrinsic_height": null,
+                        "intrinsic_width": null,
+                        "items_count": 0,
+                        "led_size": null,
+                        "led_state": null,
+                        "level": null,
+                        "max": null,
+                        "min": null,
+                        "open": null,
+                        "orientation": null,
+                        "page": null,
+                        "pane_flex": null,
+                        "pane_max_size": null,
+                        "pane_min_size": null,
+                        "pane_size": null,
+                        "placeholder": null,
+                        "route_value": null,
+                        "rows": null,
+                        "step": null,
+                        "table": {
+                          "columns": 0,
+                          "page_size": null,
+                          "resizable_columns": true,
+                          "resource_id": null,
+                          "rows": null,
+                          "sample_rows": null,
+                          "sortable": true
+                        },
+                        "target": null,
+                        "text": null,
+                        "toggle": null,
+                        "tooltip": null,
+                        "value": null,
+                        "wrap": null
+                      },
+                      "style": {},
+                      "type": "icon_button"
+                    },
+                    {
+                      "children": [],
+                      "class": "search-box-input",
+                      "id": "dg-8",
+                      "key": null,
+                      "props": {
+                        "badge": null,
+                        "checked": null,
+                        "disabled": false,
+                        "expanded": null,
+                        "extension_type": null,
+                        "fixed_height": null,
+                        "fixed_width": null,
+                        "flow_align": null,
+                        "flow_cross_align": null,
+                        "grid_columns": null,
+                        "grid_masonry": false,
+                        "grid_min_column_width": null,
+                        "grid_template_columns": null,
+                        "grid_template_rows": null,
+                        "gutter_size": null,
+                        "image_fit": null,
+                        "image_path": null,
+                        "intrinsic_height": null,
+                        "intrinsic_width": null,
+                        "items_count": 0,
+                        "led_size": null,
+                        "led_state": null,
+                        "level": null,
+                        "max": null,
+                        "min": null,
+                        "open": null,
+                        "orientation": null,
+                        "page": null,
+                        "pane_flex": null,
+                        "pane_max_size": null,
+                        "pane_min_size": null,
+                        "pane_size": null,
+                        "placeholder": "Expected stylesheet width: 360px",
+                        "route_value": "",
+                        "rows": null,
+                        "step": null,
+                        "table": {
+                          "columns": 0,
+                          "page_size": null,
+                          "resizable_columns": true,
+                          "resource_id": null,
+                          "rows": null,
+                          "sample_rows": null,
+                          "sortable": true
+                        },
+                        "target": null,
+                        "text": "",
+                        "toggle": null,
+                        "tooltip": null,
+                        "value": null,
+                        "wrap": null
+                      },
+                      "style": {
+                        "flex": 1,
+                        "min_width": 0
+                      },
+                      "type": "text_input"
+                    },
+                    {
+                      "children": [],
+                      "class": "search-box-clear",
+                      "id": "dg-9",
+                      "key": null,
+                      "props": {
+                        "badge": null,
+                        "checked": null,
+                        "disabled": false,
+                        "expanded": null,
+                        "extension_type": null,
+                        "fixed_height": 28.0,
+                        "fixed_width": 28.0,
+                        "flow_align": null,
+                        "flow_cross_align": null,
+                        "grid_columns": null,
+                        "grid_masonry": false,
+                        "grid_min_column_width": null,
+                        "grid_template_columns": null,
+                        "grid_template_rows": null,
+                        "gutter_size": null,
+                        "image_fit": null,
+                        "image_path": null,
+                        "intrinsic_height": null,
+                        "intrinsic_width": null,
+                        "items_count": 0,
+                        "led_size": null,
+                        "led_state": null,
+                        "level": null,
+                        "max": null,
+                        "min": null,
+                        "open": null,
+                        "orientation": null,
+                        "page": null,
+                        "pane_flex": null,
+                        "pane_max_size": null,
+                        "pane_min_size": null,
+                        "pane_size": null,
+                        "placeholder": null,
+                        "route_value": null,
+                        "rows": null,
+                        "step": null,
+                        "table": {
+                          "columns": 0,
+                          "page_size": null,
+                          "resizable_columns": true,
+                          "resource_id": null,
+                          "rows": null,
+                          "sample_rows": null,
+                          "sortable": true
+                        },
+                        "target": null,
+                        "text": null,
+                        "toggle": null,
+                        "tooltip": "Clear",
+                        "value": null,
+                        "wrap": null
+                      },
+                      "style": {},
+                      "type": "icon_button"
+                    }
+                  ],
+                  "class": "search-box stylesheet-width",
+                  "id": "dg-6",
+                  "key": null,
+                  "props": {
+                    "badge": null,
+                    "checked": null,
+                    "disabled": false,
+                    "expanded": null,
+                    "extension_type": null,
+                    "fixed_height": null,
+                    "fixed_width": null,
+                    "flow_align": null,
+                    "flow_cross_align": null,
+                    "grid_columns": null,
+                    "grid_masonry": false,
+                    "grid_min_column_width": null,
+                    "grid_template_columns": null,
+                    "grid_template_rows": null,
+                    "gutter_size": null,
+                    "image_fit": null,
+                    "image_path": null,
+                    "intrinsic_height": null,
+                    "intrinsic_width": null,
+                    "items_count": 0,
+                    "led_size": null,
+                    "led_state": null,
+                    "level": null,
+                    "max": null,
+                    "min": null,
+                    "open": null,
+                    "orientation": null,
+                    "page": null,
+                    "pane_flex": null,
+                    "pane_max_size": null,
+                    "pane_min_size": null,
+                    "pane_size": null,
+                    "placeholder": null,
+                    "route_value": null,
+                    "rows": null,
+                    "step": null,
+                    "table": {
+                      "columns": 0,
+                      "page_size": null,
+                      "resizable_columns": true,
+                      "resource_id": null,
+                      "rows": null,
+                      "sample_rows": null,
+                      "sortable": true
+                    },
+                    "target": null,
+                    "text": null,
+                    "toggle": null,
+                    "tooltip": null,
+                    "value": null,
+                    "wrap": null
+                  },
+                  "style": {
+                    "align_items": "center",
+                    "flex_grow": 0,
+                    "flex_shrink": 0,
+                    "gap": 6,
+                    "height": 38,
+                    "min_width": 164,
+                    "width": "100%"
+                  },
+                  "type": "h_layout"
+                }
+              ],
+              "class": "origin-card",
+              "id": "dg-5",
+              "key": null,
+              "props": {
+                "badge": null,
+                "checked": null,
+                "disabled": false,
+                "expanded": null,
+                "extension_type": null,
+                "fixed_height": null,
+                "fixed_width": null,
+                "flow_align": null,
+                "flow_cross_align": null,
+                "grid_columns": null,
+                "grid_masonry": false,
+                "grid_min_column_width": null,
+                "grid_template_columns": null,
+                "grid_template_rows": null,
+                "gutter_size": null,
+                "image_fit": null,
+                "image_path": null,
+                "intrinsic_height": null,
+                "intrinsic_width": null,
+                "items_count": 0,
+                "led_size": null,
+                "led_state": null,
+                "level": null,
+                "max": null,
+                "min": null,
+                "open": null,
+                "orientation": null,
+                "page": null,
+                "pane_flex": null,
+                "pane_max_size": null,
+                "pane_min_size": null,
+                "pane_size": null,
+                "placeholder": null,
+                "route_value": null,
+                "rows": null,
+                "step": null,
+                "table": {
+                  "columns": 0,
+                  "page_size": null,
+                  "resizable_columns": true,
+                  "resource_id": null,
+                  "rows": null,
+                  "sample_rows": null,
+                  "sortable": true
+                },
+                "target": null,
+                "text": "Application stylesheet",
+                "toggle": null,
+                "tooltip": null,
+                "value": null,
+                "wrap": null
+              },
+              "style": {},
+              "type": "panel"
+            },
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "children": [],
+                      "class": "search-box-icon",
+                      "id": "dg-12",
+                      "key": null,
+                      "props": {
+                        "badge": null,
+                        "checked": null,
+                        "disabled": true,
+                        "expanded": null,
+                        "extension_type": null,
+                        "fixed_height": 28.0,
+                        "fixed_width": 28.0,
+                        "flow_align": null,
+                        "flow_cross_align": null,
+                        "grid_columns": null,
+                        "grid_masonry": false,
+                        "grid_min_column_width": null,
+                        "grid_template_columns": null,
+                        "grid_template_rows": null,
+                        "gutter_size": null,
+                        "image_fit": null,
+                        "image_path": null,
+                        "intrinsic_height": null,
+                        "intrinsic_width": null,
+                        "items_count": 0,
+                        "led_size": null,
+                        "led_state": null,
+                        "level": null,
+                        "max": null,
+                        "min": null,
+                        "open": null,
+                        "orientation": null,
+                        "page": null,
+                        "pane_flex": null,
+                        "pane_max_size": null,
+                        "pane_min_size": null,
+                        "pane_size": null,
+                        "placeholder": null,
+                        "route_value": null,
+                        "rows": null,
+                        "step": null,
+                        "table": {
+                          "columns": 0,
+                          "page_size": null,
+                          "resizable_columns": true,
+                          "resource_id": null,
+                          "rows": null,
+                          "sample_rows": null,
+                          "sortable": true
+                        },
+                        "target": null,
+                        "text": null,
+                        "toggle": null,
+                        "tooltip": null,
+                        "value": null,
+                        "wrap": null
+                      },
+                      "style": {},
+                      "type": "icon_button"
+                    },
+                    {
+                      "children": [],
+                      "class": "search-box-input",
+                      "id": "dg-13",
+                      "key": null,
+                      "props": {
+                        "badge": null,
+                        "checked": null,
+                        "disabled": false,
+                        "expanded": null,
+                        "extension_type": null,
+                        "fixed_height": null,
+                        "fixed_width": null,
+                        "flow_align": null,
+                        "flow_cross_align": null,
+                        "grid_columns": null,
+                        "grid_masonry": false,
+                        "grid_min_column_width": null,
+                        "grid_template_columns": null,
+                        "grid_template_rows": null,
+                        "gutter_size": null,
+                        "image_fit": null,
+                        "image_path": null,
+                        "intrinsic_height": null,
+                        "intrinsic_width": null,
+                        "items_count": 0,
+                        "led_size": null,
+                        "led_state": null,
+                        "level": null,
+                        "max": null,
+                        "min": null,
+                        "open": null,
+                        "orientation": null,
+                        "page": null,
+                        "pane_flex": null,
+                        "pane_max_size": null,
+                        "pane_min_size": null,
+                        "pane_size": null,
+                        "placeholder": "Expected inline width: 220px",
+                        "route_value": "",
+                        "rows": null,
+                        "step": null,
+                        "table": {
+                          "columns": 0,
+                          "page_size": null,
+                          "resizable_columns": true,
+                          "resource_id": null,
+                          "rows": null,
+                          "sample_rows": null,
+                          "sortable": true
+                        },
+                        "target": null,
+                        "text": "",
+                        "toggle": null,
+                        "tooltip": null,
+                        "value": null,
+                        "wrap": null
+                      },
+                      "style": {
+                        "flex": 1,
+                        "min_width": 0
+                      },
+                      "type": "text_input"
+                    },
+                    {
+                      "children": [],
+                      "class": "search-box-clear",
+                      "id": "dg-14",
+                      "key": null,
+                      "props": {
+                        "badge": null,
+                        "checked": null,
+                        "disabled": false,
+                        "expanded": null,
+                        "extension_type": null,
+                        "fixed_height": 28.0,
+                        "fixed_width": 28.0,
+                        "flow_align": null,
+                        "flow_cross_align": null,
+                        "grid_columns": null,
+                        "grid_masonry": false,
+                        "grid_min_column_width": null,
+                        "grid_template_columns": null,
+                        "grid_template_rows": null,
+                        "gutter_size": null,
+                        "image_fit": null,
+                        "image_path": null,
+                        "intrinsic_height": null,
+                        "intrinsic_width": null,
+                        "items_count": 0,
+                        "led_size": null,
+                        "led_state": null,
+                        "level": null,
+                        "max": null,
+                        "min": null,
+                        "open": null,
+                        "orientation": null,
+                        "page": null,
+                        "pane_flex": null,
+                        "pane_max_size": null,
+                        "pane_min_size": null,
+                        "pane_size": null,
+                        "placeholder": null,
+                        "route_value": null,
+                        "rows": null,
+                        "step": null,
+                        "table": {
+                          "columns": 0,
+                          "page_size": null,
+                          "resizable_columns": true,
+                          "resource_id": null,
+                          "rows": null,
+                          "sample_rows": null,
+                          "sortable": true
+                        },
+                        "target": null,
+                        "text": null,
+                        "toggle": null,
+                        "tooltip": "Clear",
+                        "value": null,
+                        "wrap": null
+                      },
+                      "style": {},
+                      "type": "icon_button"
+                    }
+                  ],
+                  "class": "search-box inline-wins",
+                  "id": "dg-11",
+                  "key": null,
+                  "props": {
+                    "badge": null,
+                    "checked": null,
+                    "disabled": false,
+                    "expanded": null,
+                    "extension_type": null,
+                    "fixed_height": null,
+                    "fixed_width": null,
+                    "flow_align": null,
+                    "flow_cross_align": null,
+                    "grid_columns": null,
+                    "grid_masonry": false,
+                    "grid_min_column_width": null,
+                    "grid_template_columns": null,
+                    "grid_template_rows": null,
+                    "gutter_size": null,
+                    "image_fit": null,
+                    "image_path": null,
+                    "intrinsic_height": null,
+                    "intrinsic_width": null,
+                    "items_count": 0,
+                    "led_size": null,
+                    "led_state": null,
+                    "level": null,
+                    "max": null,
+                    "min": null,
+                    "open": null,
+                    "orientation": null,
+                    "page": null,
+                    "pane_flex": null,
+                    "pane_max_size": null,
+                    "pane_min_size": null,
+                    "pane_size": null,
+                    "placeholder": null,
+                    "route_value": null,
+                    "rows": null,
+                    "step": null,
+                    "table": {
+                      "columns": 0,
+                      "page_size": null,
+                      "resizable_columns": true,
+                      "resource_id": null,
+                      "rows": null,
+                      "sample_rows": null,
+                      "sortable": true
+                    },
+                    "target": null,
+                    "text": null,
+                    "toggle": null,
+                    "tooltip": null,
+                    "value": null,
+                    "wrap": null
+                  },
+                  "style": {
+                    "align_items": "center",
+                    "flex_grow": 0,
+                    "flex_shrink": 0,
+                    "gap": 6,
+                    "height": 38,
+                    "min_width": 164,
+                    "width": 220
+                  },
+                  "type": "h_layout"
+                }
+              ],
+              "class": "origin-card",
+              "id": "dg-10",
+              "key": null,
+              "props": {
+                "badge": null,
+                "checked": null,
+                "disabled": false,
+                "expanded": null,
+                "extension_type": null,
+                "fixed_height": null,
+                "fixed_width": null,
+                "flow_align": null,
+                "flow_cross_align": null,
+                "grid_columns": null,
+                "grid_masonry": false,
+                "grid_min_column_width": null,
+                "grid_template_columns": null,
+                "grid_template_rows": null,
+                "gutter_size": null,
+                "image_fit": null,
+                "image_path": null,
+                "intrinsic_height": null,
+                "intrinsic_width": null,
+                "items_count": 0,
+                "led_size": null,
+                "led_state": null,
+                "level": null,
+                "max": null,
+                "min": null,
+                "open": null,
+                "orientation": null,
+                "page": null,
+                "pane_flex": null,
+                "pane_max_size": null,
+                "pane_min_size": null,
+                "pane_size": null,
+                "placeholder": null,
+                "route_value": null,
+                "rows": null,
+                "step": null,
+                "table": {
+                  "columns": 0,
+                  "page_size": null,
+                  "resizable_columns": true,
+                  "resource_id": null,
+                  "rows": null,
+                  "sample_rows": null,
+                  "sortable": true
+                },
+                "target": null,
+                "text": "Author inline style",
+                "toggle": null,
+                "tooltip": null,
+                "value": null,
+                "wrap": null
+              },
+              "style": {},
+              "type": "panel"
+            },
+            {
+              "children": [
+                {
+                  "children": [],
+                  "class": null,
+                  "id": "dg-16",
+                  "key": null,
+                  "props": {
+                    "badge": null,
+                    "checked": null,
+                    "disabled": false,
+                    "expanded": null,
+                    "extension_type": null,
+                    "fixed_height": null,
+                    "fixed_width": null,
+                    "flow_align": null,
+                    "flow_cross_align": null,
+                    "grid_columns": null,
+                    "grid_masonry": false,
+                    "grid_min_column_width": null,
+                    "grid_template_columns": null,
+                    "grid_template_rows": null,
+                    "gutter_size": null,
+                    "image_fit": null,
+                    "image_path": null,
+                    "intrinsic_height": null,
+                    "intrinsic_width": null,
+                    "items_count": 0,
+                    "led_size": null,
+                    "led_state": null,
+                    "level": null,
+                    "max": null,
+                    "min": null,
+                    "open": null,
+                    "orientation": null,
+                    "page": null,
+                    "pane_flex": null,
+                    "pane_max_size": null,
+                    "pane_min_size": null,
+                    "pane_size": null,
+                    "placeholder": null,
+                    "route_value": null,
+                    "rows": null,
+                    "step": null,
+                    "table": {
+                      "columns": 0,
+                      "page_size": null,
+                      "resizable_columns": true,
+                      "resource_id": null,
+                      "rows": null,
+                      "sample_rows": null,
+                      "sortable": true
+                    },
+                    "target": null,
+                    "text": "Target precedence: native fallback < framework CSS < widget default < theme CSS < application CSS < author inline style.",
+                    "toggle": null,
+                    "tooltip": null,
+                    "value": null,
+                    "wrap": true
+                  },
+                  "style": {},
+                  "type": "label"
+                }
+              ],
+              "class": "origin-card",
+              "id": "dg-15",
+              "key": null,
+              "props": {
+                "badge": null,
+                "checked": null,
+                "disabled": false,
+                "expanded": null,
+                "extension_type": null,
+                "fixed_height": null,
+                "fixed_width": null,
+                "flow_align": null,
+                "flow_cross_align": null,
+                "grid_columns": null,
+                "grid_masonry": false,
+                "grid_min_column_width": null,
+                "grid_template_columns": null,
+                "grid_template_rows": null,
+                "gutter_size": null,
+                "image_fit": null,
+                "image_path": null,
+                "intrinsic_height": null,
+                "intrinsic_width": null,
+                "items_count": 0,
+                "led_size": null,
+                "led_state": null,
+                "level": null,
+                "max": null,
+                "min": null,
+                "open": null,
+                "orientation": null,
+                "page": null,
+                "pane_flex": null,
+                "pane_max_size": null,
+                "pane_min_size": null,
+                "pane_size": null,
+                "placeholder": null,
+                "route_value": null,
+                "rows": null,
+                "step": null,
+                "table": {
+                  "columns": 0,
+                  "page_size": null,
+                  "resizable_columns": true,
+                  "resource_id": null,
+                  "rows": null,
+                  "sample_rows": null,
+                  "sortable": true
+                },
+                "target": null,
+                "text": "Cascade contract",
+                "toggle": null,
+                "tooltip": null,
+                "value": null,
+                "wrap": null
+              },
+              "style": {},
+              "type": "panel"
+            }
+          ],
+          "class": null,
+          "id": "dg-2",
+          "key": null,
+          "props": {
+            "badge": null,
+            "checked": null,
+            "disabled": false,
+            "expanded": null,
+            "extension_type": null,
+            "fixed_height": null,
+            "fixed_width": null,
+            "flow_align": null,
+            "flow_cross_align": null,
+            "grid_columns": null,
+            "grid_masonry": false,
+            "grid_min_column_width": null,
+            "grid_template_columns": null,
+            "grid_template_rows": null,
+            "gutter_size": null,
+            "image_fit": null,
+            "image_path": null,
+            "intrinsic_height": null,
+            "intrinsic_width": null,
+            "items_count": 0,
+            "led_size": null,
+            "led_state": null,
+            "level": null,
+            "max": null,
+            "min": null,
+            "open": null,
+            "orientation": null,
+            "page": null,
+            "pane_flex": null,
+            "pane_max_size": null,
+            "pane_min_size": null,
+            "pane_size": null,
+            "placeholder": null,
+            "route_value": null,
+            "rows": null,
+            "step": null,
+            "table": {
+              "columns": 0,
+              "page_size": null,
+              "resizable_columns": true,
+              "resource_id": null,
+              "rows": null,
+              "sample_rows": null,
+              "sortable": true
+            },
+            "target": null,
+            "text": null,
+            "toggle": null,
+            "tooltip": null,
+            "value": null,
+            "wrap": null
+          },
+          "style": {
+            "gap": 12,
+            "height": "100%",
+            "width": "100%"
+          },
+          "type": "v_layout"
+        }
+      ],
+      "class": null,
+      "id": "dg-1",
+      "key": null,
+      "props": {
+        "badge": null,
+        "checked": null,
+        "disabled": false,
+        "expanded": null,
+        "extension_type": null,
+        "fixed_height": 520.0,
+        "fixed_width": 760.0,
+        "flow_align": null,
+        "flow_cross_align": null,
+        "grid_columns": null,
+        "grid_masonry": false,
+        "grid_min_column_width": null,
+        "grid_template_columns": null,
+        "grid_template_rows": null,
+        "gutter_size": null,
+        "image_fit": null,
+        "image_path": null,
+        "intrinsic_height": null,
+        "intrinsic_width": null,
+        "items_count": 0,
+        "led_size": null,
+        "led_state": null,
+        "level": null,
+        "max": null,
+        "min": null,
+        "open": null,
+        "orientation": null,
+        "page": null,
+        "pane_flex": null,
+        "pane_max_size": null,
+        "pane_min_size": null,
+        "pane_size": null,
+        "placeholder": null,
+        "route_value": null,
+        "rows": null,
+        "step": null,
+        "table": {
+          "columns": 0,
+          "page_size": null,
+          "resizable_columns": true,
+          "resource_id": null,
+          "rows": null,
+          "sample_rows": null,
+          "sortable": true
+        },
+        "target": null,
+        "text": null,
+        "toggle": null,
+        "tooltip": null,
+        "value": null,
+        "wrap": null
+      },
+      "style": {},
+      "type": "window"
+    },
+    "window": {
+      "height": 520,
+      "scale_factor": 1.0,
+      "width": 760
+    }
+  },
+  "runtime": {
+    "active_scatter_id": null,
+    "command_drain": {
+      "apply": {
+        "avg_ms": 6.492999999999999,
+        "count": 1,
+        "last_ms": 6.492999999999999,
+        "total_ms": 6.492999999999999
+      },
+      "coalesce": {
+        "avg_ms": 0.0023,
+        "count": 1,
+        "last_ms": 0.0023,
+        "total_ms": 0.0023
+      },
+      "fetch": {
+        "avg_ms": 0.0031999999999999997,
+        "count": 1,
+        "last_ms": 0.0031999999999999997,
+        "total_ms": 0.0031999999999999997
+      },
+      "flush_rebuilds": {
+        "avg_ms": 0.0003,
+        "count": 1,
+        "last_ms": 0.0003,
+        "total_ms": 0.0003
+      },
+      "last_batches": 1,
+      "last_commands": 1,
+      "last_pending": 0,
+      "timing": {
+        "avg_ms": 6.5045,
+        "count": 1,
+        "last_ms": 6.5045,
+        "total_ms": 6.5045
+      }
+    },
+    "command_queue_depth": 0,
+    "command_timings": {
+      "DebugSnapshot": {
+        "avg_ms": 0.01,
+        "count": 2,
+        "last_ms": 0.0033,
+        "total_ms": 0.02
+      }
+    },
+    "commands": {
+      "count": 2,
+      "limit": 64,
+      "recent": [
+        {
+          "command": "DebugSnapshot",
+          "detail": "request_id=0",
+          "dirty": null,
+          "elapsed_ms": 0.0167,
+          "frame": 0,
+          "outcome": "completed",
+          "requested_redraw": false,
+          "seq": 1,
+          "target": null
+        },
+        {
+          "command": "DebugSnapshot",
+          "detail": "request_id=1",
+          "dirty": null,
+          "elapsed_ms": 0.0033,
+          "frame": 0,
+          "outcome": "completed",
+          "requested_redraw": false,
+          "seq": 2,
+          "target": null
+        }
+      ]
+    },
+    "cpu_frame_ms": 0.0,
+    "dirty": {
+      "current": null,
+      "note": "DragonGUI applies coarse dirty flags immediately; this history records the recent command reasons that triggered them.",
+      "recent": []
+    },
+    "drag_drop_session": null,
+    "drag_number_drag": null,
+    "frame_acquire_ms": 0.0,
+    "frame_acquire_ms_avg": 0.0,
+    "frame_encode_ms": 0.0,
+    "frame_encode_ms_avg": 0.0,
+    "frame_ms": 0.0,
+    "frame_ms_avg": 0.0,
+    "frame_prepare_ms": 0.0,
+    "frame_prepare_ms_avg": 0.0,
+    "frame_present_ms": 0.0,
+    "frame_present_ms_avg": 0.0,
+    "frame_submit_ms": 0.0,
+    "frame_submit_ms_avg": 0.0,
+    "frame_window_count": 0,
+    "frame_work_ms": 0.0,
+    "frame_work_ms_avg": 0.0,
+    "frames_rendered": 0,
+    "gpu_ready": true,
+    "last_frame_ms": 0.0,
+    "last_mouse_pos": null,
+    "loading_screen": {
+      "enabled": true,
+      "frames": 1,
+      "min_duration_ms": 120,
+      "present_ms": 358.71520000000004,
+      "shown": true,
+      "startup_resource_ms": 0.0
+    },
+    "orbit_active": false,
+    "pan_active": false,
+    "pan_button": null,
+    "pending_slider_emit": null,
+    "pressed_id": null,
+    "python": {
+      "drain_requested": false,
+      "last_task": null,
+      "last_task_drain": null,
+      "pending_native_commands": 0,
+      "queued_tasks": 0,
+      "startup": {},
+      "task_drain_timing": {},
+      "task_timings": {}
+    },
+    "scrollbar_drag": null,
+    "smoke_frames": null,
+    "splitter_drag": null,
+    "table_column_resize_drag": null,
+    "table_scrollbar_drag": null,
+    "upload_ms": 0.0,
+    "wall_fps": 0.0,
+    "window_open": true
+  },
+  "schema": 1
+}

@@ -1,0 +1,62 @@
+[
+  {
+    "category": "layout",
+    "features": [
+      "Sophisticated application demo",
+      "AppShell",
+      "Sidebar",
+      "WorkbenchLayout",
+      "MenuBar",
+      "Toolbar",
+      "Pages",
+      "Body",
+      "ScrollArea",
+      "GridLayout",
+      "FlowLayout",
+      "DataFrameTable",
+      "charts",
+      "forms",
+      "Modal",
+      "StatusBar"
+    ],
+    "id": "aurora-command-center",
+    "layout_issue_counts": {},
+    "logs": [
+      "logs/aurora-command-center-390x720@1.5x.stdout.txt",
+      "logs/aurora-command-center-390x720@1.5x.stderr.txt",
+      "logs/aurora-command-center-640x480@1.5x.stdout.txt",
+      "logs/aurora-command-center-640x480@1.5x.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Aurora Operations Command Center",
+    "notes": "Sleek full-application stress demo intended to expose responsive shell, dense-card, scrolling, and intrinsic-size regressions. Additional run: Captured with native DragonGUI window screenshot API.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target aurora-command-center --sizes 390x720 --scales 1.5",
+      "python tools/visual_audit.py --target aurora-command-center --sizes 640x480 --scales 1.5"
+    ],
+    "screenshots": [
+      "screenshots/aurora-command-center-390x720@1.5x.png",
+      "screenshots/aurora-command-center-640x480@1.5x.png"
+    ],
+    "script": "examples\\aurora_command_center_demo.py",
+    "snapshots": [
+      "snapshots/aurora-command-center-390x720@1.5x.json",
+      "snapshots/aurora-command-center-390x720@1.5x-resize-0-start-390x720.json",
+      "snapshots/aurora-command-center-390x720@1.5x-resize-1-640x480.json",
+      "snapshots/aurora-command-center-390x720@1.5x-resize-2-1024x768.json",
+      "snapshots/aurora-command-center-390x720@1.5x-resize-3-390x720.json",
+      "snapshots/aurora-command-center-640x480@1.5x.json",
+      "snapshots/aurora-command-center-640x480@1.5x-resize-0-start-640x480.json",
+      "snapshots/aurora-command-center-640x480@1.5x-resize-1-640x480.json",
+      "snapshots/aurora-command-center-640x480@1.5x-resize-2-1024x768.json",
+      "snapshots/aurora-command-center-640x480@1.5x-resize-3-640x480.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/layout.rs",
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  }
+]

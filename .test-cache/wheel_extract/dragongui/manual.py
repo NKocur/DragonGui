@@ -195,6 +195,7 @@ _LAYOUT_WIDGETS = (
     "Body",
     "WorkbenchLayout",
     "WorkbenchMain",
+    "FlexLayout",
     "HLayout",
     "VLayout",
     "ScrollArea",
@@ -406,6 +407,7 @@ _SECTION_NAME_OVERRIDES = {
     "DataFrameTable": "dataframe_table",
     "DateTimeInput": "date_time_input",
     "DropZone": "drop_zone",
+    "FlexLayout": "flex_layout",
     "HLayout": "h_layout",
     "HtmlReport": "html_report",
     "ImageButton": "image_button",
@@ -465,6 +467,7 @@ _SYMBOL_NOTES = {
     "Body": "Flexible main app region that owns scrolling and avoids accidental horizontal overflow.",
     "WorkbenchLayout": "Full-height vertical shell for prompt-first workbench applications.",
     "WorkbenchMain": "Flexible scroll-owning main region for conversation/detail workbench panes.",
+    "FlexLayout": "CSS-overridable flex container with explicit direction, wrapping, gap, and alignment defaults.",
     "Panel": "Framed container for related controls or content; use it as a major dashboard building block.",
     "HLayout": "Horizontal flex container for rows, split regions, toolbars, and compact control groups.",
     "VLayout": "Vertical flex container for stacked forms, panels, and page content.",
@@ -1210,7 +1213,7 @@ def _reference_leaf(
         lines.extend(
             [
                 "",
-                f"CSS type selector: `{css_kind}`.",
+                f"CSS type selector: `{symbol}` (plus its public base-type chain).",
                 "CSS class selector: pass `class_=\"name\"` and style `.name { ... }`.",
                 "Common construction: create it in a container context, or pass `parent=None` for detached children.",
             ]
@@ -1306,17 +1309,19 @@ def _css_parts_reference() -> HelpSection:
 
 def _css_selectors_reference() -> HelpSection:
     lines = [
-        "DragonGUI CSS supports type selectors, class selectors, pseudo states, and registered parts.",
+        "DragonGUI CSS supports public type selectors, class selectors, pseudo states, and registered parts.",
+        "Type names are exact and case-sensitive. They follow the public Python base-type chain, not private native render-kind names.",
+        "For example, `ColorPicker` also matches `Panel`, and `SearchBox` also matches `HLayout`.",
         "",
         "Widget type selectors:",
     ]
     for symbol in _WIDGET_SYMBOLS:
-        lines.append(f"- `{symbol}` -> `{_widget_kind_for_symbol(symbol)}`")
+        lines.append(f"- `{symbol}`")
     lines.extend(
         [
             "",
             "Selector forms:",
-            "- `Button { ... }` or `button { ... }` for widget type rules.",
+            "- `Button { ... }` for exact public widget type rules.",
             "- `.primary { ... }` for class rules from `class_=\"primary\"`.",
             "- `Button:hover { ... }`, `Dropdown:open { ... }`, and `Tab:selected { ... }` for state rules.",
             "- `NumberInput::field { ... }` and `Button::badge { ... }` for part rules.",
@@ -1780,7 +1785,8 @@ with dg.Splitter(orientation="horizontal", sizes=(280, "1fr")):
 
 Use fixed numeric sizes for exact starts and `"fr"` strings for flexible panes.
 `Pane(size=...)` fixes the initial preferred size; `flex` controls remaining
-space. Use `Splitter::gutter` to style the drag handle.
+space. `gutter_size` controls both pane separation and the full draggable hit
+target. Use `Splitter::gutter` to style the thinner divider painted inside it.
 """,
     )
     flex = _section(
@@ -1790,6 +1796,9 @@ space. Use `Splitter::gutter` to style the drag handle.
         """
 Use `HLayout` for rows and `VLayout` for columns. Both support `gap`, `width`,
 `height`, `flex_grow`, `flex_shrink`, padding, and overflow styles.
+Authored dimensions are preferred sizes by default and may shrink in a bounded
+flex parent. Use `flex_shrink: 0` only for an intentional hard size, paired with
+a scroll owner when it cannot fit.
 
 Common patterns:
 ```python
@@ -1799,6 +1808,7 @@ with dg.HLayout(style={"gap": 12}):
 ```
 
 Use `FlowLayout` for badges, tags, and compact buttons that should wrap.
+`HLayout` itself does not wrap.
 Use `Spacer(width=...)` or `Spacer(style={"flex_grow": 1})` only when the
 blank space is semantically useful.
 
@@ -1840,6 +1850,10 @@ is more robust because it wraps.
         """
 `GridLayout(columns=2, min_column_width=320, gap=12)` creates responsive card
 grids. Integer `columns` acts as a maximum when `min_column_width` is present.
+For deterministic viewport behavior, use
+`columns={"default": 4, 1100: 2, 700: 1}`. Numeric keys are inclusive logical
+`max-width` breakpoints. `columns="auto-fit"` collapses unused adaptive tracks,
+and `balance_last_row=True` centers an incomplete non-masonry final row.
 
 Use grid for dashboards with repeated cards. Use masonry card packing when
 cards have different natural heights and should not reserve a full row height.
@@ -1854,6 +1868,9 @@ with dg.GridLayout(columns=3, min_column_width=260, gap=12):
 with dg.GridLayout(columns=2, min_column_width=300, masonry=True, gap=12):
     dg.Panel("Short Card")
     dg.Panel("Tall Card")
+
+with dg.GridLayout(columns={"default": 4, 1100: 2, 700: 1}, gap=12):
+    ...
 ```
 
 Track values can be supplied through `template_columns` or CSS grid properties
@@ -1871,6 +1888,7 @@ scroll.
 
 Avoid nested vertical scroll owners unless each area has a fixed height. A
 `Panel` can scroll its own content when children exceed its bounds.
+Scroll maxima include resolved right and bottom padding.
 
 Common pattern:
 ```python
@@ -1902,14 +1920,18 @@ rendered by the framework.
         "Layout",
         "Containers and rules for building stable native layouts.",
         """
-Start with one main `HLayout` or `VLayout`, then add panels and content areas.
-Prefer container gap/padding over manual pixel placement.
+Start app-style sidebar/body layouts with `AppShell`, `Sidebar`, and `Body`.
+For simpler roots, use one main `HLayout` or `VLayout`, then add panels and
+content areas. Prefer container gap/padding over manual pixel placement.
 
 Important:
 - Use `FlowLayout` for rows of variable-width pills/buttons.
 - Use `GridLayout` for dashboards.
 - Give scroll owners a bound (`height`, `flex_grow`, or window body space).
 - Do not use overlays as normal children when you expect them to float.
+- Titled panels reserve their header and clip/scroll children in the body below.
+- Snapshot issues `below-minimum-viewport` and `unreachable-root-overflow`
+  identify responsive-minimum and missing-scroll-owner problems.
 """,
         [panels, flex, flow, grids, splitters, scroll, overlays],
     )
@@ -1942,7 +1964,9 @@ Use:
   value should be editable by keyboard and steppers.
 - `DragNumber(value=0, min=None, max=None, step=1, speed=None)` for compact
   drag-edit fields.
-- `DragVector(value, labels=None, component_width=88)` for vector-like values.
+- `DragVector(value, labels=None, component_width=88, width=None,
+  min_width=0, max_width=None, grow=False, shrink=True)` for wrapping,
+  explicitly sized vector-like values.
 - `Slider(value=0, min=0, max=1, step=0.01)` for single bounded values.
 - `RangeSlider(value=(0, 1), min=0, max=1, step=0.01)` for min/max ranges.
 
@@ -1969,9 +1993,12 @@ Use:
 - `Checkbox(label, checked=False, on_change=None)` for boolean settings.
 - `ToggleSwitch(label, checked=False, label_position="right")` for prominent
   boolean settings.
-- `RadioGroup(items, value=None, orientation="vertical")` for visible one-of-many.
-- `SelectableList(items, selection_mode="single" | "multi")` for list selection.
-- `TreeView(items, selected=None)` and `TreeNode(...)` for hierarchical data.
+- `RadioGroup(items, value=None, orientation="vertical", width=None,
+  grow=False)` for visible one-of-many; horizontal groups wrap under pressure.
+- `SelectableList(items, selection_mode="single" | "multi", max_height=None,
+  width=None, grow=False)` for content-sized or bounded list selection.
+- `TreeView(items, selected=None, width=None, grow=True)` and `TreeNode(...)`
+  for flexible hierarchical data viewports.
 
 Prefer `RadioGroup` over `Dropdown` when the option set is small and all choices
 should be visible. Prefer `SelectableList` for larger lists with filtering or
@@ -2019,7 +2046,9 @@ dg.PropertyGrid(
 ```
 
 Use `Property(label, editor)` for hand-authored rows and `PropertyGrid` when a
-dictionary/schema should generate a panel.
+dictionary/schema should generate a panel. `PropertyGrid` is content-sized and
+shrink-safe by default; use `width`, `min_width`, `max_width`, and `grow=True`
+to control its outer allocation without reaching into generated rows.
 """,
     )
     inputs = _section(
@@ -2087,7 +2116,10 @@ Use:
   `ArrowButton(direction)` for command surfaces.
 
 Toolbars should use icons for obvious repeated actions and tooltips for
-meaning. Use `ToolbarSeparator` to group commands.
+meaning. Use `ToolbarSeparator` to group commands. Horizontal toolbars wrap and
+grow by default when the available width is narrow. Set
+`style={"flex_wrap": "nowrap"}` and choose an explicit overflow policy only
+when a single scrolling or clipped command row is intentional.
 """,
     )
     breadcrumbs_help = _section(
@@ -2096,8 +2128,9 @@ meaning. Use `ToolbarSeparator` to group commands.
         "Path navigation and compact current-location display.",
         """
 Use `Breadcrumbs(items, current=None, separator=">", max_items=None,
-click_current=False, on_select=None)` for project/file/object paths. The
-callback receives a `BreadcrumbSelection` with the selected item metadata.
+click_current=False, on_select=None, width=None, min_width=0, max_width=None,
+grow=False, shrink=True)` for project/file/object paths. The callback receives
+a `BreadcrumbSelection` with the selected item metadata.
 """,
     )
     command_palette_help = _section(
@@ -2363,7 +2396,7 @@ Inline style part names accept dashed or snake-case names.
 Common layout properties:
 `display`, `width`, `height`, `min-width`, `min-height`, `max-width`,
 `max-height`, `padding`, `margin`, `gap`, `row-gap`, `column-gap`,
-`flex-grow`, `flex-shrink`, `overflow`, `overflow-x`, `overflow-y`,
+`flex-grow`, `flex-shrink`, `flex-wrap`, `overflow`, `overflow-x`, `overflow-y`,
 `align-items`, `justify-content`, grid track properties.
 
 Common visual properties:
@@ -2403,6 +2436,10 @@ style when the value is semantically tied to the widget instance.
 Themes provide colors and spacing tokens. CSS can reference tokens such as
 `background`, `surface`, `surface_alt`, `text`, `muted_text`, `border`,
 `accent`, `success`, `warning`, `danger`, `focus`, and `disabled`.
+
+`Theme.spacing` derives `space_xs`, `space_sm`, `space_md`, `space_lg`, and
+`space_xl` for Python layout arguments. CSS exposes the same scale as
+`--dg-space-xs` through `--dg-space-xl`.
 
 Prefer token-based styles for reusable widgets. Use direct colors only for
 domain-specific visual encodings.
@@ -3445,10 +3482,13 @@ Relevant probes: `layout_overlay_collision_probe.py`,
         """
 Checks:
 - Confirm the widget type selector in `dg.help.reference.css_selectors`.
+- Type names are exact and case-sensitive; use `SearchBox`, not `search_box` or a native render kind.
 - Confirm registered parts in `dg.help.reference.css_parts`.
 - Use `class_="name"` plus `.name { ... }` for targeted styling.
 - Use state selectors only from `dg.help.reference.css_states`.
 - Remember that not every widget exposes every visual part.
+- Inspect `app.debug_snapshot()` for the node's `css_types`, `matched_selectors`,
+  `stylesheets.unmatched_user_selectors`, and per-property `provenance`.
 
 Common fixes:
 - Move style from a nonexistent part to the widget root.

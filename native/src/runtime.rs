@@ -35,9 +35,12 @@ use crate::commands::{
 };
 use crate::css_style::{
     apply_stylesheets_to_tree_for_media_and_containers,
-    matched_part_rule_labels_for_tree_with_media, matched_rule_labels_for_tree_with_media,
-    DgContainerQueryContext, DgKeyframes, DgMediaColorGamut, DgMediaColorScheme,
-    DgMediaEnvironment, DgMediaHover, DgMediaPointer, StylesheetOrigin, StylesheetStore,
+    matched_part_rule_labels_for_tree_with_media, matched_rule_diagnostics_for_tree_with_media,
+    matched_rule_labels_for_tree_with_media, refresh_live_pane_fallback_provenance,
+    user_selector_diagnostics_for_tree_with_media, user_selector_match_counts_for_tree_with_media,
+    DgContainerQueryContext, DgKeyframes, DgMatchedRuleDiagnostic, DgMediaColorGamut,
+    DgMediaColorScheme, DgMediaEnvironment, DgMediaHover, DgMediaPointer, StylesheetOrigin,
+    StylesheetStore,
 };
 use crate::document::{
     self, BarChartHoverProp, HeatmapHoverProp, LinePlotHoverProp, LoadingScreenSpec, NodeProps,
@@ -46,16 +49,19 @@ use crate::document::{
 use crate::document::{LinePlotPayloadFormat, ScatterPayloadFormat};
 use crate::error::DragonError;
 use crate::events::{
-    has_active_modal, hit_test, hit_test_extension_event, hit_test_hover, modal_blocks_point,
-    ChangeValue, DragNumberDrag, RangeSliderDrag, SliderDrag, TableSortColumn, WidgetState,
+    has_active_modal, hit_test, hit_test_extension_event, hit_test_hover, is_interactive_node,
+    modal_blocks_point, ChangeValue, DragNumberDrag, RangeSliderDrag, SliderDrag, TableSortColumn,
+    WidgetState,
 };
 use crate::html_report_webview::HtmlReportWebViewManager;
 use crate::image_widget::ImageRenderer;
 use crate::layout::{
-    compute_layout, is_scroll_container_node, scroll_container_max_x, scroll_container_max_y,
-    tree_node_row_height_for_style, LayoutResult, Rect,
+    child_layout_fallback_context, compute_layout, debug_intrinsic_size_lp,
+    debug_semantic_minimum_lp, is_scroll_container_node, label_wraps, scroll_container_max_x,
+    scroll_container_max_y, tree_node_row_height_for_style, LayoutResult,
+    NativeLayoutFallbackContext, Rect,
 };
-use crate::overlays::{find_node, menu_popup_width};
+use crate::overlays::{dropdown_overlay_rect, find_node, menu_popup_rect};
 use crate::primitives::{
     bar_chart_bar_at as primitive_bar_chart_bar_at, bar_chart_text_labels, bar_chart_toolbar_hit,
     heatmap_cell_at as primitive_heatmap_cell_at, heatmap_text_labels, histogram_plot_rect,
@@ -79,7 +85,7 @@ use crate::style::{
     TransitionStyle, TransitionTimingFunction, VisualStyle, WidgetStyle, BORDER_WIDTH_LP,
 };
 use crate::table::{self, TableHit};
-use crate::text::TextRendererDg;
+use crate::text::{measure_wrapped_text_for_layout, TextRendererDg};
 use crate::theme::{parse_web_color, Theme};
 use crate::toast::{ToastLevel, ToastOverlay, ToastPosition};
 
@@ -3273,39 +3279,166 @@ fn node_style_snapshot(
     Value::Object(map)
 }
 
+fn style_declaration_provenance_snapshot(style: &NodeStyle) -> Value {
+    let mut properties = Map::new();
+    for (property, candidates) in &style.provenance {
+        let Some(winner) = candidates.last() else {
+            continue;
+        };
+        let overridden = candidates
+            .iter()
+            .take(candidates.len().saturating_sub(1))
+            .map(style_declaration_candidate_snapshot)
+            .collect::<Vec<_>>();
+        properties.insert(
+            property.clone(),
+            json!({
+                "winner": style_declaration_candidate_snapshot(winner),
+                "overridden": overridden,
+            }),
+        );
+    }
+    Value::Object(properties)
+}
+
+fn style_declaration_candidate_snapshot(
+    candidate: &crate::style::StyleDeclarationProvenance,
+) -> Value {
+    let mut value = Map::new();
+    value.insert("origin".to_string(), json!(candidate.origin));
+    value.insert(
+        "authored_property".to_string(),
+        json!(candidate.authored_property),
+    );
+    if let Some(source_origin) = &candidate.source_origin {
+        value.insert("source_origin".to_string(), json!(source_origin));
+    }
+    if let Some(inherited_from) = &candidate.inherited_from {
+        value.insert("inherited_from".to_string(), json!(inherited_from));
+    }
+    if let Some(widget_type) = &candidate.python_widget_type {
+        value.insert("python_widget_type".to_string(), json!(widget_type));
+    }
+    if let Some(python_class) = &candidate.python_class {
+        value.insert("python_class".to_string(), json!(python_class));
+    }
+    if let Some(construction) = &candidate.construction {
+        value.insert("construction".to_string(), json!(construction));
+    }
+    value.insert("important".to_string(), json!(candidate.important));
+    if let Some(selector) = &candidate.selector {
+        value.insert("selector".to_string(), json!(selector));
+    }
+    if let Some(source_value) = &candidate.value {
+        value.insert("value".to_string(), source_value.clone());
+    }
+    if let Some(source_index) = candidate.source_index {
+        value.insert("source_index".to_string(), json!(source_index));
+    }
+    if let Some(line) = candidate.source_line {
+        value.insert("line".to_string(), json!(line));
+    }
+    if let Some(column) = candidate.source_column {
+        value.insert("column".to_string(), json!(column));
+    }
+    if let Some(source_order) = candidate.source_order {
+        value.insert("source_order".to_string(), json!(source_order));
+    }
+    if let Some([ids, classes, types]) = candidate.specificity {
+        value.insert(
+            "specificity".to_string(),
+            json!({"ids": ids, "classes": classes, "types": types}),
+        );
+    }
+    Value::Object(value)
+}
+
 fn computed_styles_snapshot(
     root: Option<&WidgetNode>,
     store: &StylesheetStore,
     media: Option<DgMediaEnvironment>,
 ) -> Value {
+    computed_styles_snapshot_with_state(root, store, media, None)
+}
+
+fn computed_styles_snapshot_with_state(
+    root: Option<&WidgetNode>,
+    store: &StylesheetStore,
+    media: Option<DgMediaEnvironment>,
+    state: Option<&WidgetState>,
+) -> Value {
     let Some(root) = root else {
         return json!({});
     };
     let matched_rules = matched_rule_labels_for_tree_with_media(root, store, media);
+    let matched_rule_details = matched_rule_diagnostics_for_tree_with_media(root, store, media);
     let matched_part_rules = matched_part_rule_labels_for_tree_with_media(root, store, media);
     let mut out = Map::new();
-    collect_computed_styles_snapshot(root, &matched_rules, &matched_part_rules, &mut out);
+    collect_computed_styles_snapshot(
+        root,
+        &matched_rules,
+        &matched_rule_details,
+        &matched_part_rules,
+        state,
+        NativeLayoutFallbackContext::default(),
+        &mut out,
+    );
     Value::Object(out)
 }
 
 fn collect_computed_styles_snapshot(
     node: &WidgetNode,
     matched_rules: &std::collections::BTreeMap<String, Vec<String>>,
+    matched_rule_details: &std::collections::BTreeMap<String, Vec<DgMatchedRuleDiagnostic>>,
     matched_part_rules: &std::collections::BTreeMap<
         String,
         std::collections::BTreeMap<String, Vec<String>>,
     >,
+    state: Option<&WidgetState>,
+    fallback_context: NativeLayoutFallbackContext,
     out: &mut Map<String, Value>,
 ) {
+    let mut snapshot_style = node.style.clone();
+    refresh_live_pane_fallback_provenance(
+        &mut snapshot_style,
+        node,
+        fallback_context,
+        state.and_then(|state| state.pane_size(&node.id)),
+    );
     out.insert(
         node.id.clone(),
         json!({
             "matched_rules": matched_rules.get(&node.id).cloned().unwrap_or_default(),
-            "style": node_style_snapshot(&node.style, matched_part_rules.get(&node.id)),
+            "matched_selectors": matched_rule_details.get(&node.id).into_iter().flatten().map(|rule| {
+                json!({
+                    "selector": rule.selector,
+                    "origin": rule.origin,
+                    "source_index": rule.source_index,
+                    "line": rule.source_line,
+                    "column": rule.source_column,
+                    "source_order": rule.source_order,
+                    "specificity": {
+                        "ids": rule.specificity.ids,
+                        "classes": rule.specificity.classes,
+                        "types": rule.specificity.types,
+                    },
+                })
+            }).collect::<Vec<_>>(),
+            "style": node_style_snapshot(&snapshot_style, matched_part_rules.get(&node.id)),
+            "provenance": style_declaration_provenance_snapshot(&snapshot_style),
         }),
     );
+    let child_fallback_context = child_layout_fallback_context(node);
     for child in &node.children {
-        collect_computed_styles_snapshot(child, matched_rules, matched_part_rules, out);
+        collect_computed_styles_snapshot(
+            child,
+            matched_rules,
+            matched_rule_details,
+            matched_part_rules,
+            state,
+            child_fallback_context,
+            out,
+        );
     }
 }
 
@@ -3360,6 +3493,21 @@ fn props_snapshot(node: &WidgetNode) -> Value {
         },
     });
     if let Value::Object(map) = &mut snapshot {
+        map.insert(
+            "grid_column_breakpoints".to_string(),
+            Value::Array(
+                props
+                    .grid_column_breakpoints
+                    .iter()
+                    .map(|rule| json!({ "max_width": rule.max_width, "columns": rule.columns }))
+                    .collect(),
+            ),
+        );
+        map.insert("grid_auto_fit".to_string(), json!(props.grid_auto_fit));
+        map.insert(
+            "grid_balance_last_row".to_string(),
+            json!(props.grid_balance_last_row),
+        );
         map.insert(
             "orientation".to_string(),
             json!(props.orientation.as_deref()),
@@ -3478,15 +3626,576 @@ fn node_snapshot(node: &WidgetNode) -> Value {
     json!({
         "id": &node.id,
         "type": widget_kind_name(&node.kind),
+        "render_kind": widget_kind_name(&node.kind),
+        "css_types": &node.css_types,
         "key": node.key.as_deref(),
         "class": node.class_name.as_deref(),
         "props": props_snapshot(node),
+        "default_style": node_style_snapshot(&node.default_style, None),
+        "inline_style": &node.style_json,
         "style": &node.style_json,
         "children": node.children.iter().map(node_snapshot).collect::<Vec<_>>(),
     })
 }
 
-fn layout_snapshot(layout: Option<&crate::layout::LayoutResult>) -> Value {
+fn layout_diagnostic_issues(
+    root: &WidgetNode,
+    layout: &crate::layout::LayoutResult,
+    state: Option<&WidgetState>,
+) -> HashMap<String, Vec<Value>> {
+    let mut issues = HashMap::<String, Vec<Value>>::new();
+    let Some(root_rect) = layout.rects.get(&root.id).copied() else {
+        return issues;
+    };
+    let scale_factor = layout.scale_factor.max(0.001);
+    let root_layout = &root.style.layout;
+    for (axis, available, required) in [
+        (
+            "x",
+            root_rect.w,
+            snapshot_layout_length_px(
+                root_layout.min_width_value,
+                root_layout.min_width,
+                scale_factor,
+                root_rect.w,
+            ),
+        ),
+        (
+            "y",
+            root_rect.h,
+            snapshot_layout_length_px(
+                root_layout.min_height_value,
+                root_layout.min_height,
+                scale_factor,
+                root_rect.h,
+            ),
+        ),
+    ] {
+        let Some(required) = required else {
+            continue;
+        };
+        if required > available + 0.5 {
+            let message = format!(
+                "below-minimum-viewport-{axis}: {} {} requires {required:.1}px but viewport provides {available:.1}px",
+                root.id,
+                widget_kind_name(&root.kind)
+            );
+            issues.entry(root.id.clone()).or_default().push(json!({
+                "code": "below-minimum-viewport",
+                "severity": "error",
+                "axis": axis,
+                "widget_id": &root.id,
+                "widget_type": widget_kind_name(&root.kind),
+                "parent_id": Value::Null,
+                "parent_type": Value::Null,
+                "rect": rect_json(root_rect),
+                "clip": rect_json(layout.clips.get(&root.id).copied().unwrap_or(root_rect)),
+                "available": available,
+                "required": required,
+                "reason": "viewport is smaller than the root's declared minimum",
+                "message": message,
+            }));
+        }
+    }
+
+    let root_scrolls_x = snapshot_axis_bounded(root, "x");
+    let root_scrolls_y = snapshot_axis_bounded(root, "y");
+    let mut reported_x = root_scrolls_x;
+    let mut reported_y = root_scrolls_y;
+    collect_unreachable_root_overflow(
+        root,
+        layout,
+        &root.id,
+        widget_kind_name(&root.kind),
+        root_rect,
+        root_scrolls_x,
+        root_scrolls_y,
+        &mut reported_x,
+        &mut reported_y,
+        &mut issues,
+    );
+    collect_clip_diagnostic_issues(root, None, false, false, layout, state, &mut issues);
+    collect_scroll_diagnostic_issues(root, layout, &mut issues);
+    issues
+}
+
+fn collect_scroll_diagnostic_issues(
+    node: &WidgetNode,
+    layout: &crate::layout::LayoutResult,
+    issues: &mut HashMap<String, Vec<Value>>,
+) {
+    let Some(viewport) = layout.rects.get(&node.id).copied() else {
+        return;
+    };
+    for child in &node.children {
+        if !snapshot_normal_flow_child(child) {
+            continue;
+        }
+        let Some(child_rect) = layout.rects.get(&child.id).copied() else {
+            continue;
+        };
+        for (axis, outside, available, required, scroll_range) in [
+            (
+                "x",
+                child_rect.x < viewport.x - 0.5
+                    || child_rect.x + child_rect.w > viewport.x + viewport.w + 0.5,
+                viewport.w,
+                (child_rect.x + child_rect.w).max(viewport.x + viewport.w)
+                    - child_rect.x.min(viewport.x),
+                layout.scroll_max_x.get(&node.id).copied().unwrap_or(0.0),
+            ),
+            (
+                "y",
+                child_rect.y < viewport.y - 0.5
+                    || child_rect.y + child_rect.h > viewport.y + viewport.h + 0.5,
+                viewport.h,
+                (child_rect.y + child_rect.h).max(viewport.y + viewport.h)
+                    - child_rect.y.min(viewport.y),
+                layout.scroll_max_y.get(&node.id).copied().unwrap_or(0.0),
+            ),
+        ] {
+            if !outside {
+                continue;
+            }
+            let overflow = snapshot_axis_overflow(node, axis);
+            let code_and_reason = match overflow {
+                Some(OverflowStyle::Auto | OverflowStyle::Scroll) if scroll_range <= 0.5 => Some((
+                    "unreachable-scroll-content",
+                    "content exceeds a scrolling viewport but the axis has no usable scroll range",
+                )),
+                Some(OverflowStyle::Hidden) if node.kind == WidgetKind::ScrollArea => Some((
+                    "disabled-axis-overflow",
+                    "ScrollArea content exceeds an axis explicitly disabled by its axis policy",
+                )),
+                _ => None,
+            };
+            let Some((code, reason)) = code_and_reason else {
+                continue;
+            };
+            let clip = layout.clips.get(&node.id).copied().unwrap_or(viewport);
+            let message = format!(
+                "{code}-{axis}: {} {} contains {} {} beyond its {axis}-axis viewport",
+                node.id,
+                widget_kind_name(&node.kind),
+                child.id,
+                widget_kind_name(&child.kind),
+            );
+            let duplicate = issues.get(&node.id).is_some_and(|existing| {
+                existing
+                    .iter()
+                    .any(|issue| issue["code"] == code && issue["axis"] == axis)
+            });
+            if !duplicate {
+                issues.entry(node.id.clone()).or_default().push(json!({
+                    "code": code,
+                    "severity": "error",
+                    "axis": axis,
+                    "widget_id": &node.id,
+                    "widget_type": widget_kind_name(&node.kind),
+                    "subject_id": &child.id,
+                    "subject_type": widget_kind_name(&child.kind),
+                    "parent_id": Value::Null,
+                    "parent_type": Value::Null,
+                    "rect": rect_json(viewport),
+                    "clip": rect_json(clip),
+                    "available": available,
+                    "required": required,
+                    "scroll_range": scroll_range,
+                    "reason": reason,
+                    "message": message,
+                }));
+            }
+        }
+    }
+    for child in &node.children {
+        collect_scroll_diagnostic_issues(child, layout, issues);
+    }
+}
+
+fn collect_clip_diagnostic_issues(
+    node: &WidgetNode,
+    parent: Option<&WidgetNode>,
+    parent_fully_clipped: bool,
+    inside_scroll_owner: bool,
+    layout: &crate::layout::LayoutResult,
+    state: Option<&WidgetState>,
+    issues: &mut HashMap<String, Vec<Value>>,
+) {
+    let Some(rect) = layout.rects.get(&node.id).copied() else {
+        return;
+    };
+    let clip = layout.clips.get(&node.id).copied().unwrap_or(rect);
+    let has_area = rect.w > 0.5 && rect.h > 0.5;
+    let fully_clipped = has_area && (clip.w <= 0.5 || clip.h <= 0.5);
+    let exempt_empty_clip = matches!(node.kind, WidgetKind::Spacer | WidgetKind::Separator);
+    let parent_id = parent.map(|parent| parent.id.as_str());
+    let parent_kind = parent.map(|parent| widget_kind_name(&parent.kind));
+
+    if let Some(parent) = parent {
+        collect_dimension_contract_issues(node, parent, rect, layout, issues);
+
+        let main_axis = match parent.kind {
+            WidgetKind::HLayout => Some(("x", rect.w, "width")),
+            WidgetKind::VLayout => Some(("y", rect.h, "height")),
+            _ => None,
+        };
+        if let Some((axis, allocated, dimension)) = main_axis {
+            let required_flex = node.style.layout.flex_grow.unwrap_or(0.0) > 0.0
+                && !matches!(node.kind, WidgetKind::Spacer | WidgetKind::Separator)
+                && !node.children.is_empty();
+            let required_minimum = match axis {
+                "x" => node.style.layout.min_width,
+                "y" => node.style.layout.min_height,
+                _ => None,
+            }
+            .filter(|minimum| *minimum > 0.5);
+            let below_required_minimum =
+                required_minimum.is_some_and(|minimum| allocated + 0.5 < minimum);
+            if required_flex && (allocated <= 0.5 || below_required_minimum) {
+                let message = format!(
+                    "flex-allocation-failure-{axis}: {} {} requested flexible space but received only {:.1} usable {dimension} inside {} {}",
+                    node.id,
+                    widget_kind_name(&node.kind),
+                    allocated,
+                    parent.id,
+                    widget_kind_name(&parent.kind),
+                );
+                issues.entry(node.id.clone()).or_default().push(json!({
+                    "code": "flex-allocation-failure",
+                    "severity": "error",
+                    "axis": axis,
+                    "widget_id": &node.id,
+                    "widget_type": widget_kind_name(&node.kind),
+                    "parent_id": &parent.id,
+                    "parent_type": widget_kind_name(&parent.kind),
+                    "rect": rect_json(rect),
+                    "clip": rect_json(clip),
+                    "required_minimum": required_minimum,
+                    "reason": if allocated <= 0.5 {
+                        "non-empty flexible region received no main-axis allocation"
+                    } else {
+                        "flexible region fell below its declared main-axis minimum"
+                    },
+                    "message": message,
+                }));
+            }
+        }
+    }
+
+    // Report only the first empty clip in a clipped subtree. Descendants inherit
+    // the same structural failure and would otherwise turn one bad boundary
+    // into dozens of redundant errors.
+    if fully_clipped
+        && !parent_fully_clipped
+        && !inside_scroll_owner
+        && !exempt_empty_clip
+    {
+        let message = format!(
+            "empty-paint-clip: {} {} has rect ({:.1}, {:.1}, {:.1}, {:.1}) but final clip ({:.1}, {:.1}, {:.1}, {:.1}) is empty",
+            node.id,
+            widget_kind_name(&node.kind),
+            rect.x,
+            rect.y,
+            rect.w,
+            rect.h,
+            clip.x,
+            clip.y,
+            clip.w,
+            clip.h,
+        );
+        issues.entry(node.id.clone()).or_default().push(json!({
+            "code": "empty-paint-clip",
+            "severity": "error",
+            "widget_id": &node.id,
+            "widget_type": widget_kind_name(&node.kind),
+            "parent_id": parent_id,
+            "parent_type": parent_kind,
+            "rect": rect_json(rect),
+            "clip": rect_json(clip),
+            "reason": "non-zero layout rect has no final paintable area",
+            "message": message,
+        }));
+    }
+
+    let disabled = node.props.disabled || state.is_some_and(|state| state.is_disabled(&node.id));
+    if fully_clipped && !inside_scroll_owner && is_interactive_node(node) && !disabled {
+        let message = format!(
+            "fully-clipped-interactive: enabled {} {} is entirely outside its final paint clip",
+            node.id,
+            widget_kind_name(&node.kind),
+        );
+        issues.entry(node.id.clone()).or_default().push(json!({
+            "code": "fully-clipped-interactive",
+            "severity": "error",
+            "widget_id": &node.id,
+            "widget_type": widget_kind_name(&node.kind),
+            "parent_id": parent_id,
+            "parent_type": parent_kind,
+            "rect": rect_json(rect),
+            "clip": rect_json(clip),
+            "reason": "enabled interactive widget has no reachable painted area",
+            "message": message,
+        }));
+    }
+
+    let descendants_inside_scroll_owner = inside_scroll_owner
+        || matches!(
+            snapshot_axis_overflow(node, "x"),
+            Some(OverflowStyle::Auto | OverflowStyle::Scroll)
+        )
+        || matches!(
+            snapshot_axis_overflow(node, "y"),
+            Some(OverflowStyle::Auto | OverflowStyle::Scroll)
+        );
+    for child in &node.children {
+        collect_clip_diagnostic_issues(
+            child,
+            Some(node),
+            fully_clipped,
+            descendants_inside_scroll_owner,
+            layout,
+            state,
+            issues,
+        );
+    }
+}
+
+fn collect_dimension_contract_issues(
+    node: &WidgetNode,
+    parent: &WidgetNode,
+    rect: Rect,
+    layout: &crate::layout::LayoutResult,
+    issues: &mut HashMap<String, Vec<Value>>,
+) {
+    let Some(parent_rect) = layout.rects.get(&parent.id).copied() else {
+        return;
+    };
+    let scale_factor = layout.scale_factor.max(0.001);
+    let style = &node.style.layout;
+    for (axis, resolved, parent_axis, minimum, maximum) in [
+        (
+            "x",
+            rect.w,
+            parent_rect.w,
+            snapshot_layout_length_px(
+                style.min_width_value,
+                style.min_width,
+                scale_factor,
+                parent_rect.w,
+            ),
+            snapshot_layout_length_px(
+                style.max_width_value,
+                style.max_width,
+                scale_factor,
+                parent_rect.w,
+            ),
+        ),
+        (
+            "y",
+            rect.h,
+            parent_rect.h,
+            snapshot_layout_length_px(
+                style.min_height_value,
+                style.min_height,
+                scale_factor,
+                parent_rect.h,
+            ),
+            snapshot_layout_length_px(
+                style.max_height_value,
+                style.max_height,
+                scale_factor,
+                parent_rect.h,
+            ),
+        ),
+    ] {
+        // Layout rectangles ultimately land on physical pixels. Fractional
+        // logical minima (notably at 1.25x and 1.5x) can therefore resolve up
+        // to one physical pixel below their mathematical value without
+        // violating the effective size contract.
+        const PHYSICAL_PIXEL_QUANTIZATION_TOLERANCE: f32 = 1.0;
+        let violation = if minimum.is_some_and(|minimum| {
+            resolved + PHYSICAL_PIXEL_QUANTIZATION_TOLERANCE < minimum
+        }) {
+            Some(("minimum", minimum.unwrap()))
+        } else if maximum.is_some_and(|maximum| {
+            resolved > maximum + PHYSICAL_PIXEL_QUANTIZATION_TOLERANCE
+        }) {
+            Some(("maximum", maximum.unwrap()))
+        } else {
+            None
+        };
+        let Some((contract, expected)) = violation else {
+            continue;
+        };
+        let clip = layout.clips.get(&node.id).copied().unwrap_or(rect);
+        let message = format!(
+            "invalid-min-max-resolution-{axis}: {} {} resolved to {resolved:.1}px, violating {contract} {expected:.1}px",
+            node.id,
+            widget_kind_name(&node.kind),
+        );
+        issues.entry(node.id.clone()).or_default().push(json!({
+            "code": "invalid-min-max-resolution",
+            "severity": "error",
+            "axis": axis,
+            "widget_id": &node.id,
+            "widget_type": widget_kind_name(&node.kind),
+            "parent_id": &parent.id,
+            "parent_type": widget_kind_name(&parent.kind),
+            "rect": rect_json(rect),
+            "clip": rect_json(clip),
+            "resolved": resolved,
+            "parent_available": parent_axis,
+            "contract": contract,
+            "expected": expected,
+            "reason": format!("resolved {axis}-axis size violates declared {contract}"),
+            "message": message,
+        }));
+    }
+}
+
+fn snapshot_layout_length_px(
+    value: Option<LayoutLength>,
+    legacy: Option<f32>,
+    scale_factor: f32,
+    parent_axis: f32,
+) -> Option<f32> {
+    match value {
+        Some(LayoutLength::LogicalPx(value)) => Some(value * scale_factor),
+        Some(LayoutLength::Percent(value)) => Some(parent_axis * value / 100.0),
+        Some(LayoutLength::Calc(value)) => {
+            Some(parent_axis * value.percent / 100.0 + value.px * scale_factor)
+        }
+        Some(LayoutLength::Auto) => None,
+        None => legacy.map(|value| value * scale_factor),
+    }
+    .filter(|value| value.is_finite() && *value >= 0.0)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_unreachable_root_overflow(
+    node: &WidgetNode,
+    layout: &crate::layout::LayoutResult,
+    root_id: &str,
+    root_type: &str,
+    root_rect: Rect,
+    inherited_scroll_x: bool,
+    inherited_scroll_y: bool,
+    reported_x: &mut bool,
+    reported_y: &mut bool,
+    issues: &mut HashMap<String, Vec<Value>>,
+) {
+    let owns_scroll_x = inherited_scroll_x || snapshot_axis_bounded(node, "x");
+    let owns_scroll_y = inherited_scroll_y || snapshot_axis_bounded(node, "y");
+    for child in &node.children {
+        if !snapshot_normal_flow_child(child) {
+            continue;
+        }
+        let Some(rect) = layout.rects.get(&child.id).copied() else {
+            continue;
+        };
+        for (axis, owned, reported, outside, required, available) in [
+            (
+                "x",
+                owns_scroll_x,
+                &mut *reported_x,
+                rect.x < root_rect.x - 0.5 || rect.x + rect.w > root_rect.x + root_rect.w + 0.5,
+                (rect.x + rect.w).max(root_rect.x + root_rect.w) - rect.x.min(root_rect.x),
+                root_rect.w,
+            ),
+            (
+                "y",
+                owns_scroll_y,
+                &mut *reported_y,
+                rect.y < root_rect.y - 0.5 || rect.y + rect.h > root_rect.y + root_rect.h + 0.5,
+                (rect.y + rect.h).max(root_rect.y + root_rect.h) - rect.y.min(root_rect.y),
+                root_rect.h,
+            ),
+        ] {
+            if outside && !owned && !*reported {
+                *reported = true;
+                let message = format!(
+                    "unreachable-root-overflow-{axis}: {} {} clips {} {} with no scroll owner",
+                    root_id,
+                    root_type,
+                    child.id,
+                    widget_kind_name(&child.kind)
+                );
+                issues.entry(root_id.to_string()).or_default().push(json!({
+                    "code": "unreachable-root-overflow",
+                    "severity": "error",
+                    "axis": axis,
+                    "widget_id": root_id,
+                    "widget_type": root_type,
+                    "parent_id": Value::Null,
+                    "parent_type": Value::Null,
+                    "rect": rect_json(root_rect),
+                    "clip": rect_json(layout.clips.get(root_id).copied().unwrap_or(root_rect)),
+                    "available": available,
+                    "required": required,
+                    "subject_id": &child.id,
+                    "subject_type": widget_kind_name(&child.kind),
+                    "reason": "normal-flow content exceeds the root viewport without a scroll owner",
+                    "message": message,
+                }));
+            }
+        }
+        collect_unreachable_root_overflow(
+            child,
+            layout,
+            root_id,
+            root_type,
+            root_rect,
+            owns_scroll_x,
+            owns_scroll_y,
+            reported_x,
+            reported_y,
+            issues,
+        );
+    }
+}
+
+fn snapshot_axis_bounded(node: &WidgetNode, axis: &str) -> bool {
+    matches!(
+        snapshot_axis_overflow(node, axis),
+        Some(OverflowStyle::Hidden | OverflowStyle::Auto | OverflowStyle::Scroll)
+    )
+}
+
+fn snapshot_axis_overflow(node: &WidgetNode, axis: &str) -> Option<OverflowStyle> {
+    if axis == "x" {
+        node.style.layout.overflow_x.or(node.style.layout.overflow)
+    } else {
+        node.style
+            .layout
+            .overflow_y
+            .or(node.style.layout.overflow)
+            .or_else(|| (node.kind == WidgetKind::ScrollArea).then_some(OverflowStyle::Auto))
+    }
+}
+
+fn snapshot_normal_flow_child(node: &WidgetNode) -> bool {
+    !matches!(
+        node.style.layout.position,
+        Some(PositionStyle::Absolute | PositionStyle::Fixed)
+    ) && !matches!(
+        node.kind,
+        WidgetKind::Modal | WidgetKind::Tooltip | WidgetKind::Toast | WidgetKind::ContextMenu
+    )
+}
+
+fn layout_snapshot(
+    layout: Option<&crate::layout::LayoutResult>,
+    root: Option<&WidgetNode>,
+) -> Value {
+    layout_snapshot_with_context(layout, root, None, None)
+}
+
+fn layout_snapshot_with_context(
+    layout: Option<&crate::layout::LayoutResult>,
+    root: Option<&WidgetNode>,
+    theme: Option<&Theme>,
+    state: Option<&WidgetState>,
+) -> Value {
     let Some(layout) = layout else {
         return json!({});
     };
@@ -3497,6 +4206,41 @@ fn layout_snapshot(layout: Option<&crate::layout::LayoutResult>) -> Value {
     let mut clips = Map::new();
     for (id, rect) in &layout.clips {
         clips.insert(id.clone(), rect_json(*rect));
+    }
+    let mut paint_clips = Map::new();
+    for (id, rect) in &layout.paint_clips {
+        paint_clips.insert(id.clone(), rect_json(*rect));
+    }
+    let resolved_grids = layout
+        .resolved_grid_tracks
+        .iter()
+        .map(|(id, tracks)| {
+            (
+                id.clone(),
+                json!({
+                    "column_count": tracks.column_count,
+                    "column_widths": tracks.column_widths,
+                }),
+            )
+        })
+        .collect::<Map<String, Value>>();
+    let semantic_issues = root
+        .map(|root| layout_diagnostic_issues(root, layout, state))
+        .unwrap_or_default();
+    let mut inspection = Map::new();
+    if let (Some(root), Some(theme)) = (root, theme) {
+        collect_layout_inspection_snapshot(
+            root,
+            None,
+            layout,
+            theme,
+            &semantic_issues,
+            &mut inspection,
+        );
+    }
+    let mut dynamic_geometry = Map::new();
+    if let (Some(root), Some(theme)) = (root, theme) {
+        collect_dynamic_geometry_snapshot(root, layout, theme, state, None, &mut dynamic_geometry);
     }
     let mut diagnostics = Map::new();
     for (id, rect) in &layout.rects {
@@ -3532,18 +4276,217 @@ fn layout_snapshot(layout: Option<&crate::layout::LayoutResult>) -> Value {
                     "x": layout.scroll_max_x.get(id).copied().unwrap_or(0.0),
                     "y": layout.scroll_max_y.get(id).copied().unwrap_or(0.0),
                 },
+                "dynamic_geometry": dynamic_geometry.get(id).cloned().unwrap_or(Value::Null),
+                "issues": semantic_issues.get(id).cloned().unwrap_or_default(),
+                "inspection": inspection.get(id).cloned().unwrap_or(Value::Null),
             }),
         );
     }
     json!({
+        "schema_version": 1,
         "rects": Value::Object(rects),
         "clips": Value::Object(clips),
+        "paint_clips": Value::Object(paint_clips),
+        "resolved_grids": Value::Object(resolved_grids),
         "diagnostics": Value::Object(diagnostics),
         "scroll_x": &layout.scroll_x,
         "scroll_y": &layout.scroll_y,
         "scroll_max_x": &layout.scroll_max_x,
         "scroll_max_y": &layout.scroll_max_y,
+        "reconciliation": {
+            "iterations": layout.reconciliation_iterations,
+            "converged": layout.reconciliation_converged,
+        },
     })
+}
+
+fn collect_layout_inspection_snapshot(
+    node: &WidgetNode,
+    parent: Option<&WidgetNode>,
+    layout: &crate::layout::LayoutResult,
+    theme: &Theme,
+    issues: &HashMap<String, Vec<Value>>,
+    out: &mut Map<String, Value>,
+) {
+    let Some(rect) = layout.rects.get(&node.id).copied() else {
+        return;
+    };
+    let sf = layout.scale_factor.max(0.001);
+    let parent_rect = parent
+        .and_then(|parent| layout.rects.get(&parent.id).copied())
+        .unwrap_or(rect);
+    let (intrinsic_width, intrinsic_height) = debug_intrinsic_size_lp(node, theme);
+    let (semantic_width, semantic_height) = debug_semantic_minimum_lp(node, theme);
+    let preferred_width = snapshot_layout_length_px(
+        node.style.layout.width_value,
+        node.style.layout.width.or(node.props.fixed_width),
+        sf,
+        parent_rect.w,
+    );
+    let preferred_height = snapshot_layout_length_px(
+        node.style.layout.height_value,
+        node.style.layout.height.or(node.props.fixed_height),
+        sf,
+        parent_rect.h,
+    );
+    let parent_direction = parent.and_then(|parent| parent.style.layout.flex_direction);
+    let (flex_axis, allocated_main) = match parent_direction {
+        Some(FlexDirectionStyle::Row | FlexDirectionStyle::RowReverse) => ("x", rect.w),
+        _ => ("y", rect.h),
+    };
+    let node_issues = issues.get(&node.id).cloned().unwrap_or_default();
+    let structural = node_issues
+        .iter()
+        .filter(|issue| issue.get("severity").and_then(Value::as_str) != Some("advisory"))
+        .cloned()
+        .collect::<Vec<_>>();
+    let advisories = node_issues
+        .iter()
+        .filter(|issue| {
+            matches!(
+                issue.get("severity").and_then(Value::as_str),
+                Some("advisory" | "warning")
+            )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let scroll_axis = |axis: &str| {
+        let overflow = snapshot_axis_overflow(node, axis);
+        let range = if axis == "x" {
+            layout.scroll_max_x.get(&node.id).copied().unwrap_or(0.0)
+        } else {
+            layout.scroll_max_y.get(&node.id).copied().unwrap_or(0.0)
+        };
+        let offset = if axis == "x" {
+            layout.scroll_x.get(&node.id).copied().unwrap_or(0.0)
+        } else {
+            layout.scroll_y.get(&node.id).copied().unwrap_or(0.0)
+        };
+        json!({
+            "policy": overflow.map(overflow_style_name).unwrap_or("visible"),
+            "owns_scroll": matches!(overflow, Some(OverflowStyle::Auto | OverflowStyle::Scroll)),
+            "offset": offset,
+            "range": range,
+        })
+    };
+    out.insert(
+        node.id.clone(),
+        json!({
+            "sizing": {
+                "intrinsic": {
+                    "width": intrinsic_width.map(|value| value * sf),
+                    "height": intrinsic_height.map(|value| value * sf),
+                    "units": "physical-px",
+                },
+                "preferred": {
+                    "width": preferred_width,
+                    "height": preferred_height,
+                    "units": "physical-px",
+                },
+                "semantic_minimum": {
+                    "width": semantic_width * sf,
+                    "height": semantic_height * sf,
+                    "units": "physical-px",
+                },
+            },
+            "flex_allocation": {
+                "axis": flex_axis,
+                "allocated_main": allocated_main,
+                "grow": node.style.layout.flex_grow.unwrap_or(0.0),
+                "shrink": node.style.layout.flex_shrink.unwrap_or(1.0),
+                "basis": snapshot_layout_length_px(
+                    node.style.layout.flex_basis_value,
+                    node.style.layout.flex_basis,
+                    sf,
+                    if flex_axis == "x" { parent_rect.w } else { parent_rect.h },
+                ),
+            },
+            "final_rect": {
+                "x": rect.x,
+                "y": rect.y,
+                "width": rect.w,
+                "height": rect.h,
+            },
+            "final_paint_clip": layout.paint_clips.get(&node.id).copied().map(rect_json),
+            "scroll_ownership": {
+                "x": scroll_axis("x"),
+                "y": scroll_axis("y"),
+            },
+            "structural_diagnostics": structural,
+            "usability_advisories": advisories,
+        }),
+    );
+    for child in &node.children {
+        collect_layout_inspection_snapshot(child, Some(node), layout, theme, issues, out);
+    }
+}
+
+fn collect_dynamic_geometry_snapshot(
+    node: &WidgetNode,
+    layout: &crate::layout::LayoutResult,
+    theme: &Theme,
+    state: Option<&WidgetState>,
+    parent_height: Option<f32>,
+    out: &mut Map<String, Value>,
+) {
+    let rect = layout.rects.get(&node.id).copied();
+    if let Some(rect) = rect {
+        if node.kind == WidgetKind::Label && label_wraps(node) {
+            let measured = node
+                .props
+                .text
+                .as_deref()
+                .filter(|text| !text.is_empty())
+                .map(|text| {
+                    measure_wrapped_text_for_layout(
+                        text,
+                        &node.style.text,
+                        theme,
+                        (rect.w / layout.scale_factor.max(f32::EPSILON)).max(1.0),
+                    )
+                    .height
+                        * layout.scale_factor
+                })
+                .unwrap_or(0.0);
+            out.insert(
+                node.id.clone(),
+                json!({
+                    "kind": "wrapped-text",
+                    "source": "layout-measurement",
+                    "axis": "height",
+                    "available_width": rect.w,
+                    "measured_content_height": measured,
+                    "resolved_height": rect.h,
+                }),
+            );
+        } else if node.kind == WidgetKind::TreeNode {
+            let expanded = !node.children.is_empty()
+                && state
+                    .and_then(|state| state.expanded.get(&node.id).copied())
+                    .or(node.props.expanded)
+                    .unwrap_or(false);
+            let row_height =
+                tree_node_row_height_for_style(node, theme, layout.scale_factor, parent_height)
+                    .min(rect.h.max(0.0));
+            out.insert(
+                node.id.clone(),
+                json!({
+                    "kind": "stateful-tree-row",
+                    "source": "widget-state-and-content",
+                    "axis": "height",
+                    "expanded": expanded,
+                    "child_count": node.children.len(),
+                    "row_height": row_height,
+                    "content_height": if expanded { (rect.h - row_height).max(0.0) } else { 0.0 },
+                    "resolved_height": rect.h,
+                }),
+            );
+        }
+    }
+    let child_parent_height = rect.map(|rect| rect.h).or(parent_height);
+    for child in &node.children {
+        collect_dynamic_geometry_snapshot(child, layout, theme, state, child_parent_height, out);
+    }
 }
 
 fn widget_state_snapshot(state: Option<&WidgetState>) -> Value {
@@ -3947,6 +4890,104 @@ fn set_widget_class_prop(node: &mut WidgetNode, id: &str, value: Option<String>)
     true
 }
 
+fn set_widget_sidebar_state_prop(node: &mut WidgetNode, id: &str, state: String) -> bool {
+    let Some(target) = find_widget_mut(node, id) else {
+        return false;
+    };
+    if target.kind != WidgetKind::Sidebar
+        || !matches!(
+            state.as_str(),
+            "auto" | "expanded" | "collapsed" | "hidden" | "drawer"
+        )
+    {
+        return false;
+    }
+    target
+        .props
+        .raw_props
+        .insert("state".to_string(), Value::String(state));
+    true
+}
+
+fn sidebar_state(node: &WidgetNode) -> &str {
+    node.props
+        .raw_props
+        .get("state")
+        .and_then(Value::as_str)
+        .unwrap_or("auto")
+}
+
+fn first_enabled_nav_item(node: &WidgetNode) -> Option<String> {
+    if node.kind == WidgetKind::NavItem && !node.props.disabled {
+        return Some(node.id.clone());
+    }
+    node.children.iter().find_map(first_enabled_nav_item)
+}
+
+fn active_drawer_sidebar_id(node: &WidgetNode) -> Option<String> {
+    if node.kind == WidgetKind::Sidebar && sidebar_state(node) == "drawer" {
+        return Some(node.id.clone());
+    }
+    node.children.iter().find_map(active_drawer_sidebar_id)
+}
+
+fn drawer_sidebar_containing(node: &WidgetNode, target_id: &str) -> Option<String> {
+    if node.kind == WidgetKind::Sidebar
+        && sidebar_state(node) == "drawer"
+        && find_widget(node, target_id).is_some()
+    {
+        return Some(node.id.clone());
+    }
+    node.children
+        .iter()
+        .find_map(|child| drawer_sidebar_containing(child, target_id))
+}
+
+fn reconcile_sidebar_focus_for_state(
+    sidebar: &WidgetNode,
+    previous_state: &str,
+    next_state: &str,
+    state: &mut WidgetState,
+) {
+    if next_state == "drawer" && previous_state != "drawer" {
+        state
+            .sidebar_drawer_return_states
+            .insert(sidebar.id.clone(), previous_state.to_string());
+        if let Some(opener) = state.focused.clone() {
+            state
+                .sidebar_drawer_openers
+                .insert(sidebar.id.clone(), opener);
+        }
+        state.focus_widget(first_enabled_nav_item(sidebar));
+    } else if previous_state == "drawer" && next_state != "drawer" {
+        state.sidebar_drawer_return_states.remove(&sidebar.id);
+        let opener = state.sidebar_drawer_openers.remove(&sidebar.id);
+        state.focus_widget(opener);
+    } else if next_state == "hidden"
+        && state
+            .focused
+            .as_deref()
+            .is_some_and(|focused| find_widget(sidebar, focused).is_some())
+    {
+        state.focus_widget(None);
+    }
+}
+
+fn close_active_sidebar_drawer(tree: &mut WidgetNode, state: &mut WidgetState) -> Option<String> {
+    let id = active_drawer_sidebar_id(tree)?;
+    let sidebar_before = find_widget(tree, &id)?.clone();
+    let return_state = state
+        .sidebar_drawer_return_states
+        .get(&id)
+        .cloned()
+        .unwrap_or_else(|| "hidden".to_string());
+    if !set_widget_sidebar_state_prop(tree, &id, return_state.clone()) {
+        return None;
+    }
+    reconcile_sidebar_focus_for_state(&sidebar_before, "drawer", &return_state, state);
+    Some(id)
+}
+
 fn set_widget_badge_prop(node: &mut WidgetNode, id: &str, badge: Option<String>) -> bool {
     let Some(target) = find_widget_mut(node, id) else {
         return false;
@@ -4046,6 +5087,16 @@ fn merge_style_patch(target: &mut Map<String, Value>, patch: &Map<String, Value>
             target.insert(key.clone(), value.clone());
         }
     }
+}
+
+fn reparse_inline_style(node: &mut WidgetNode) {
+    node.inline_style = NodeStyle::from_json(Some(&Value::Object(node.style_json.clone())));
+    crate::css_style::record_serialized_style_provenance(
+        &mut node.inline_style,
+        &node.style_json,
+        StylesheetOrigin::Inline,
+        None,
+    );
 }
 
 fn style_patch_dirty(patch: &Map<String, Value>) -> Dirty {
@@ -4171,6 +5222,566 @@ mod style_patch_tests {
     use crate::css_style::apply_stylesheets_to_tree;
     use crate::style::TransformStyle;
     use serde_json::json;
+
+    #[test]
+    fn layout_snapshot_has_versioned_nested_geometry_maps() {
+        let mut layout = crate::layout::LayoutResult::default();
+        layout.resolved_grid_tracks.insert(
+            "metrics".to_string(),
+            crate::layout::ResolvedGridTracks {
+                column_count: 2,
+                column_widths: vec![240.0, 240.0],
+            },
+        );
+        let snapshot = layout_snapshot(Some(&layout), None);
+
+        assert_eq!(snapshot["schema_version"], 1);
+        assert!(snapshot["rects"].is_object());
+        assert!(snapshot["clips"].is_object());
+        assert!(snapshot["paint_clips"].is_object());
+        assert!(snapshot["diagnostics"].is_object());
+        assert_eq!(snapshot["resolved_grids"]["metrics"]["column_count"], 2);
+        assert_eq!(
+            snapshot["resolved_grids"]["metrics"]["column_widths"],
+            json!([240.0, 240.0])
+        );
+        assert!(snapshot["reconciliation"].is_object());
+        assert!(snapshot["reconciliation"]["iterations"].is_number());
+        assert!(snapshot["reconciliation"]["converged"].is_boolean());
+    }
+
+    #[test]
+    fn layout_snapshot_exposes_dynamic_text_and_tree_geometry_outside_cascade() {
+        let tree = crate::document::parse_widget_node(&json!({
+            "id": "window",
+            "type": "window",
+            "children": [{
+                "id": "label",
+                "type": "label",
+                "props": {
+                    "text": "A deliberately long wrapped label that needs several measured lines.",
+                    "width": 100
+                }
+            }, {
+                "id": "tree",
+                "type": "tree_node",
+                "props": {"text": "Branch", "expanded": true},
+                "children": [{
+                    "id": "tree-child",
+                    "type": "label",
+                    "props": {"text": "Leaf", "wrap": false}
+                }]
+            }]
+        }))
+        .unwrap();
+        let theme = Theme::dark();
+        let state = WidgetState::from_tree(&tree);
+        let layout = compute_layout(&tree, 260.0, 300.0, 1.0, &theme, Some(&state));
+        let snapshot =
+            layout_snapshot_with_context(Some(&layout), Some(&tree), Some(&theme), Some(&state));
+
+        let label = &snapshot["diagnostics"]["label"]["dynamic_geometry"];
+        assert_eq!(label["kind"], "wrapped-text");
+        assert_eq!(label["source"], "layout-measurement");
+        assert!(label["measured_content_height"].as_f64().unwrap() > theme.control_height() as f64);
+        assert_eq!(
+            label["resolved_height"],
+            snapshot["diagnostics"]["label"]["resolved"]["height"]
+        );
+
+        let tree_geometry = &snapshot["diagnostics"]["tree"]["dynamic_geometry"];
+        assert_eq!(tree_geometry["kind"], "stateful-tree-row");
+        assert_eq!(tree_geometry["source"], "widget-state-and-content");
+        assert_eq!(tree_geometry["expanded"], true);
+        assert_eq!(tree_geometry["child_count"], 1);
+        assert!(tree_geometry["content_height"].as_f64().unwrap() > 0.0);
+        let inspection = &snapshot["diagnostics"]["label"]["inspection"];
+        assert!(inspection["sizing"]["intrinsic"]["width"].is_number());
+        assert!(inspection["sizing"]["semantic_minimum"]["height"].is_number());
+        assert_eq!(inspection["flex_allocation"]["axis"], "y");
+        assert_eq!(
+            inspection["final_rect"],
+            snapshot["diagnostics"]["label"]["resolved"]
+        );
+        assert!(inspection["final_paint_clip"].is_object());
+        assert_eq!(inspection["scroll_ownership"]["x"]["owns_scroll"], false);
+        assert!(inspection["structural_diagnostics"].is_array());
+        assert!(inspection["usability_advisories"].is_array());
+
+        let store = StylesheetStore::default();
+        let computed = computed_styles_snapshot(Some(&tree), &store, None);
+        assert!(
+            computed["label"]["provenance"].get("height").is_none(),
+            "runtime text measurement must not be presented as a static cascade declaration"
+        );
+    }
+
+    #[test]
+    fn layout_snapshot_reports_below_declared_root_minimum() {
+        let tree = crate::document::parse_widget_node(&json!({
+            "id": "window",
+            "type": "window",
+            "style": {"min_width": 320, "min_height": 180},
+            "children": []
+        }))
+        .expect("window tree");
+        let layout = crate::layout::compute_layout(
+            &tree,
+            200.0,
+            120.0,
+            1.0,
+            &crate::theme::Theme::dark(),
+            None,
+        );
+        let snapshot = layout_snapshot(Some(&layout), Some(&tree));
+        let issues = snapshot["diagnostics"]["window"]["issues"]
+            .as_array()
+            .expect("root diagnostic issues");
+
+        assert_eq!(issues.len(), 2);
+        assert!(issues.iter().any(|issue| {
+            issue["code"] == "below-minimum-viewport"
+                && issue["axis"] == "x"
+                && issue["required"] == 320.0
+                && issue["available"] == 200.0
+        }));
+        assert!(issues.iter().any(|issue| {
+            issue["code"] == "below-minimum-viewport"
+                && issue["axis"] == "y"
+                && issue["required"] == 180.0
+                && issue["available"] == 120.0
+        }));
+    }
+
+    #[test]
+    fn layout_snapshot_reports_unreachable_default_root_overflow() {
+        let tree = crate::document::parse_widget_node(&json!({
+            "id": "window",
+            "type": "window",
+            "children": [{
+                "id": "wide",
+                "type": "panel",
+                "style": {"width": 360, "height": 40, "flex_shrink": 0}
+            }]
+        }))
+        .expect("window tree");
+        let state = WidgetState::default();
+        let layout = crate::layout::compute_layout(
+            &tree,
+            200.0,
+            120.0,
+            1.0,
+            &crate::theme::Theme::dark(),
+            Some(&state),
+        );
+        let snapshot = layout_snapshot(Some(&layout), Some(&tree));
+        let issues = snapshot["diagnostics"]["window"]["issues"]
+            .as_array()
+            .expect("root diagnostic issues");
+
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0]["code"], "unreachable-root-overflow");
+        assert_eq!(issues[0]["axis"], "x");
+        assert_eq!(issues[0]["subject_id"], "wide");
+    }
+
+    #[test]
+    fn layout_snapshot_accepts_explicit_root_scroll_ownership() {
+        let tree = crate::document::parse_widget_node(&json!({
+            "id": "window",
+            "type": "window",
+            "style": {"overflow_x": "auto"},
+            "children": [{
+                "id": "wide",
+                "type": "panel",
+                "style": {"width": 360, "height": 40, "flex_shrink": 0}
+            }]
+        }))
+        .expect("window tree");
+        let state = WidgetState::default();
+        let layout = crate::layout::compute_layout(
+            &tree,
+            200.0,
+            120.0,
+            1.0,
+            &crate::theme::Theme::dark(),
+            Some(&state),
+        );
+        let snapshot = layout_snapshot(Some(&layout), Some(&tree));
+        let issues = snapshot["diagnostics"]["window"]["issues"]
+            .as_array()
+            .expect("root diagnostic issues");
+
+        assert!(issues.is_empty());
+        assert!(layout.scroll_max_x.get("window").copied().unwrap_or(0.0) > 0.0);
+    }
+
+    #[test]
+    fn layout_snapshot_accepts_intentionally_hidden_descendant_overflow() {
+        let tree = crate::document::parse_widget_node(&json!({
+            "id": "window",
+            "type": "window",
+            "children": [{
+                "id": "clip-owner",
+                "type": "panel",
+                "style": {"width": 180, "height": 80, "overflow": "hidden"},
+                "children": [{
+                    "id": "wide",
+                    "type": "label",
+                    "text": "intentionally clipped",
+                    "style": {"width": 360, "height": 40, "flex_shrink": 0}
+                }]
+            }]
+        }))
+        .expect("window tree");
+        let state = WidgetState::default();
+        let layout = crate::layout::compute_layout(
+            &tree,
+            200.0,
+            120.0,
+            1.0,
+            &crate::theme::Theme::dark(),
+            Some(&state),
+        );
+        let snapshot = layout_snapshot(Some(&layout), Some(&tree));
+        let issues = snapshot["diagnostics"]["window"]["issues"]
+            .as_array()
+            .expect("root diagnostic issues");
+
+        assert!(issues.is_empty(), "{issues:?}");
+    }
+
+    #[test]
+    fn layout_snapshot_does_not_report_offscreen_scroll_descendants_as_empty_clips() {
+        let tree = crate::document::parse_widget_node(&json!({
+            "id": "window",
+            "type": "window",
+            "children": [{
+                "id": "results",
+                "type": "scroll_area",
+                "children": [{
+                    "id": "offscreen-action",
+                    "type": "button",
+                    "text": "Open"
+                }]
+            }]
+        }))
+        .expect("scrolling window tree");
+        let mut layout = crate::layout::compute_layout(
+            &tree,
+            320.0,
+            180.0,
+            1.0,
+            &crate::theme::Theme::dark(),
+            None,
+        );
+        layout.rects.insert(
+            "offscreen-action".to_string(),
+            Rect {
+                x: 12.0,
+                y: 240.0,
+                w: 120.0,
+                h: 28.0,
+            },
+        );
+        layout.clips.insert(
+            "offscreen-action".to_string(),
+            Rect {
+                x: 12.0,
+                y: 180.0,
+                w: 0.0,
+                h: 0.0,
+            },
+        );
+        layout.scroll_max_y.insert("results".to_string(), 100.0);
+
+        let snapshot = layout_snapshot(Some(&layout), Some(&tree));
+        let issues = snapshot["diagnostics"]["offscreen-action"]["issues"]
+            .as_array()
+            .expect("diagnostic issues");
+        assert!(
+            issues.iter().all(|issue| {
+                issue["code"] != "empty-paint-clip"
+                    && issue["code"] != "fully-clipped-interactive"
+            }),
+            "{issues:?}"
+        );
+    }
+
+    #[test]
+    fn layout_snapshot_reports_empty_clip_and_enabled_clipped_interactive() {
+        let tree = crate::document::parse_widget_node(&json!({
+            "id": "window",
+            "type": "window",
+            "children": [{
+                "id": "run",
+                "type": "button",
+                "text": "Run"
+            }]
+        }))
+        .expect("window tree");
+        let mut layout = crate::layout::compute_layout(
+            &tree,
+            320.0,
+            200.0,
+            1.0,
+            &crate::theme::Theme::dark(),
+            None,
+        );
+        layout.rects.insert(
+            "run".to_string(),
+            Rect {
+                x: 420.0,
+                y: 20.0,
+                w: 80.0,
+                h: 28.0,
+            },
+        );
+        layout.clips.insert(
+            "run".to_string(),
+            Rect {
+                x: 420.0,
+                y: 20.0,
+                w: 0.0,
+                h: 0.0,
+            },
+        );
+
+        let snapshot = layout_snapshot(Some(&layout), Some(&tree));
+        let issues = snapshot["diagnostics"]["run"]["issues"]
+            .as_array()
+            .expect("button diagnostic issues");
+
+        assert!(issues.iter().any(|issue| {
+            issue["code"] == "empty-paint-clip"
+                && issue["widget_id"] == "run"
+                && issue["parent_id"] == "window"
+                && issue["rect"]["w"] == 80.0
+                && issue["clip"]["w"] == 0.0
+                && issue["reason"] == "non-zero layout rect has no final paintable area"
+        }));
+        assert!(issues.iter().any(|issue| {
+            issue["code"] == "fully-clipped-interactive"
+                && issue["widget_id"] == "run"
+                && issue["parent_id"] == "window"
+                && issue["reason"] == "enabled interactive widget has no reachable painted area"
+        }));
+    }
+
+    #[test]
+    fn layout_snapshot_does_not_report_disabled_clipped_interactive() {
+        let tree = crate::document::parse_widget_node(&json!({
+            "id": "window",
+            "type": "window",
+            "children": [{
+                "id": "disabled-run",
+                "type": "button",
+                "text": "Run",
+                "disabled": true
+            }]
+        }))
+        .expect("window tree");
+        let mut layout = crate::layout::compute_layout(
+            &tree,
+            320.0,
+            200.0,
+            1.0,
+            &crate::theme::Theme::dark(),
+            None,
+        );
+        layout.rects.insert(
+            "disabled-run".to_string(),
+            Rect {
+                x: 420.0,
+                y: 20.0,
+                w: 80.0,
+                h: 28.0,
+            },
+        );
+        layout.clips.insert(
+            "disabled-run".to_string(),
+            Rect {
+                x: 420.0,
+                y: 20.0,
+                w: 0.0,
+                h: 0.0,
+            },
+        );
+        let mut state = WidgetState::default();
+        state.disabled.insert("disabled-run".to_string());
+
+        let snapshot = layout_snapshot_with_context(Some(&layout), Some(&tree), None, Some(&state));
+        let issues = snapshot["diagnostics"]["disabled-run"]["issues"]
+            .as_array()
+            .expect("button diagnostic issues");
+
+        assert!(issues
+            .iter()
+            .any(|issue| issue["code"] == "empty-paint-clip"));
+        assert!(!issues
+            .iter()
+            .any(|issue| issue["code"] == "fully-clipped-interactive"));
+    }
+
+    #[test]
+    fn layout_snapshot_reports_flex_allocation_and_dimension_contract_failures() {
+        let tree = crate::document::parse_widget_node(&json!({
+            "id": "window",
+            "type": "window",
+            "children": [{
+                "id": "row",
+                "type": "h_layout",
+                "children": [{
+                    "id": "workbench",
+                    "type": "v_layout",
+                    "style": {"flex_grow": 1, "min_width": 120},
+                    "children": [{
+                        "id": "content",
+                        "type": "panel"
+                    }]
+                }]
+            }]
+        }))
+        .expect("window tree");
+        let mut layout = crate::layout::compute_layout(
+            &tree,
+            320.0,
+            200.0,
+            1.0,
+            &crate::theme::Theme::dark(),
+            None,
+        );
+        let starved = Rect {
+            x: 240.0,
+            y: 0.0,
+            w: 80.0,
+            h: 200.0,
+        };
+        layout.rects.insert("workbench".to_string(), starved);
+        layout.clips.insert("workbench".to_string(), starved);
+
+        let snapshot = layout_snapshot(Some(&layout), Some(&tree));
+        let issues = snapshot["diagnostics"]["workbench"]["issues"]
+            .as_array()
+            .expect("workbench diagnostic issues");
+
+        assert!(issues.iter().any(|issue| {
+            issue["code"] == "flex-allocation-failure"
+                && issue["axis"] == "x"
+                && issue["parent_id"] == "row"
+                && issue["required_minimum"] == 120.0
+        }));
+        assert!(issues.iter().any(|issue| {
+            issue["code"] == "invalid-min-max-resolution"
+                && issue["axis"] == "x"
+                && issue["contract"] == "minimum"
+                && issue["expected"] == 120.0
+        }));
+    }
+
+    #[test]
+    fn layout_snapshot_allows_one_physical_pixel_of_minimum_quantization() {
+        let tree = crate::document::parse_widget_node(&json!({
+            "id": "window",
+            "type": "window",
+            "children": [{
+                "id": "card",
+                "type": "panel",
+                "style": {"min_width": 100}
+            }]
+        }))
+        .expect("window tree");
+        let mut layout = crate::layout::compute_layout(
+            &tree,
+            400.0,
+            250.0,
+            1.25,
+            &crate::theme::Theme::dark(),
+            None,
+        );
+        let card = layout.rects.get_mut("card").expect("card rect");
+        card.w = 124.25;
+        let snapshot = layout_snapshot(Some(&layout), Some(&tree));
+        let issues = snapshot["diagnostics"]["card"]["issues"]
+            .as_array()
+            .expect("card diagnostic issues");
+        assert!(!issues
+            .iter()
+            .any(|issue| issue["code"] == "invalid-min-max-resolution"));
+
+        layout.rects.get_mut("card").expect("card rect").w = 123.75;
+        let snapshot = layout_snapshot(Some(&layout), Some(&tree));
+        let issues = snapshot["diagnostics"]["card"]["issues"]
+            .as_array()
+            .expect("card diagnostic issues");
+        assert!(issues
+            .iter()
+            .any(|issue| issue["code"] == "invalid-min-max-resolution"));
+    }
+
+    #[test]
+    fn layout_snapshot_reports_missing_scroll_range_and_disabled_axis_overflow() {
+        let tree = crate::document::parse_widget_node(&json!({
+            "id": "window",
+            "type": "window",
+            "children": [{
+                "id": "scroller",
+                "type": "scroll_area",
+                "style": {"overflow_x": "hidden", "overflow_y": "auto"},
+                "children": [{
+                    "id": "content",
+                    "type": "panel",
+                    "style": {"width": 360, "height": 260, "flex_shrink": 0}
+                }]
+            }]
+        }))
+        .expect("window tree");
+        let mut layout = crate::layout::compute_layout(
+            &tree,
+            320.0,
+            200.0,
+            1.0,
+            &crate::theme::Theme::dark(),
+            None,
+        );
+        layout.rects.insert(
+            "scroller".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 200.0,
+                h: 100.0,
+            },
+        );
+        layout.rects.insert(
+            "content".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 360.0,
+                h: 260.0,
+            },
+        );
+        layout.scroll_max_x.insert("scroller".to_string(), 0.0);
+        layout.scroll_max_y.insert("scroller".to_string(), 0.0);
+
+        let snapshot = layout_snapshot(Some(&layout), Some(&tree));
+        let issues = snapshot["diagnostics"]["scroller"]["issues"]
+            .as_array()
+            .expect("scroller diagnostic issues");
+
+        assert!(issues.iter().any(|issue| {
+            issue["code"] == "disabled-axis-overflow"
+                && issue["axis"] == "x"
+                && issue["subject_id"] == "content"
+        }));
+        assert!(issues.iter().any(|issue| {
+            issue["code"] == "unreachable-scroll-content"
+                && issue["axis"] == "y"
+                && issue["subject_id"] == "content"
+                && issue["scroll_range"] == 0.0
+        }));
+    }
 
     #[test]
     fn format_4g_trims_decimal_labels_without_changing_shape() {
@@ -4328,6 +5939,27 @@ mod style_patch_tests {
         assert_eq!(
             clamp_startup_window_size_to_monitor(1280, 820, PhysicalSize::new(2560, 1440), 2.0),
             (1216, 624)
+        );
+    }
+
+    #[test]
+    fn visual_audit_scale_override_is_bounded_and_audit_only() {
+        assert_eq!(
+            parse_visual_audit_scale_factor(Some("1"), Some("1.5")),
+            Some(1.5)
+        );
+        assert_eq!(
+            parse_visual_audit_scale_factor(None, Some("1.5")),
+            None,
+            "ordinary application runs must ignore the audit override"
+        );
+        assert_eq!(
+            parse_visual_audit_scale_factor(Some("1"), Some("0.25")),
+            None
+        );
+        assert_eq!(
+            parse_visual_audit_scale_factor(Some("1"), Some("not-a-number")),
+            None
         );
     }
 
@@ -4598,6 +6230,29 @@ mod style_patch_tests {
     }
 
     #[test]
+    fn reparsing_live_inline_style_rebuilds_provenance() {
+        let mut node = crate::document::parse_widget_node(&json!({
+            "id": "search",
+            "type": "h_layout",
+            "style": {"width": 120}
+        }))
+        .unwrap();
+        let patch = json!({"width": 240, "gap": 8});
+        merge_style_patch(&mut node.style_json, patch.as_object().unwrap());
+        reparse_inline_style(&mut node);
+
+        assert_eq!(node.inline_style.provenance["width"].len(), 1);
+        assert_eq!(
+            node.inline_style.provenance["width"][0].value,
+            Some(json!(240))
+        );
+        assert_eq!(
+            node.inline_style.provenance["gap"][0].origin,
+            "inline".to_string()
+        );
+    }
+
+    #[test]
     fn style_patch_dirty_prefers_layout_over_text_and_visual() {
         assert_eq!(
             style_patch_dirty(json!({"background": "danger"}).as_object().unwrap()),
@@ -4751,6 +6406,306 @@ mod style_patch_tests {
         assert_eq!(transition["duration_ms"], json!(180));
         assert_eq!(transition["delay_ms"], json!(25));
         assert_eq!(transition["timing_function"], json!("ease-out"));
+    }
+
+    #[test]
+    fn computed_style_snapshot_exposes_resolved_untouched_fallbacks() {
+        let mut tree = crate::document::parse_widget_node(&json!({
+            "id": "label",
+            "type": "label",
+            "props": {"text": "Fallback"}
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store.install_framework_defaults(&Theme::dark());
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+
+        let snapshot = computed_styles_snapshot(Some(&tree), &store, None);
+        let provenance = &snapshot["label"]["provenance"];
+
+        assert_eq!(
+            provenance["font-size"]["winner"]["origin"],
+            "native-fallback"
+        );
+        assert_eq!(provenance["font-size"]["winner"]["source_origin"], "theme");
+        assert_eq!(provenance["font-size"]["winner"]["value"], 13.0);
+        assert_eq!(provenance["font-weight"]["winner"]["value"], 400);
+        assert_eq!(provenance["opacity"]["winner"]["value"], 1.0);
+        assert_eq!(provenance["overflow-x"]["winner"]["value"], "hidden");
+    }
+
+    #[test]
+    fn computed_style_snapshot_refreshes_live_pane_fallback_without_mutating_cache() {
+        let mut tree = crate::document::parse_widget_node(&json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "splitter",
+                "type": "splitter",
+                "children": [{
+                    "id": "pane",
+                    "type": "pane",
+                    "props": {"orientation": "horizontal", "flex": 2.0}
+                }]
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store.install_framework_defaults(&Theme::dark());
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+        assert_eq!(
+            tree.children[0].children[0].style.provenance["flex-grow"][0].value,
+            Some(json!(2.0))
+        );
+
+        let mut state = WidgetState::from_tree(&tree);
+        assert_eq!(state.set_pane_size("pane", Some(240.0)), Some(Some(240.0)));
+        let fixed = computed_styles_snapshot_with_state(Some(&tree), &store, None, Some(&state));
+        let fixed_winner = &fixed["pane"]["provenance"]["flex-grow"]["winner"];
+        assert_eq!(fixed_winner["value"], json!(0.0));
+        assert_eq!(fixed_winner["source_origin"], json!("widget-state"));
+        assert_eq!(
+            tree.children[0].children[0].style.provenance["flex-grow"][0].value,
+            Some(json!(2.0)),
+            "snapshot refresh must not mutate cached computed styles"
+        );
+
+        assert_eq!(state.set_pane_size("pane", Some(0.35)), Some(Some(0.35)));
+        let fractional =
+            computed_styles_snapshot_with_state(Some(&tree), &store, None, Some(&state));
+        let fractional_winner = &fractional["pane"]["provenance"]["flex-grow"]["winner"];
+        let fractional_value = fractional_winner["value"]
+            .as_f64()
+            .expect("fractional pane fallback value");
+        assert!((fractional_value - 0.35).abs() < 1e-6);
+        assert_eq!(fractional_winner["source_origin"], json!("widget-state"));
+    }
+
+    #[test]
+    fn computed_style_snapshot_reports_winner_and_overridden_origins() {
+        let mut tree = crate::document::parse_widget_node(&json!({
+            "id": "search",
+            "type": "h_layout",
+            "css_types": ["SearchBox", "HLayout", "Container", "Widget"],
+            "default_style": {"width": 150},
+            "default_style_sources": {
+                "width": {
+                    "widget_type": "SearchBox",
+                    "python_class": "dragongui.widgets.SearchBox",
+                    "construction": "widget-default"
+                }
+            },
+            "style": {"width": 250}
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(StylesheetOrigin::Framework, "SearchBox { width: 100px; }")
+            .unwrap();
+        store
+            .set_stylesheet(StylesheetOrigin::Theme, "SearchBox { width: 175px; }")
+            .unwrap();
+        store
+            .set_stylesheet(StylesheetOrigin::User, "SearchBox { width: 200px; }")
+            .unwrap();
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+
+        let snapshot = computed_styles_snapshot(Some(&tree), &store, None);
+        let width = &snapshot["search"]["provenance"]["width"];
+        let overridden = width["overridden"].as_array().unwrap();
+
+        assert_eq!(snapshot["search"]["style"]["layout"]["width"], 250.0);
+        assert_eq!(width["winner"]["origin"], "inline");
+        assert_eq!(width["winner"]["value"], 250);
+        assert_eq!(
+            overridden
+                .iter()
+                .map(|candidate| candidate["origin"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec![
+                "native-fallback",
+                "framework",
+                "widget-default",
+                "theme",
+                "user"
+            ]
+        );
+        assert_eq!(overridden[0]["authored_property"], "width");
+        assert!(overridden[0].get("value").is_none());
+        assert_eq!(overridden[1]["selector"], "SearchBox");
+        assert_eq!(overridden[1]["value"], "100px");
+        assert_eq!(overridden[1]["line"], 1);
+        assert_eq!(overridden[2]["python_widget_type"], "SearchBox");
+        assert_eq!(overridden[2]["python_class"], "dragongui.widgets.SearchBox");
+        assert_eq!(overridden[2]["construction"], "widget-default");
+        assert_eq!(
+            overridden[1]["specificity"],
+            json!({"ids": 0, "classes": 0, "types": 1})
+        );
+        let matched = snapshot["search"]["matched_selectors"].as_array().unwrap();
+        assert_eq!(matched.len(), 3);
+        assert_eq!(matched[2]["selector"], "SearchBox");
+        assert_eq!(matched[2]["origin"], "user");
+        assert_eq!(matched[2]["line"], 1);
+        assert_eq!(
+            matched[2]["specificity"],
+            json!({"ids": 0, "classes": 0, "types": 1})
+        );
+    }
+
+    #[test]
+    fn computed_style_provenance_normalizes_shorthand_longhand_collisions() {
+        let mut tree = crate::document::parse_widget_node(&json!({
+            "id": "panel",
+            "type": "panel",
+            "default_style": {"padding": 8, "flex": 1},
+            "style": {"padding_left": 20}
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(StylesheetOrigin::Framework, "Panel { padding: 4px; }")
+            .unwrap();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                "Panel { padding: 12px; padding-left: 16px; flex-grow: 2; }",
+            )
+            .unwrap();
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+
+        let snapshot = computed_styles_snapshot(Some(&tree), &store, None);
+        let provenance = &snapshot["panel"]["provenance"];
+        let left = &provenance["padding-left"];
+        let top = &provenance["padding-top"];
+        let grow = &provenance["flex-grow"];
+
+        assert_eq!(snapshot["panel"]["style"]["layout"]["padding_left"], 20.0);
+        assert_eq!(snapshot["panel"]["style"]["layout"]["padding_top"], 12.0);
+        assert_eq!(left["winner"]["origin"], "inline");
+        assert_eq!(left["winner"]["authored_property"], "padding-left");
+        assert_eq!(
+            left["overridden"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|candidate| candidate["authored_property"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec![
+                "padding-left",
+                "padding",
+                "padding",
+                "padding",
+                "padding-left"
+            ]
+        );
+        assert_eq!(top["winner"]["origin"], "user");
+        assert_eq!(top["winner"]["authored_property"], "padding");
+        assert_eq!(grow["winner"]["origin"], "user");
+        assert_eq!(grow["winner"]["authored_property"], "flex-grow");
+        assert_eq!(grow["overridden"][0]["origin"], "native-fallback");
+        assert_eq!(grow["overridden"][1]["authored_property"], "flex");
+    }
+
+    #[test]
+    fn computed_style_provenance_normalizes_serialized_states_and_parts() {
+        let mut tree = crate::document::parse_widget_node(&json!({
+            "id": "amount",
+            "type": "number_input",
+            "style": {
+                "hover": {"background": "danger"},
+                "parts": {
+                    "stepper": {
+                        "width": 32,
+                        "hover": {"background": "accent"}
+                    }
+                }
+            }
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                NumberInput:hover { background: surface_alt; }
+                NumberInput::stepper { width: 22px; }
+                NumberInput:hover::stepper { background: surface_alt; }
+                "#,
+            )
+            .unwrap();
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+
+        let snapshot = computed_styles_snapshot(Some(&tree), &store, None);
+        let provenance = &snapshot["amount"]["provenance"];
+
+        assert_eq!(provenance["hover.background"]["winner"]["origin"], "inline");
+        assert_eq!(
+            provenance["part(stepper).width"]["winner"]["origin"],
+            "inline"
+        );
+        assert_eq!(
+            provenance["part(stepper).hover.background"]["winner"]["origin"],
+            "inline"
+        );
+        assert_eq!(
+            provenance["part(stepper).hover.background"]["overridden"][1]["selector"],
+            "NumberInput:hover::stepper"
+        );
+        assert!(provenance.get("hover").is_none());
+        assert!(provenance.get("parts").is_none());
+    }
+
+    #[test]
+    fn computed_style_provenance_tracks_inheritance_and_direct_overrides() {
+        let mut tree = crate::document::parse_widget_node(&json!({
+            "id": "root",
+            "type": "v_layout",
+            "children": [
+                {
+                    "id": "middle",
+                    "type": "h_layout",
+                    "children": [{
+                        "id": "leaf",
+                        "type": "label",
+                        "props": {"text": "Inherited"}
+                    }]
+                },
+                {
+                    "id": "direct",
+                    "type": "label",
+                    "props": {"text": "Direct"},
+                    "style": {"color": "success"}
+                }
+            ]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                "#root { color: danger; font-size: 18px; }",
+            )
+            .unwrap();
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+
+        let snapshot = computed_styles_snapshot(Some(&tree), &store, None);
+        let middle_color = &snapshot["middle"]["provenance"]["color"]["winner"];
+        let leaf_color = &snapshot["leaf"]["provenance"]["color"]["winner"];
+        let leaf_size = &snapshot["leaf"]["provenance"]["font-size"]["winner"];
+        let direct_color = &snapshot["direct"]["provenance"]["color"];
+
+        assert_eq!(middle_color["origin"], "inherited");
+        assert_eq!(middle_color["source_origin"], "user");
+        assert_eq!(middle_color["inherited_from"], "root");
+        assert_eq!(middle_color["selector"], "#root");
+        assert_eq!(leaf_color["origin"], "inherited");
+        assert_eq!(leaf_color["source_origin"], "user");
+        assert_eq!(leaf_color["inherited_from"], "middle");
+        assert_eq!(leaf_size["inherited_from"], "middle");
+        assert_eq!(direct_color["winner"]["origin"], "inline");
+        assert!(direct_color["winner"].get("inherited_from").is_none());
+        assert_eq!(direct_color["overridden"][0]["origin"], "native-fallback");
     }
 
     #[test]
@@ -5460,6 +7415,48 @@ mod style_patch_tests {
     }
 
     #[test]
+    fn splitter_hit_test_uses_full_layout_gutter_not_thin_visual_divider() {
+        let mut tree = crate::document::parse_widget_node(&json!({
+            "id": "window",
+            "type": "window",
+            "children": [{
+                "id": "splitter",
+                "type": "splitter",
+                "props": {
+                    "orientation": "horizontal",
+                    "gutter_size": 12
+                },
+                "style": {"width": 400, "height": 100},
+                "children": [{
+                    "id": "left",
+                    "type": "pane",
+                    "props": {"orientation": "horizontal", "flex": 1}
+                }, {
+                    "id": "right",
+                    "type": "pane",
+                    "props": {"orientation": "horizontal", "flex": 1}
+                }]
+            }]
+        }))
+        .expect("splitter tree");
+        let theme = Theme::dark();
+        let mut stylesheets = StylesheetStore::default();
+        stylesheets.install_framework_defaults(&theme);
+        apply_stylesheets_to_tree(&mut tree, &mut stylesheets);
+        let layout = compute_layout(&tree, 400.0, 100.0, 1.0, &theme, None);
+        let left = layout.rects["left"];
+        let gutter_start = left.x + left.w;
+
+        for x in [gutter_start + 1.0, gutter_start + 6.0, gutter_start + 11.0] {
+            let hit = splitter_gutter_hit_at_node(&tree, &layout, [x, 50.0], 1.0);
+            assert!(
+                hit.is_some(),
+                "the full 12px layout gutter should remain draggable at x={x}"
+            );
+        }
+    }
+
+    #[test]
     fn parse_widget_children_json_parses_node_list() {
         let children = parse_widget_children_json(
             r#"[{"id":"label","type":"label","props":{"text":"hello"}}]"#,
@@ -5751,6 +7748,105 @@ mod style_patch_tests {
         assert!(set_widget_checked_prop(&mut root, "enabled", true));
         let checkbox = find_widget_mut(&mut root, "enabled").unwrap();
         assert_eq!(checkbox.props.checked, Some(true));
+    }
+
+    #[test]
+    fn set_widget_sidebar_state_prop_preserves_children_and_navigation_state() {
+        let mut root = document::parse_widget_node(&json!({
+            "id": "window",
+            "type": "window",
+            "children": [{
+                "id": "open-navigation",
+                "type": "icon_button",
+                "props": {"icon": "menu", "events": ["click"]}
+            }, {
+                "id": "navigation",
+                "type": "sidebar",
+                "props": {"state": "expanded"},
+                "children": [{
+                    "id": "automation",
+                    "type": "nav_item",
+                    "props": {"label": "Automation", "page": "automation"}
+                }]
+            }, {
+                "id": "pages",
+                "type": "pages",
+                "props": {"value": "automation"},
+                "children": [{
+                    "id": "automation-page",
+                    "type": "page",
+                    "props": {"value": "automation"}
+                }, {
+                    "id": "settings-page",
+                    "type": "page",
+                    "props": {"value": "settings"}
+                }]
+            }]
+        }))
+        .unwrap();
+        let mut state = WidgetState::from_tree(&root);
+        state.focus_widget(Some("open-navigation".to_string()));
+        assert_eq!(
+            state.active_pages.get("pages").map(String::as_str),
+            Some("automation")
+        );
+
+        assert!(set_widget_sidebar_state_prop(
+            &mut root,
+            "navigation",
+            "collapsed".to_string()
+        ));
+        let sidebar = find_widget_mut(&mut root, "navigation").unwrap();
+        assert_eq!(
+            sidebar.props.raw_props.get("state"),
+            Some(&json!("collapsed"))
+        );
+        assert_eq!(sidebar.children.len(), 1);
+        assert_eq!(
+            sidebar.children[0].props.page.as_deref(),
+            Some("automation")
+        );
+        for _ in 0..3 {
+            let sidebar_before = find_widget(&root, "navigation").unwrap().clone();
+            let previous_state = sidebar_state(&sidebar_before).to_string();
+            assert!(set_widget_sidebar_state_prop(
+                &mut root,
+                "navigation",
+                "drawer".to_string()
+            ));
+            reconcile_sidebar_focus_for_state(
+                &sidebar_before,
+                &previous_state,
+                "drawer",
+                &mut state,
+            );
+            assert_eq!(state.focused.as_deref(), Some("automation"));
+            assert_eq!(
+                state
+                    .sidebar_drawer_openers
+                    .get("navigation")
+                    .map(String::as_str),
+                Some("open-navigation")
+            );
+            assert_eq!(
+                close_active_sidebar_drawer(&mut root, &mut state).as_deref(),
+                Some("navigation")
+            );
+            assert_eq!(state.focused.as_deref(), Some("open-navigation"));
+            assert_eq!(
+                state.active_pages.get("pages").map(String::as_str),
+                Some("automation")
+            );
+            assert_eq!(
+                sidebar_state(find_widget(&root, "navigation").unwrap()),
+                "collapsed"
+            );
+        }
+        assert!(!set_widget_sidebar_state_prop(
+            &mut root,
+            "navigation",
+            "floating".to_string()
+        ));
     }
 
     #[test]
@@ -7138,7 +9234,8 @@ impl WgpuState {
         let size = window.inner_size();
         let width = size.width.max(1);
         let height = size.height.max(1);
-        let scale_factor = window.scale_factor() as f32;
+        let scale_factor =
+            visual_audit_scale_factor_override().unwrap_or_else(|| window.scale_factor()) as f32;
 
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
 
@@ -7614,6 +9711,7 @@ impl WgpuState {
 
         let w = config.width as f32;
         let h = config.height as f32;
+        crate::text::sync_layout_measurement_fonts(stylesheets);
         let layout_t0 = Instant::now();
         let mut layout = {
             let tree = match widget_tree.as_ref() {
@@ -9146,6 +11244,17 @@ impl WgpuState {
         Some(closed)
     }
 
+    fn close_active_sidebar_drawer(&mut self) -> Option<String> {
+        let (tree, state) = match (&mut self.widget_tree, &mut self.widget_state) {
+            (Some(tree), Some(state)) => (tree, state),
+            _ => return None,
+        };
+        let closed = close_active_sidebar_drawer(tree, state)?;
+        self.reapply_stylesheets();
+        self.apply_layout();
+        Some(closed)
+    }
+
     fn number_input_step_at(&self, pos: [f32; 2]) -> Option<(String, f32)> {
         number_input_step_at_pos(
             self.widget_tree.as_ref(),
@@ -9302,6 +11411,35 @@ impl WgpuState {
                     return Some(Dirty::Full);
                 }
             }
+            return None;
+        }
+        if kind == WidgetKind::Sidebar && prop == "state" {
+            let CommandValue::Text(state) = value else {
+                eprintln!(
+                    "DragonGUI: ignoring unsupported live Sidebar state value for widget {id:?}"
+                );
+                return None;
+            };
+            let (previous_state, sidebar_before) = self
+                .widget_tree
+                .as_ref()
+                .and_then(|tree| find_widget(tree, id))
+                .map(|sidebar| (sidebar_state(sidebar).to_string(), sidebar.clone()))?;
+            if let Some(tree) = self.widget_tree.as_mut() {
+                if set_widget_sidebar_state_prop(tree, id, state.clone()) {
+                    if let Some(widget_state) = self.widget_state.as_mut() {
+                        reconcile_sidebar_focus_for_state(
+                            &sidebar_before,
+                            &previous_state,
+                            &state,
+                            widget_state,
+                        );
+                    }
+                    self.reapply_stylesheets();
+                    return Some(Dirty::Full);
+                }
+            }
+            eprintln!("DragonGUI: ignoring invalid live Sidebar state for widget {id:?}");
             return None;
         }
         if kind == WidgetKind::LoadingSpinner {
@@ -9872,8 +12010,7 @@ impl WgpuState {
             return Ok(None);
         };
         merge_style_patch(&mut node.style_json, patch);
-        node.inline_style =
-            crate::style::NodeStyle::from_json(Some(&Value::Object(node.style_json.clone())));
+        reparse_inline_style(node);
         let dirty = style_patch_dirty(patch);
         self.reapply_stylesheets();
         Ok(Some(dirty))
@@ -9885,8 +12022,7 @@ impl WgpuState {
             if let Some(node) = find_widget_mut(tree, id) {
                 node.style_json
                     .insert("scatter_point_size".to_string(), json!(logical_size));
-                node.inline_style =
-                    NodeStyle::from_json(Some(&Value::Object(node.style_json.clone())));
+                reparse_inline_style(node);
                 node.style.widget.scatter_point_size = Some(logical_size);
             }
         }
@@ -9911,8 +12047,7 @@ impl WgpuState {
         if let Some(tree) = self.widget_tree.as_mut() {
             if let Some(node) = find_widget_mut(tree, id) {
                 node.style_json.insert(key.to_string(), value);
-                node.inline_style =
-                    NodeStyle::from_json(Some(&Value::Object(node.style_json.clone())));
+                reparse_inline_style(node);
                 apply(&mut node.style.widget);
             }
         }
@@ -9923,8 +12058,7 @@ impl WgpuState {
             if let Some(node) = find_widget_mut(tree, id) {
                 node.style_json
                     .insert("scatter_point_style".to_string(), json!(style));
-                node.inline_style =
-                    NodeStyle::from_json(Some(&Value::Object(node.style_json.clone())));
+                reparse_inline_style(node);
                 node.style.widget.scatter_point_style = Some(style.to_string());
             }
         }
@@ -12599,6 +14733,43 @@ impl WgpuState {
     }
 
     fn debug_snapshot_value(&self) -> Value {
+        let media = Some(self.media_environment());
+        let user_selector_matches = self
+            .widget_tree
+            .as_ref()
+            .map(|root| {
+                user_selector_match_counts_for_tree_with_media(root, &self.stylesheets, media)
+            })
+            .unwrap_or_default();
+        let user_selector_diagnostics = self
+            .widget_tree
+            .as_ref()
+            .map(|root| {
+                user_selector_diagnostics_for_tree_with_media(root, &self.stylesheets, media)
+                    .into_iter()
+                    .map(|diagnostic| {
+                        json!({
+                            "selector": diagnostic.selector,
+                            "source": "user stylesheet",
+                            "source_index": diagnostic.source_index,
+                            "line": diagnostic.source_line,
+                            "column": diagnostic.source_column,
+                            "source_order": diagnostic.source_order,
+                            "specificity": {
+                                "ids": diagnostic.specificity.ids,
+                                "classes": diagnostic.specificity.classes,
+                                "types": diagnostic.specificity.types,
+                            },
+                            "match_count": diagnostic.matched_nodes,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let unmatched_user_selectors = user_selector_matches
+            .iter()
+            .filter_map(|(selector, count)| (*count == 0).then_some(selector))
+            .collect::<Vec<_>>();
         let scatter = self.visible_scatter_order.first().and_then(|id| {
             self.scatters
                 .get(id)
@@ -12666,15 +14837,28 @@ impl WgpuState {
                 "theme_rules": self.stylesheets.rules(crate::css_style::StylesheetOrigin::Theme).len(),
                 "user_rules": self.stylesheets.rules(crate::css_style::StylesheetOrigin::User).len(),
                 "warning_count": self.stylesheets.warnings().len(),
+                "warnings": self.stylesheets.warnings().into_iter().map(|warning| json!({
+                    "property": &warning.property,
+                    "message": &warning.message,
+                })).collect::<Vec<_>>(),
                 "last_error": self.stylesheets.last_error.as_deref(),
+                "user_selector_matches": user_selector_matches,
+                "user_selector_diagnostics": user_selector_diagnostics,
+                "unmatched_user_selectors": unmatched_user_selectors,
             },
-            "computed_styles": computed_styles_snapshot(
+            "computed_styles": computed_styles_snapshot_with_state(
                 self.widget_tree.as_ref(),
                 &self.stylesheets,
-                Some(self.media_environment()),
+                media,
+                self.widget_state.as_ref(),
             ),
             "tree": self.widget_tree.as_ref().map(node_snapshot),
-            "layout": layout_snapshot(self.current_layout.as_ref()),
+            "layout": layout_snapshot_with_context(
+                self.current_layout.as_ref(),
+                self.widget_tree.as_ref(),
+                Some(&self.theme),
+                self.widget_state.as_ref(),
+            ),
             "state": widget_state_snapshot(self.widget_state.as_ref()),
             "toasts": self.toast_snapshot(),
             "renderer": {
@@ -12824,16 +15008,17 @@ impl WgpuState {
     }
 
     fn dropdown_option_at(&self, pos: [f32; 2]) -> Option<(String, usize)> {
+        let tree = self.widget_tree.as_ref()?;
         let layout = self.current_layout.as_ref()?;
         let state = self.widget_state.as_ref()?;
         let id = state.open_dropdown.as_ref()?;
-        let rect = layout.rects.get(id)?;
+        let rect = dropdown_overlay_rect(tree, layout, state, &self.theme, self.scale_factor)?;
         let items = state.dropdown_items.get(id)?;
         let row_h = self.theme.control_height() * self.scale_factor;
-        if pos[0] < rect.x || pos[0] >= rect.x + rect.w || pos[1] < rect.y + rect.h {
+        if !rect_contains_pos(&rect, pos) {
             return None;
         }
-        let idx = ((pos[1] - rect.y - rect.h) / row_h).floor() as usize;
+        let idx = ((pos[1] - rect.y) / row_h).floor() as usize;
         if idx < items.len() {
             Some((id.clone(), idx))
         } else {
@@ -12923,45 +15108,7 @@ impl WgpuState {
         let tree = self.widget_tree.as_ref()?;
         let layout = self.current_layout.as_ref()?;
         let state = self.widget_state.as_ref()?;
-        let items = state.menu_items.get(id)?;
-        if items.is_empty() {
-            return None;
-        }
-        let node = find_widget(tree, id)?;
-        let row_h = self.theme.control_height() * self.scale_factor;
-        let root = layout
-            .rects
-            .get(&tree.id)
-            .copied()
-            .unwrap_or(crate::layout::Rect {
-                x: 0.0,
-                y: 0.0,
-                w: self.config.width as f32,
-                h: self.config.height as f32,
-            });
-        let mut width = menu_popup_width(
-            items,
-            node.props.fixed_width,
-            &self.theme,
-            self.scale_factor,
-        );
-        let height = row_h * items.len() as f32;
-        let (mut x, mut y) = if node.kind == WidgetKind::Menu {
-            let r = layout.rects.get(id)?;
-            width = width.max(r.w);
-            (r.x, r.y + r.h)
-        } else {
-            let pos = state.context_menu_pos?;
-            (pos[0], pos[1])
-        };
-        x = x.clamp(root.x, (root.x + root.w - width).max(root.x));
-        y = y.clamp(root.y, (root.y + root.h - height).max(root.y));
-        Some(crate::layout::Rect {
-            x,
-            y,
-            w: width,
-            h: height,
-        })
+        menu_popup_rect(tree, layout, state, &self.theme, self.scale_factor, id)
     }
 
     fn table_at(&self, pos: [f32; 2]) -> Option<String> {
@@ -15191,6 +17338,20 @@ impl DragonApp {
     fn request_redraw(&self) {
         if let Some(w) = &self.window {
             w.request_redraw();
+        }
+    }
+
+    fn request_logical_window_resize(&self, width: u32, height: u32) {
+        let Some(window) = &self.window else {
+            return;
+        };
+        if let Some(scale) = visual_audit_scale_factor_override() {
+            let _ = window.request_inner_size(PhysicalSize::new(
+                ((width.max(1) as f64 * scale).round() as u32).max(1),
+                ((height.max(1) as f64 * scale).round() as u32).max(1),
+            ));
+        } else {
+            let _ = window.request_inner_size(LogicalSize::new(width.max(1), height.max(1)));
         }
     }
 
@@ -18697,6 +20858,18 @@ impl DragonApp {
                     .and_then(|g| g.widget_state.as_mut())
                     .and_then(|ws| ws.activate_nav_item(id));
                 needs_layout_rebuild = navigation_change.is_some();
+                let closes_drawer = navigation_change.is_some()
+                    && self
+                        .gpu
+                        .as_ref()
+                        .and_then(|gpu| gpu.widget_tree.as_ref())
+                        .and_then(|tree| drawer_sidebar_containing(tree, id))
+                        .is_some();
+                if closes_drawer {
+                    self.gpu
+                        .as_mut()
+                        .and_then(WgpuState::close_active_sidebar_drawer);
+                }
             }
             WidgetKind::LinePlot => {
                 let pos = self.last_mouse_pos.unwrap_or([0.0, 0.0]);
@@ -19152,6 +21325,22 @@ impl DragonApp {
 
         if matches!(&event.logical_key, Key::Named(NamedKey::Escape)) {
             if self.gpu.as_mut().is_some_and(WgpuState::close_popups) {
+                self.request_redraw();
+                return;
+            }
+            if let Some(closed) = self
+                .gpu
+                .as_mut()
+                .and_then(WgpuState::close_active_sidebar_drawer)
+            {
+                self.record_runtime_command(
+                    "SidebarDrawerClose",
+                    Some(closed),
+                    Some("escape".to_string()),
+                    Some(Dirty::Layout),
+                    "applied",
+                    true,
+                );
                 self.request_redraw();
                 return;
             }
@@ -19913,6 +22102,25 @@ fn is_insert_multiline_text(text: &str) -> bool {
 const STARTUP_WINDOW_MARGIN_X_LP: f64 = 64.0;
 const STARTUP_WINDOW_MARGIN_Y_LP: f64 = 96.0;
 
+fn parse_visual_audit_scale_factor(
+    visual_audit: Option<&str>,
+    requested_scale: Option<&str>,
+) -> Option<f64> {
+    if visual_audit != Some("1") {
+        return None;
+    }
+    requested_scale?
+        .parse::<f64>()
+        .ok()
+        .filter(|scale| scale.is_finite() && (0.5..=4.0).contains(scale))
+}
+
+fn visual_audit_scale_factor_override() -> Option<f64> {
+    let visual_audit = std::env::var("DRAGONGUI_VISUAL_AUDIT").ok();
+    let requested_scale = std::env::var("DRAGONGUI_AUDIT_SCALE_FACTOR").ok();
+    parse_visual_audit_scale_factor(visual_audit.as_deref(), requested_scale.as_deref())
+}
+
 fn clamp_startup_window_size_to_monitor(
     requested_width: u32,
     requested_height: u32,
@@ -19990,10 +22198,21 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
         let hide_until_loading_frame = spec.loading_screen.enabled;
         let (startup_size, startup_position) =
             startup_window_placement(event_loop, spec.width, spec.height);
+        let audit_scale = visual_audit_scale_factor_override();
+        let audit_size = audit_scale.map(|scale| {
+            PhysicalSize::new(
+                ((startup_size.width as f64 * scale).round() as u32).max(1),
+                ((startup_size.height as f64 * scale).round() as u32).max(1),
+            )
+        });
         let mut attrs = Window::default_attributes()
             .with_title(&spec.title)
-            .with_inner_size(startup_size)
             .with_visible(!hide_until_loading_frame);
+        attrs = if let Some(size) = audit_size {
+            attrs.with_inner_size(size)
+        } else {
+            attrs.with_inner_size(startup_size)
+        };
         if let Some(position) = startup_position {
             attrs = attrs.with_position(position);
         }
@@ -20048,6 +22267,9 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                 self.drain_html_report_messages();
                 self.drain_runtime_commands();
                 self.request_redraw();
+            }
+            RuntimeEvent::ResizeLogical { width, height } => {
+                self.request_logical_window_resize(width, height);
             }
         }
     }
@@ -20133,7 +22355,10 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                     .map(|w| w.inner_size())
                     .unwrap_or_default();
                 if let Some(gpu) = &mut self.gpu {
-                    gpu.set_scale_factor(scale_factor, new_size);
+                    gpu.set_scale_factor(
+                        visual_audit_scale_factor_override().unwrap_or(scale_factor),
+                        new_size,
+                    );
                 }
                 self.request_redraw();
             }

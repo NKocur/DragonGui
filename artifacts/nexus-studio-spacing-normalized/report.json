@@ -1,0 +1,373 @@
+[
+  {
+    "captures": [
+      {
+        "actions": [],
+        "diagnostic_counts": {},
+        "name": "1440x900@1x-command",
+        "route": "command",
+        "scale": 1.0,
+        "screenshot": "screenshots/nexus-studio-stress-1440x900@1x-command.png",
+        "size": "1440x900",
+        "snapshot": "snapshots/nexus-studio-stress-1440x900@1x-command.json",
+        "state": "command"
+      },
+      {
+        "actions": [],
+        "diagnostic_counts": {},
+        "name": "1440x900@1x-data",
+        "route": "data",
+        "scale": 1.0,
+        "screenshot": "screenshots/nexus-studio-stress-1440x900@1x-data.png",
+        "size": "1440x900",
+        "snapshot": "snapshots/nexus-studio-stress-1440x900@1x-data.json",
+        "state": "data"
+      },
+      {
+        "actions": [],
+        "diagnostic_counts": {},
+        "name": "1440x900@1x-workflow",
+        "route": "workflow",
+        "scale": 1.0,
+        "screenshot": "screenshots/nexus-studio-stress-1440x900@1x-workflow.png",
+        "size": "1440x900",
+        "snapshot": "snapshots/nexus-studio-stress-1440x900@1x-workflow.json",
+        "state": "workflow"
+      },
+      {
+        "actions": [],
+        "diagnostic_counts": {},
+        "name": "1440x900@1x-controls",
+        "route": "controls",
+        "scale": 1.0,
+        "screenshot": "screenshots/nexus-studio-stress-1440x900@1x-controls.png",
+        "size": "1440x900",
+        "snapshot": "snapshots/nexus-studio-stress-1440x900@1x-controls.json",
+        "state": "controls"
+      },
+      {
+        "actions": [],
+        "diagnostic_counts": {},
+        "name": "1440x900@1x-diagnostics",
+        "route": "diagnostics",
+        "scale": 1.0,
+        "screenshot": "screenshots/nexus-studio-stress-1440x900@1x-diagnostics.png",
+        "size": "1440x900",
+        "snapshot": "snapshots/nexus-studio-stress-1440x900@1x-diagnostics.json",
+        "state": "diagnostics"
+      },
+      {
+        "actions": [
+          "click:#nexus-launch-toolbar",
+          "wait:200"
+        ],
+        "diagnostic_counts": {},
+        "name": "1440x900@1x-modal-open",
+        "route": "command",
+        "scale": 1.0,
+        "screenshot": "screenshots/nexus-studio-stress-1440x900@1x-modal-open.png",
+        "size": "1440x900",
+        "snapshot": "snapshots/nexus-studio-stress-1440x900@1x-modal-open.json",
+        "state": "modal-open"
+      },
+      {
+        "actions": [
+          "click:#nexus-launch-toolbar",
+          "wait:100",
+          "click:#nexus-modal-cancel",
+          "wait:100"
+        ],
+        "diagnostic_counts": {},
+        "name": "1440x900@1x-modal-roundtrip",
+        "route": "command",
+        "scale": 1.0,
+        "screenshot": "screenshots/nexus-studio-stress-1440x900@1x-modal-roundtrip.png",
+        "size": "1440x900",
+        "snapshot": "snapshots/nexus-studio-stress-1440x900@1x-modal-roundtrip.json",
+        "state": "modal-roundtrip"
+      },
+      {
+        "actions": [
+          "click:#nexus-sidebar-toggle",
+          "wait:200"
+        ],
+        "diagnostic_counts": {},
+        "name": "1440x900@1x-sidebar-collapsed",
+        "route": "command",
+        "scale": 1.0,
+        "screenshot": "screenshots/nexus-studio-stress-1440x900@1x-sidebar-collapsed.png",
+        "size": "1440x900",
+        "snapshot": "snapshots/nexus-studio-stress-1440x900@1x-sidebar-collapsed.json",
+        "state": "sidebar-collapsed"
+      },
+      {
+        "actions": [
+          "click:#nexus-sidebar-toggle",
+          "wait:100",
+          "click:#nexus-sidebar-toggle",
+          "wait:100"
+        ],
+        "diagnostic_counts": {},
+        "name": "1440x900@1x-sidebar-roundtrip",
+        "route": "command",
+        "scale": 1.0,
+        "screenshot": "screenshots/nexus-studio-stress-1440x900@1x-sidebar-roundtrip.png",
+        "size": "1440x900",
+        "snapshot": "snapshots/nexus-studio-stress-1440x900@1x-sidebar-roundtrip.json",
+        "state": "sidebar-roundtrip"
+      },
+      {
+        "actions": [
+          "click:#nexus-palette-button",
+          "wait:200"
+        ],
+        "diagnostic_counts": {},
+        "name": "1440x900@1x-palette-open",
+        "route": "command",
+        "scale": 1.0,
+        "screenshot": "screenshots/nexus-studio-stress-1440x900@1x-palette-open.png",
+        "size": "1440x900",
+        "snapshot": "snapshots/nexus-studio-stress-1440x900@1x-palette-open.json",
+        "state": "palette-open"
+      },
+      {
+        "actions": [
+          "scroll:#workflow-scroll=0,320",
+          "wait:200"
+        ],
+        "diagnostic_counts": {},
+        "name": "1440x900@1x-workflow-scrolled",
+        "route": "workflow",
+        "scale": 1.0,
+        "screenshot": "screenshots/nexus-studio-stress-1440x900@1x-workflow-scrolled.png",
+        "size": "1440x900",
+        "snapshot": "snapshots/nexus-studio-stress-1440x900@1x-workflow-scrolled.json",
+        "state": "workflow-scrolled"
+      }
+    ],
+    "category": "layout",
+    "diagnostic_comparisons": [
+      {
+        "diagnostic_delta": {},
+        "from_state": "command",
+        "scale": 1.0,
+        "size": "1440x900",
+        "to_state": "data"
+      },
+      {
+        "diagnostic_delta": {},
+        "from_state": "command",
+        "scale": 1.0,
+        "size": "1440x900",
+        "to_state": "workflow"
+      },
+      {
+        "diagnostic_delta": {},
+        "from_state": "command",
+        "scale": 1.0,
+        "size": "1440x900",
+        "to_state": "controls"
+      },
+      {
+        "diagnostic_delta": {},
+        "from_state": "command",
+        "scale": 1.0,
+        "size": "1440x900",
+        "to_state": "diagnostics"
+      },
+      {
+        "diagnostic_delta": {},
+        "from_state": "command",
+        "scale": 1.0,
+        "size": "1440x900",
+        "to_state": "modal-open"
+      },
+      {
+        "diagnostic_delta": {},
+        "from_state": "command",
+        "scale": 1.0,
+        "size": "1440x900",
+        "to_state": "modal-roundtrip"
+      },
+      {
+        "diagnostic_delta": {},
+        "from_state": "command",
+        "scale": 1.0,
+        "size": "1440x900",
+        "to_state": "sidebar-collapsed"
+      },
+      {
+        "diagnostic_delta": {},
+        "from_state": "command",
+        "scale": 1.0,
+        "size": "1440x900",
+        "to_state": "sidebar-roundtrip"
+      },
+      {
+        "diagnostic_delta": {},
+        "from_state": "command",
+        "scale": 1.0,
+        "size": "1440x900",
+        "to_state": "palette-open"
+      },
+      {
+        "diagnostic_delta": {},
+        "from_state": "command",
+        "scale": 1.0,
+        "size": "1440x900",
+        "to_state": "workflow-scrolled"
+      }
+    ],
+    "features": [
+      "Flagship stress demo",
+      "AppShell",
+      "Sidebar",
+      "MenuBar",
+      "Toolbar",
+      "Tabs",
+      "Pages",
+      "Body",
+      "ScrollArea",
+      "responsive GridLayout",
+      "FlowLayout",
+      "Splitter",
+      "DataFrameTable",
+      "LinePlot",
+      "Histogram",
+      "BarChart",
+      "Heatmap",
+      "PieChart",
+      "TreeView",
+      "forms",
+      "CodeEditor",
+      "LogView",
+      "Modal",
+      "CommandPalette"
+    ],
+    "id": "nexus-studio-stress",
+    "layout_issue_counts": {},
+    "layout_issues": [],
+    "logs": [
+      "logs/nexus-studio-stress-1440x900@1x-command.stdout.txt",
+      "logs/nexus-studio-stress-1440x900@1x-command.stderr.txt",
+      "logs/nexus-studio-stress-1440x900@1x-data.stdout.txt",
+      "logs/nexus-studio-stress-1440x900@1x-data.stderr.txt",
+      "logs/nexus-studio-stress-1440x900@1x-workflow.stdout.txt",
+      "logs/nexus-studio-stress-1440x900@1x-workflow.stderr.txt",
+      "logs/nexus-studio-stress-1440x900@1x-controls.stdout.txt",
+      "logs/nexus-studio-stress-1440x900@1x-controls.stderr.txt",
+      "logs/nexus-studio-stress-1440x900@1x-diagnostics.stdout.txt",
+      "logs/nexus-studio-stress-1440x900@1x-diagnostics.stderr.txt",
+      "logs/nexus-studio-stress-1440x900@1x-modal-open.stdout.txt",
+      "logs/nexus-studio-stress-1440x900@1x-modal-open.stderr.txt",
+      "logs/nexus-studio-stress-1440x900@1x-modal-roundtrip.stdout.txt",
+      "logs/nexus-studio-stress-1440x900@1x-modal-roundtrip.stderr.txt",
+      "logs/nexus-studio-stress-1440x900@1x-sidebar-collapsed.stdout.txt",
+      "logs/nexus-studio-stress-1440x900@1x-sidebar-collapsed.stderr.txt",
+      "logs/nexus-studio-stress-1440x900@1x-sidebar-roundtrip.stdout.txt",
+      "logs/nexus-studio-stress-1440x900@1x-sidebar-roundtrip.stderr.txt",
+      "logs/nexus-studio-stress-1440x900@1x-palette-open.stdout.txt",
+      "logs/nexus-studio-stress-1440x900@1x-palette-open.stderr.txt",
+      "logs/nexus-studio-stress-1440x900@1x-workflow-scrolled.stdout.txt",
+      "logs/nexus-studio-stress-1440x900@1x-workflow-scrolled.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Nexus Studio Stress Demo",
+    "notes": "Five-workspace flagship demo intended to stress dense responsive layout, broad widget coverage, scrolling, overlay bounds, selector coverage, and state transitions. Additional run: Captured with native DragonGUI window screenshot API. Additional run: No visual issue recorded by automated first pass.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target nexus-studio-stress --sizes 1440x900 --scales 1 # state=command",
+      "python tools/visual_audit.py --target nexus-studio-stress --sizes 1440x900 --scales 1 # state=data",
+      "python tools/visual_audit.py --target nexus-studio-stress --sizes 1440x900 --scales 1 # state=workflow",
+      "python tools/visual_audit.py --target nexus-studio-stress --sizes 1440x900 --scales 1 # state=controls",
+      "python tools/visual_audit.py --target nexus-studio-stress --sizes 1440x900 --scales 1 # state=diagnostics",
+      "python tools/visual_audit.py --target nexus-studio-stress --sizes 1440x900 --scales 1 # state=modal-open",
+      "python tools/visual_audit.py --target nexus-studio-stress --sizes 1440x900 --scales 1 # state=modal-roundtrip",
+      "python tools/visual_audit.py --target nexus-studio-stress --sizes 1440x900 --scales 1 # state=sidebar-collapsed",
+      "python tools/visual_audit.py --target nexus-studio-stress --sizes 1440x900 --scales 1 # state=sidebar-roundtrip",
+      "python tools/visual_audit.py --target nexus-studio-stress --sizes 1440x900 --scales 1 # state=palette-open",
+      "python tools/visual_audit.py --target nexus-studio-stress --sizes 1440x900 --scales 1 # state=workflow-scrolled"
+    ],
+    "screenshots": [
+      "screenshots/nexus-studio-stress-1440x900@1x-command.png",
+      "screenshots/nexus-studio-stress-1440x900@1x-data.png",
+      "screenshots/nexus-studio-stress-1440x900@1x-workflow.png",
+      "screenshots/nexus-studio-stress-1440x900@1x-controls.png",
+      "screenshots/nexus-studio-stress-1440x900@1x-diagnostics.png",
+      "screenshots/nexus-studio-stress-1440x900@1x-modal-open.png",
+      "screenshots/nexus-studio-stress-1440x900@1x-modal-roundtrip.png",
+      "screenshots/nexus-studio-stress-1440x900@1x-sidebar-collapsed.png",
+      "screenshots/nexus-studio-stress-1440x900@1x-sidebar-roundtrip.png",
+      "screenshots/nexus-studio-stress-1440x900@1x-palette-open.png",
+      "screenshots/nexus-studio-stress-1440x900@1x-workflow-scrolled.png"
+    ],
+    "script": "examples\\nexus_studio_stress_demo.py",
+    "snapshots": [
+      "snapshots/nexus-studio-stress-1440x900@1x-command.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-command-resize-0-start-1440x864.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-command-resize-1-640x480.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-command-resize-2-1024x768.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-command-resize-3-1440x864.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-data.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-data-resize-0-start-1440x864.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-data-resize-1-640x480.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-data-resize-2-1024x768.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-data-resize-3-1440x864.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-workflow.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-workflow-resize-0-start-1440x864.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-workflow-resize-1-640x480.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-workflow-resize-2-1024x768.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-workflow-resize-3-1440x864.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-controls.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-controls-resize-0-start-1440x864.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-controls-resize-1-640x480.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-controls-resize-2-1024x768.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-controls-resize-3-1440x864.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-diagnostics.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-diagnostics-resize-0-start-1440x864.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-diagnostics-resize-1-640x480.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-diagnostics-resize-2-1024x768.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-diagnostics-resize-3-1440x864.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-modal-open.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-modal-open-resize-0-start-1440x864.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-modal-open-resize-1-640x480.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-modal-open-resize-2-1024x768.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-modal-open-resize-3-1440x864.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-modal-roundtrip.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-modal-roundtrip-resize-0-start-1440x864.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-modal-roundtrip-resize-1-640x480.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-modal-roundtrip-resize-2-1024x768.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-modal-roundtrip-resize-3-1440x864.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-sidebar-collapsed.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-sidebar-collapsed-resize-0-start-1440x864.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-sidebar-collapsed-resize-1-640x480.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-sidebar-collapsed-resize-2-1024x768.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-sidebar-collapsed-resize-3-1440x864.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-sidebar-roundtrip.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-sidebar-roundtrip-resize-0-start-1440x864.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-sidebar-roundtrip-resize-1-640x480.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-sidebar-roundtrip-resize-2-1024x768.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-sidebar-roundtrip-resize-3-1440x864.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-palette-open.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-palette-open-resize-0-start-1440x864.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-palette-open-resize-1-640x480.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-palette-open-resize-2-1024x768.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-palette-open-resize-3-1440x864.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-workflow-scrolled.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-workflow-scrolled-resize-0-start-1440x864.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-workflow-scrolled-resize-1-640x480.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-workflow-scrolled-resize-2-1024x768.json",
+      "snapshots/nexus-studio-stress-1440x900@1x-workflow-scrolled-resize-3-1440x864.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/layout.rs",
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs",
+      "native/src/scatter/mod.rs",
+      "native/src/table.rs",
+      "native/src/text/mod.rs"
+    ],
+    "unmatched_selectors": []
+  }
+]

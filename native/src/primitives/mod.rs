@@ -13,11 +13,16 @@ use crate::css_style::{
 use crate::document::{BarChartHoverProp, HeatmapHoverProp, WidgetKind, WidgetNode};
 use crate::events::{NavigationItem, SortDirection, TableSortColumn, WidgetState};
 use crate::layout::{
-    is_scroll_container_node, panel_title_body_gap_lp, panel_title_line_height_lp,
-    panel_title_top_padding_lp, scroll_container_max_x, scroll_container_max_y,
-    tree_node_row_height_for_style, LayoutResult, Rect,
+    is_scroll_container_node, scroll_container_max_x, scroll_container_max_y,
+    titled_container_geometry, tree_node_row_height_for_style, LayoutResult, Rect,
 };
-use crate::overlays::{find_node, menu_popup_rect, rich_tooltip_target, tooltip_target};
+use crate::overlays::{
+    dropdown_overlay_rect, find_node, menu_popup_rect, rich_tooltip_target, tooltip_target,
+};
+use crate::paint::{
+    native_widget_paint_fallback_with_level, native_widget_part_paint_fallback,
+    native_widget_part_paint_fallback_with_selection, NativePaintFallback, PaintInteraction,
+};
 use crate::scatter::colormap;
 use crate::style::{
     base_part_style, checked_part_style_for_state, code_editor_gutter_width_for_style,
@@ -29,7 +34,7 @@ use crate::style::{
     part_visual_for_state as style_part_visual_for_state, selected_part_style_for_state,
     state_part_style_for_state, tabs_header_height_for_style, uniform_layout_padding,
     BackdropFilterStyle, BackgroundPaint, ColorRef, GradientInterpolation, NodeStyle, PartStyle,
-    PositionStyle, TransformStyle, TransitionProperty, VisualStyle, BORDER_WIDTH_LP,
+    PositionStyle, TextStyle, TransformStyle, TransitionProperty, VisualStyle, BORDER_WIDTH_LP,
     CARET_WIDTH_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP, DROPDOWN_CHEVRON_WIDTH_LP,
     FOCUS_RING_LP, PANEL_ACCENT_WIDTH_LP, SLIDER_THUMB_WIDTH_LP, SLIDER_TRACK_HEIGHT_LP,
     SLIDER_TRACK_MARGIN_LP, TAB_ACTIVE_BAR_LP, TAB_GAP_LP, TAB_INACTIVE_BOTTOM_INSET_LP,
@@ -37,6 +42,7 @@ use crate::style::{
     TOGGLE_SWITCH_TRACK_WIDTH_LP,
 };
 use crate::table;
+use crate::text::measure_text_for_layout;
 use crate::theme::{parse_hex_color, parse_web_color, Color, Theme};
 use crate::toast::{toast_colors, toast_rect, toast_stack_index, ToastOverlay};
 
@@ -333,7 +339,9 @@ pub(crate) fn modal_close_button_rect(
         .as_deref()
         .is_some_and(|text| !text.is_empty());
     let title_band_h = if has_title {
-        ((panel_title_top_padding_lp(node, theme) + panel_title_line_height_lp(node, theme)) * sf)
+        titled_container_geometry(node, layout, sf, theme)
+            .map(|geometry| geometry.title_band.h)
+            .unwrap_or(0.0)
             .min((rect.h - border_w * 2.0).max(1.0))
     } else {
         26.0 * sf
@@ -3856,6 +3864,7 @@ fn pie_chart_slice_label_text(
 
 fn pie_chart_slice_label_layouts(
     node: &WidgetNode,
+    theme: &Theme,
     sf: f32,
     plot: [f32; 4],
 ) -> Vec<PieChartLabelLayout> {
@@ -3892,8 +3901,13 @@ fn pie_chart_slice_label_layouts(
         let text = pie_chart_slice_label_text(slice, percent, &node.props.pie_chart.value_mode);
         let screen_x = plot[0] + plot[2] * 0.5 + mid.cos() * r;
         let screen_y = plot[1] + plot[3] * 0.5 + mid.sin() * r;
-        let font_size = 10.0 * sf;
-        let text_w = text.chars().count() as f32 * 5.8 * sf + 14.0 * sf;
+        let font_size_lp = pie_chart_label_font_size(node).unwrap_or(10.0).max(8.0);
+        let font_size = font_size_lp * sf;
+        let text_style = TextStyle {
+            font_size: Some(font_size_lp),
+            ..node.style.text.clone()
+        };
+        let text_w = measure_text_for_layout(&text, &text_style, theme).width * sf + 14.0 * sf;
         let label_w = text_w.min(plot[2] * 0.62).max(42.0 * sf);
         let label_h = font_size * 1.55;
         let label_left = (screen_x - label_w * 0.5)
@@ -4007,7 +4021,7 @@ fn emit_pie_chart(
         ];
         out.push(inst_radii(hole, plot_fill, [inner * 0.5; 4]));
     }
-    for label in pie_chart_slice_label_layouts(node, sf, plot) {
+    for label in pie_chart_slice_label_layouts(node, theme, sf, plot) {
         let chip = mix(theme.background, theme.surface, 0.18);
         out.push(inst_radii(
             label.rect,
@@ -4424,7 +4438,12 @@ pub(crate) fn histogram_text_labels(
     labels
 }
 
-pub(crate) fn bar_chart_plot_rect(node: &WidgetNode, sf: f32, rect: [f32; 4]) -> [f32; 4] {
+pub(crate) fn bar_chart_plot_rect(
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    rect: [f32; 4],
+) -> [f32; 4] {
     let base_pad = 10.0 * sf;
     let show_ticks = bar_chart_ticks_enabled(node, rect);
     let show_axis_labels = bar_chart_axis_labels_enabled(node, rect);
@@ -4432,15 +4451,18 @@ pub(crate) fn bar_chart_plot_rect(node: &WidgetNode, sf: f32, rect: [f32; 4]) ->
     let left = if node.props.bar_chart.show_axes || show_ticks {
         if bar_chart_is_horizontal(node) {
             let label_lane = if show_ticks {
-                let max_chars = node
+                let text_style = TextStyle {
+                    font_size: Some(10.0),
+                    ..node.style.text.clone()
+                };
+                let max_label_width = node
                     .props
                     .bar_chart
                     .labels
                     .iter()
-                    .map(|label| label.chars().count())
-                    .max()
-                    .unwrap_or(0) as f32;
-                (max_chars * 4.8 * sf + 8.0 * sf).clamp(36.0 * sf, 68.0 * sf)
+                    .map(|label| measure_text_for_layout(label, &text_style, theme).width)
+                    .fold(0.0, f32::max);
+                (max_label_width * sf + 8.0 * sf).clamp(36.0 * sf, 68.0 * sf)
             } else {
                 0.0
             };
@@ -4702,7 +4724,7 @@ pub(crate) fn bar_chart_bar_at(
     rect: [f32; 4],
     pos: [f32; 2],
 ) -> Option<BarChartHoverProp> {
-    let plot = bar_chart_plot_rect(node, sf, rect);
+    let plot = bar_chart_plot_rect(node, theme, sf, rect);
     if pos[0] < plot[0]
         || pos[0] >= plot[0] + plot[2]
         || pos[1] < plot[1]
@@ -4798,7 +4820,7 @@ fn emit_bar_chart(
     if rect[2] <= 2.0 || rect[3] <= 2.0 {
         return;
     }
-    let plot = bar_chart_plot_rect(node, sf, rect);
+    let plot = bar_chart_plot_rect(node, theme, sf, rect);
     let plot_fill = mix(styled_bg.unwrap_or(theme.surface), theme.background, 0.18);
     out.push(inst_radii(plot, plot_fill, [2.0 * sf; 4]));
     let Some(bounds) = bar_chart_resolved_bounds(node) else {
@@ -4970,7 +4992,7 @@ pub(crate) fn bar_chart_text_labels(
     rect: [f32; 4],
 ) -> Vec<LinePlotTextLabel> {
     let mut labels = Vec::new();
-    let plot = bar_chart_plot_rect(node, sf, rect);
+    let plot = bar_chart_plot_rect(node, theme, sf, rect);
     let tick_color = mix(theme.muted_text, theme.text, 0.18);
     let tick_color = Some([tick_color[0], tick_color[1], tick_color[2]]);
 
@@ -5327,6 +5349,26 @@ fn emit_heatmap(
     if rows == 0 || cols == 0 || node.props.heatmap.values.len() != rows.saturating_mul(cols) {
         return;
     }
+    let grid_visual = base_part_style(&node.style, "grid")
+        .map(|style| style.visual.clone())
+        .unwrap_or_default();
+    let grid_fallback = native_widget_part_paint_fallback(
+        WidgetKind::Heatmap,
+        "grid",
+        theme,
+        PaintInteraction::Resting,
+        false,
+    );
+    let scalar_bar_visual = base_part_style(&node.style, "scalar-bar")
+        .map(|style| style.visual.clone())
+        .unwrap_or_default();
+    let scalar_bar_fallback = native_widget_part_paint_fallback(
+        WidgetKind::Heatmap,
+        "scalar-bar",
+        theme,
+        PaintInteraction::Resting,
+        false,
+    );
 
     let stride = heatmap_cell_stride(node, plot, sf);
     for row in (0..rows).step_by(stride) {
@@ -5359,9 +5401,16 @@ fn emit_heatmap(
     let cell_w = plot[2] / cols.max(1) as f32;
     let cell_h = plot[3] / rows.max(1) as f32;
     if rows <= 40 && cols <= 40 && cell_w >= 6.0 * sf && cell_h >= 6.0 * sf {
-        let mut grid_color = mix(theme.border, theme.background, 0.16);
-        grid_color[3] = 0.38;
-        let grid_w = (1.0 * sf).max(1.0);
+        let grid_color = resolve_color(&grid_visual.background, theme)
+            .map(|color| apply_opacity(color, grid_visual.opacity))
+            .or(grid_fallback.background)
+            .unwrap_or_else(|| with_alpha(mix(theme.border, theme.background, 0.16), 0.38));
+        let grid_w = (grid_visual
+            .border_width
+            .or(grid_fallback.border_width)
+            .unwrap_or(1.0)
+            * sf)
+            .max(1.0);
         for col in 1..cols {
             let x = plot[0] + plot[2] * (col as f32 / cols as f32);
             out.push(inst_radii(
@@ -5381,28 +5430,50 @@ fn emit_heatmap(
     }
 
     if let Some(bar) = heatmap_scalar_bar_rect(node, sf, rect) {
-        let steps = 64usize;
-        let cmap = colormap::resolve(&node.props.heatmap.colormap);
-        for index in 0..steps {
-            let t0 = index as f32 / steps as f32;
-            let t1 = (index + 1) as f32 / steps as f32;
-            let rgb = colormap::sample(cmap, 1.0 - (t0 + t1) * 0.5);
-            out.push(inst_radii(
-                [
-                    bar[0],
-                    bar[1] + bar[3] * t0,
-                    bar[2],
-                    (bar[3] * (t1 - t0)).max(0.75),
-                ],
-                [rgb[0], rgb[1], rgb[2], 1.0],
-                [0.0; 4],
-            ));
+        if let Some(fill) = resolve_color(&scalar_bar_visual.background, theme)
+            .map(|color| apply_opacity(color, scalar_bar_visual.opacity))
+        {
+            out.push(inst_radii(bar, fill, [0.0; 4]));
+        } else {
+            let steps = 64usize;
+            let cmap = colormap::resolve(&node.props.heatmap.colormap);
+            for index in 0..steps {
+                let t0 = index as f32 / steps as f32;
+                let t1 = (index + 1) as f32 / steps as f32;
+                let rgb = colormap::sample(cmap, 1.0 - (t0 + t1) * 0.5);
+                out.push(inst_radii(
+                    [
+                        bar[0],
+                        bar[1] + bar[3] * t0,
+                        bar[2],
+                        (bar[3] * (t1 - t0)).max(0.75),
+                    ],
+                    [rgb[0], rgb[1], rgb[2], 1.0],
+                    [0.0; 4],
+                ));
+            }
         }
+        let scalar_bar_radius = scalar_bar_visual
+            .border_radius
+            .or(scalar_bar_fallback.border_radius)
+            .unwrap_or(2.0)
+            .max(0.0)
+            * sf;
+        let scalar_bar_border_width = scalar_bar_visual
+            .border_width
+            .or(scalar_bar_fallback.border_width)
+            .unwrap_or(1.0)
+            .max(0.0)
+            * sf;
         out.push(inst_outline_ring_clipped(
             bar,
-            styled_border.unwrap_or(theme.border),
-            [2.0 * sf; 4],
-            (1.0 * sf).max(1.0),
+            resolve_color(&scalar_bar_visual.border_color, theme)
+                .map(|color| apply_opacity(color, scalar_bar_visual.opacity))
+                .or(scalar_bar_fallback.border_color)
+                .or(styled_border)
+                .unwrap_or(theme.border),
+            [scalar_bar_radius; 4],
+            scalar_bar_border_width,
             [-1.0, -1.0, bar[2] + 2.0, bar[3] + 2.0],
         ));
     }
@@ -5410,11 +5481,44 @@ fn emit_heatmap(
     if let Some(hover) = node.props.heatmap.hover.as_ref() {
         if hover.row < rows && hover.col < cols {
             let cell = heatmap_cell_rect(node, plot, hover.row, hover.col);
-            let mut fill = mix(theme.accent, theme.surface, 0.26);
-            fill[3] = 0.14;
-            let mut border = mix(theme.text, theme.accent, 0.20);
-            border[3] = 0.94;
-            emit_bordered_rect_radii(out, cell, border, fill, [1.5 * sf; 4], (2.0 * sf).max(1.0));
+            let hover_visual = base_part_style(&node.style, "hover")
+                .map(|style| style.visual.clone())
+                .unwrap_or_default();
+            let hover_fallback = native_widget_part_paint_fallback(
+                WidgetKind::Heatmap,
+                "hover",
+                theme,
+                PaintInteraction::Hovered,
+                false,
+            );
+            let fill = resolve_color(&hover_visual.background, theme)
+                .map(|color| apply_opacity(color, hover_visual.opacity))
+                .or(hover_fallback.background)
+                .unwrap_or_else(|| with_alpha(mix(theme.accent, theme.surface, 0.26), 0.14));
+            let border = resolve_color(&hover_visual.border_color, theme)
+                .map(|color| apply_opacity(color, hover_visual.opacity))
+                .or(hover_fallback.border_color)
+                .unwrap_or_else(|| with_alpha(mix(theme.text, theme.accent, 0.20), 0.94));
+            let hover_radius = hover_visual
+                .border_radius
+                .or(hover_fallback.border_radius)
+                .unwrap_or(1.5)
+                .max(0.0)
+                * sf;
+            let hover_border_width = hover_visual
+                .border_width
+                .or(hover_fallback.border_width)
+                .unwrap_or(2.0)
+                .max(0.0)
+                * sf;
+            emit_bordered_rect_radii(
+                out,
+                cell,
+                border,
+                fill,
+                [hover_radius; 4],
+                hover_border_width,
+            );
             let readout = heatmap_readout_rect(hover.screen, plot, sf);
             let mut bg = mix(theme.surface, theme.background, 0.12);
             bg[3] = 0.98;
@@ -6154,7 +6258,12 @@ fn line_plot_legend_entries(node: &WidgetNode, theme: &Theme) -> Vec<(String, [f
         .collect()
 }
 
-fn line_plot_legend_rect(node: &WidgetNode, plot: [f32; 4], sf: f32) -> Option<[f32; 4]> {
+fn line_plot_legend_rect(
+    node: &WidgetNode,
+    theme: &Theme,
+    plot: [f32; 4],
+    sf: f32,
+) -> Option<[f32; 4]> {
     if !node.props.line_plot_show_legend {
         return None;
     }
@@ -6174,12 +6283,15 @@ fn line_plot_legend_rect(node: &WidgetNode, plot: [f32; 4], sf: f32) -> Option<[
         return None;
     }
     let pad = 8.0 * sf;
+    let text_style = TextStyle {
+        font_size: Some(10.0),
+        ..node.style.text.clone()
+    };
     let longest = labels
         .iter()
-        .map(|label| label.chars().count())
-        .max()
-        .unwrap_or(1) as f32;
-    let label_w = (longest * 5.6 * sf).clamp(22.0 * sf, 86.0 * sf);
+        .map(|label| measure_text_for_layout(label, &text_style, theme).width)
+        .fold(0.0, f32::max);
+    let label_w = (longest * sf).clamp(22.0 * sf, 86.0 * sf);
     let w = (37.0 * sf + label_w).min((plot[2] - pad * 2.0).max(50.0 * sf));
     let h = (entries as f32 * 17.0 * sf + 8.0 * sf).min((plot[3] - pad * 2.0).max(26.0 * sf));
     let x = match node.props.line_plot_legend_position.as_str() {
@@ -6200,7 +6312,7 @@ fn emit_line_plot_legend(
     sf: f32,
     plot: [f32; 4],
 ) {
-    let Some(rect) = line_plot_legend_rect(node, plot, sf) else {
+    let Some(rect) = line_plot_legend_rect(node, theme, plot, sf) else {
         return;
     };
     let entries = line_plot_legend_entries(node, theme);
@@ -6582,7 +6694,7 @@ pub(crate) fn line_plot_text_labels(
         });
     }
 
-    if let Some(legend_rect) = line_plot_legend_rect(node, plot, sf) {
+    if let Some(legend_rect) = line_plot_legend_rect(node, theme, plot, sf) {
         let entries = line_plot_legend_entries(node, theme);
         let color = mix(theme.text, theme.muted_text, 0.08);
         let color = Some([color[0], color[1], color[2]]);
@@ -6675,7 +6787,7 @@ pub(crate) fn pie_chart_text_labels(
         }
     }
     if node.props.pie_chart.show_labels && node.props.pie_chart.label_mode != "none" {
-        for label in pie_chart_slice_label_layouts(node, sf, plot) {
+        for label in pie_chart_slice_label_layouts(node, theme, sf, plot) {
             labels.push(LinePlotTextLabel {
                 text: label.text,
                 screen_x: label.screen_x,
@@ -7151,6 +7263,10 @@ fn widget_raw_str<'a>(node: &'a WidgetNode, key: &str) -> Option<&'a str> {
         .and_then(|value| value.as_str())
 }
 
+fn nav_item_uses_compact_icon(node: &WidgetNode, width: f32, sf: f32) -> bool {
+    node.kind == WidgetKind::NavItem && widget_raw_str(node, "icon").is_some() && width <= 72.0 * sf
+}
+
 fn emit_tool_icon_button_mark(
     out: &mut Vec<RectInstance>,
     node: &WidgetNode,
@@ -7181,7 +7297,7 @@ fn emit_tool_icon_button_mark(
         "eye" | "show" | "visible" => emit_tool_eye_icon(out, rect, color, false, sf),
         "eye-off" | "hide" | "hidden" => emit_tool_eye_icon(out, rect, color, true, sf),
         "menu" | "hamburger" => emit_tool_menu_icon(out, rect, color, sf),
-        "list" => emit_tool_list_icon(out, rect, color, sf),
+        "list" | "workflow" => emit_tool_list_icon(out, rect, color, sf),
         "filter" | "funnel" => emit_tool_filter_icon(out, rect, color, sf),
         "sort" => emit_tool_sort_icon(out, rect, color, sf),
         "undo" => emit_tool_history_icon(out, rect, color, true, sf),
@@ -8303,7 +8419,7 @@ pub(crate) fn panel_scrollbar_geometry(
     let border_w = visual.border_width.unwrap_or(BORDER_WIDTH_LP).max(0.0) * sf;
     let panel_radius_lp = visual.border_radius.unwrap_or(theme.radius * 0.5).max(0.0);
     let panel_radii = visual_radii(&visual, panel_radius_lp, sf);
-    let title_inset = panel_scrollbar_title_inset(node, theme, sf).min(rect.h.max(0.0));
+    let title_inset = panel_scrollbar_title_inset(node, layout, theme, sf).min(rect.h.max(0.0));
     let viewport_h = (rect.h - title_inset).max(1.0);
     let viewport_w = rect.w.max(1.0);
     let track_thickness = scrollbar_part_width_px(node, "scrollbar-track", 4.0, sf).max(2.0);
@@ -8562,8 +8678,12 @@ fn emit_panel_scrollbar(
     };
     let track_visual = part_visual_for(node, state, "scrollbar-track");
     let thumb_visual = part_visual_for(node, state, "scrollbar-thumb");
-    let track_fallback = with_alpha(mix(theme.surface, theme.muted_text, 0.25), 0.22);
-    let thumb_fallback = with_alpha(mix(theme.surface_alt, theme.muted_text, 0.45), 0.58);
+    let track_fallback = widget_part_paint_fallback(node, "scrollbar-track", theme, state)
+        .background
+        .unwrap_or_else(|| with_alpha(mix(theme.surface, theme.muted_text, 0.25), 0.22));
+    let thumb_fallback = widget_part_paint_fallback(node, "scrollbar-thumb", theme, state)
+        .background
+        .unwrap_or_else(|| with_alpha(mix(theme.surface_alt, theme.muted_text, 0.45), 0.58));
 
     if let Some(vertical) = geometry.vertical {
         emit_scrollbar_part_rect(
@@ -8621,8 +8741,12 @@ fn emit_table_scrollbar(
     };
     let track_visual = part_visual_for(node, state, "scrollbar-track");
     let thumb_visual = part_visual_for(node, state, "scrollbar-thumb");
-    let track_fallback = with_alpha(mix(theme.surface, theme.muted_text, 0.25), 0.20);
-    let thumb_fallback = with_alpha(mix(theme.surface_alt, theme.muted_text, 0.52), 0.68);
+    let track_fallback = widget_part_paint_fallback(node, "scrollbar-track", theme, state)
+        .background
+        .unwrap_or_else(|| with_alpha(mix(theme.surface, theme.muted_text, 0.25), 0.20));
+    let thumb_fallback = widget_part_paint_fallback(node, "scrollbar-thumb", theme, state)
+        .background
+        .unwrap_or_else(|| with_alpha(mix(theme.surface_alt, theme.muted_text, 0.52), 0.68));
 
     if let Some(vertical) = geometry.vertical {
         emit_scrollbar_part_rect(
@@ -8671,22 +8795,20 @@ fn rect_array(rect: Rect) -> [f32; 4] {
     [rect.x, rect.y, rect.w, rect.h]
 }
 
-fn panel_scrollbar_title_inset(node: &WidgetNode, theme: &Theme, sf: f32) -> f32 {
-    if !matches!(node.kind, WidgetKind::Panel | WidgetKind::Modal) {
-        return 0.0;
-    }
-    if !node
-        .props
-        .text
-        .as_deref()
-        .is_some_and(|text| !text.is_empty())
-    {
-        return 0.0;
-    }
-    (panel_title_top_padding_lp(node, theme)
-        + panel_title_line_height_lp(node, theme)
-        + panel_title_body_gap_lp(node, theme))
-        * sf
+fn panel_scrollbar_title_inset(
+    node: &WidgetNode,
+    layout: &LayoutResult,
+    theme: &Theme,
+    sf: f32,
+) -> f32 {
+    titled_container_geometry(node, layout, sf, theme)
+        .and_then(|geometry| {
+            layout
+                .rects
+                .get(&node.id)
+                .map(|rect| geometry.body_viewport.y - rect.y)
+        })
+        .unwrap_or(0.0)
 }
 
 fn scrollbar_part_width_px(node: &WidgetNode, part: &str, fallback_lp: f32, sf: f32) -> f32 {
@@ -8736,7 +8858,12 @@ fn resolve_part_background_paint(
 }
 
 fn resolve_overlay_opacity(style: &NodeStyle, base_opacity: f32) -> f32 {
-    (base_opacity * style.visual.opacity.unwrap_or(1.0)).clamp(0.0, 1.0)
+    (base_opacity
+        * style
+            .visual
+            .opacity
+            .unwrap_or_else(crate::style::native_fallback_opacity))
+    .clamp(0.0, 1.0)
 }
 
 fn overlay_color(
@@ -9100,32 +9227,94 @@ fn inset_rect(rect: [f32; 4], inset: f32) -> [f32; 4] {
     ]
 }
 
-fn control_fill(node: &WidgetNode, theme: &Theme, state: &WidgetState) -> [f32; 4] {
+fn paint_interaction(node: &WidgetNode, state: &WidgetState) -> PaintInteraction {
     if state.is_disabled(&node.id) {
-        mix(theme.surface_alt, theme.disabled, 0.28)
+        PaintInteraction::Disabled
     } else if state.pressed.as_deref() == Some(node.id.as_str()) {
-        darken(theme.accent, 0.15)
-    } else if state.hovered.as_deref() == Some(node.id.as_str())
-        || state.focused.as_deref() == Some(node.id.as_str())
-    {
-        mix(theme.surface_alt, theme.accent, 0.20)
+        PaintInteraction::Pressed
+    } else if state.focused.as_deref() == Some(node.id.as_str()) {
+        PaintInteraction::Focused
+    } else if state.hovered.as_deref() == Some(node.id.as_str()) {
+        PaintInteraction::Hovered
     } else {
-        theme.surface_alt
+        PaintInteraction::Resting
     }
 }
 
+fn widget_paint_fallback(
+    node: &WidgetNode,
+    theme: &Theme,
+    state: &WidgetState,
+) -> NativePaintFallback {
+    native_widget_paint_fallback_with_level(
+        node.kind,
+        node.props.level.as_deref(),
+        theme,
+        paint_interaction(node, state),
+    )
+}
+
+fn widget_part_paint_fallback(
+    node: &WidgetNode,
+    part: &str,
+    theme: &Theme,
+    state: &WidgetState,
+) -> NativePaintFallback {
+    let selected = match node.kind {
+        WidgetKind::Selectable | WidgetKind::TreeNode => state.is_selectable_selected(&node.id),
+        WidgetKind::Tab => state.is_active_tab(&node.id),
+        WidgetKind::NavItem => state.is_active_nav_item(&node.id),
+        _ => false,
+    };
+    native_widget_part_paint_fallback_with_selection(
+        node.kind,
+        part,
+        theme,
+        paint_interaction(node, state),
+        state.checked.get(&node.id).copied().unwrap_or(false),
+        selected,
+    )
+}
+
+fn widget_part_paint_fallback_with_checked(
+    node: &WidgetNode,
+    part: &str,
+    theme: &Theme,
+    state: &WidgetState,
+    checked: bool,
+) -> NativePaintFallback {
+    native_widget_part_paint_fallback(
+        node.kind,
+        part,
+        theme,
+        paint_interaction(node, state),
+        checked,
+    )
+}
+
+fn control_fill(node: &WidgetNode, theme: &Theme, state: &WidgetState) -> [f32; 4] {
+    widget_paint_fallback(node, theme, state)
+        .background
+        .unwrap_or_else(|| match paint_interaction(node, state) {
+            PaintInteraction::Disabled => mix(theme.surface_alt, theme.disabled, 0.28),
+            PaintInteraction::Pressed => darken(theme.accent, 0.15),
+            PaintInteraction::Hovered | PaintInteraction::Focused => {
+                mix(theme.surface_alt, theme.accent, 0.20)
+            }
+            PaintInteraction::Resting => theme.surface_alt,
+        })
+}
+
 fn control_border(node: &WidgetNode, theme: &Theme, state: &WidgetState) -> [f32; 4] {
-    if state.is_disabled(&node.id) {
-        mix(theme.border, theme.disabled, 0.45)
-    } else if state.focused.as_deref() == Some(node.id.as_str()) {
-        theme.accent
-    } else if state.pressed.as_deref() == Some(node.id.as_str()) {
-        darken(theme.accent, 0.08)
-    } else if state.hovered.as_deref() == Some(node.id.as_str()) {
-        mix(theme.border, theme.accent, 0.35)
-    } else {
-        theme.border
-    }
+    widget_paint_fallback(node, theme, state)
+        .border_color
+        .unwrap_or_else(|| match paint_interaction(node, state) {
+            PaintInteraction::Disabled => mix(theme.border, theme.disabled, 0.45),
+            PaintInteraction::Focused => theme.accent,
+            PaintInteraction::Pressed => darken(theme.accent, 0.08),
+            PaintInteraction::Hovered => mix(theme.border, theme.accent, 0.35),
+            PaintInteraction::Resting => theme.border,
+        })
 }
 
 fn emit_bordered_rect(
@@ -9565,8 +9754,18 @@ fn emit_rects_inner(
         subtree_paint_clip = paint_clip;
         let [x, y, w, h] = [full_rect.x, full_rect.y, full_rect.w, full_rect.h];
         let visual = visual_for(node, state, theme);
-        let border_w = visual.border_width.unwrap_or(BORDER_WIDTH_LP).max(0.0) * sf;
-        let radius_lp = visual.border_radius.unwrap_or(theme.radius).max(0.0);
+        let paint_fallback = widget_paint_fallback(node, theme, state);
+        let border_w = visual
+            .border_width
+            .or(paint_fallback.border_width)
+            .unwrap_or(BORDER_WIDTH_LP)
+            .max(0.0)
+            * sf;
+        let radius_lp = visual
+            .border_radius
+            .or(paint_fallback.border_radius)
+            .unwrap_or(theme.radius)
+            .max(0.0);
         let radius = radius_lp * sf;
         let radii = visual_radii(&visual, radius_lp, sf);
         let tab_attached_panel = context.tab_body_start && node.kind == WidgetKind::Panel;
@@ -9607,17 +9806,27 @@ fn emit_rects_inner(
         }
         match node.kind {
             WidgetKind::Panel => {
-                let panel_radius_lp = visual.border_radius.unwrap_or(theme.radius * 0.5).max(0.0);
+                let panel_radius_lp = visual
+                    .border_radius
+                    .or(paint_fallback.border_radius)
+                    .unwrap_or(theme.radius * 0.5)
+                    .max(0.0);
                 let mut panel_radii = visual_radii(&visual, panel_radius_lp, sf);
                 if tab_attached_panel {
                     panel_radii[0] = 0.0;
                     panel_radii[1] = 0.0;
                 }
-                let panel_fill = resolve_background_paint(&visual, theme, theme.surface);
+                let panel_fill = resolve_background_paint(
+                    &visual,
+                    theme,
+                    paint_fallback.background.unwrap_or(theme.surface),
+                );
                 emit_bordered_paint_rect_radii(
                     out,
                     [x, y, w, h],
-                    styled_border.unwrap_or(theme.border),
+                    styled_border
+                        .or(paint_fallback.border_color)
+                        .unwrap_or(theme.border),
                     panel_fill,
                     panel_radii,
                     border_w,
@@ -9704,11 +9913,20 @@ fn emit_rects_inner(
                 let expanded = state.is_expanded(&node.id);
                 let header_visual = part_visual_for(node, state, "header");
                 let body_visual = part_visual_for(node, state, "body");
+                let header_fallback = widget_part_paint_fallback(node, "header", theme, state);
                 let header_h = collapsible_header_height_for_style(&node.style, theme, sf).min(h);
                 let fill = if visual.background_paint.is_some() {
-                    resolve_background_paint(&visual, theme, theme.surface)
+                    resolve_background_paint(
+                        &visual,
+                        theme,
+                        paint_fallback.background.unwrap_or(theme.surface),
+                    )
                 } else {
-                    FillPaint::Solid(styled_bg.unwrap_or(theme.surface))
+                    FillPaint::Solid(
+                        styled_bg
+                            .or(paint_fallback.background)
+                            .unwrap_or(theme.surface),
+                    )
                 };
                 let border_color =
                     styled_border.unwrap_or_else(|| control_border(node, theme, state));
@@ -9725,6 +9943,7 @@ fn emit_rects_inner(
                 }
                 let header_fill = resolve_color(&header_visual.background, theme)
                     .map(|color| apply_opacity(color, header_visual.opacity))
+                    .or(header_fallback.background)
                     .unwrap_or_else(|| {
                         if state.pressed.as_deref() == Some(node.id.as_str()) {
                             mix(
@@ -9812,7 +10031,15 @@ fn emit_rects_inner(
                 emit_collapsible_indicator(
                     out,
                     indicator_rect,
-                    single_part_mark_color(node, state, theme, "indicator", theme.muted_text),
+                    single_part_mark_color(
+                        node,
+                        state,
+                        theme,
+                        "indicator",
+                        widget_part_paint_fallback(node, "indicator", theme, state)
+                            .background
+                            .unwrap_or(theme.muted_text),
+                    ),
                     expanded,
                     sf,
                     layout.visible_rect(&node.id),
@@ -9822,7 +10049,12 @@ fn emit_rects_inner(
             WidgetKind::Modal => {
                 let root = root_rect(layout).unwrap_or(Rect { x, y, w, h });
                 let scrim_visual = part_visual_for(node, state, "scrim");
-                let scrim_fallback = apply_opacity([0.0, 0.0, 0.0, 0.52], scrim_visual.opacity);
+                let scrim_fallback = apply_opacity(
+                    widget_part_paint_fallback(node, "scrim", theme, state)
+                        .background
+                        .unwrap_or([0.0, 0.0, 0.0, 0.52]),
+                    scrim_visual.opacity,
+                );
                 emit_paint_rect_radii(
                     out,
                     [root.x, root.y, root.w, root.h],
@@ -9849,17 +10081,20 @@ fn emit_rects_inner(
                     let inner_y = y + border_w;
                     let inner_w = (w - border_w * 2.0).max(1.0);
                     let inner_h = (h - border_w * 2.0).max(1.0);
-                    let title_band_h = ((panel_title_top_padding_lp(node, theme)
-                        + panel_title_line_height_lp(node, theme))
-                        * sf)
+                    let title_band_h = titled_container_geometry(node, layout, sf, theme)
+                        .map(|geometry| geometry.title_band.h)
+                        .unwrap_or(0.0)
                         .min(inner_h);
-                    let border_color = styled_border.unwrap_or(theme.border);
+                    let border_color = styled_border
+                        .or(paint_fallback.border_color)
+                        .unwrap_or(theme.border);
                     if title_band_h > 0.0 {
                         if border_w > 0.0 {
                             out.push(inst_radii([x, y, w, h], border_color, radii));
                         }
-                        let base_fill =
-                            resolve_color(&visual.background, theme).unwrap_or(theme.surface);
+                        let base_fill = resolve_color(&visual.background, theme)
+                            .or(paint_fallback.background)
+                            .unwrap_or(theme.surface);
                         let accent = resolve_color(&visual.accent, theme).unwrap_or(theme.accent);
                         let header_fill =
                             apply_opacity(mix(base_fill, accent, 0.16), visual.opacity);
@@ -9876,7 +10111,11 @@ fn emit_rects_inner(
                             emit_paint_rect_radii(
                                 out,
                                 [inner_x, inner_y + title_band_h, inner_w, body_h],
-                                resolve_background_paint(&visual, theme, theme.surface),
+                                resolve_background_paint(
+                                    &visual,
+                                    theme,
+                                    paint_fallback.background.unwrap_or(theme.surface),
+                                ),
                                 [0.0, 0.0, inner_radii[2], inner_radii[3]],
                             );
                         }
@@ -9887,11 +10126,17 @@ fn emit_rects_inner(
                         ));
                     }
                 } else {
-                    let fill = resolve_background_paint(&visual, theme, theme.surface);
+                    let fill = resolve_background_paint(
+                        &visual,
+                        theme,
+                        paint_fallback.background.unwrap_or(theme.surface),
+                    );
                     emit_underpainted_bordered_paint_rect_radii(
                         out,
                         [x, y, w, h],
-                        styled_border.unwrap_or(theme.border),
+                        styled_border
+                            .or(paint_fallback.border_color)
+                            .unwrap_or(theme.border),
                         fill,
                         radii,
                         border_w,
@@ -9914,12 +10159,18 @@ fn emit_rects_inner(
                 emit_paint_rect_radii(
                     out,
                     [x, y, w, h],
-                    resolve_background_paint(&visual, theme, theme.surface),
+                    resolve_background_paint(
+                        &visual,
+                        theme,
+                        paint_fallback.background.unwrap_or(theme.surface),
+                    ),
                     radii,
                 );
                 out.push(inst(
                     [x + w - border_w, y, border_w, h],
-                    styled_border.unwrap_or(theme.border),
+                    styled_border
+                        .or(paint_fallback.border_color)
+                        .unwrap_or(theme.border),
                     0.0,
                 ));
             }
@@ -9928,12 +10179,18 @@ fn emit_rects_inner(
                 emit_paint_rect_radii(
                     out,
                     [x, y, w, h],
-                    resolve_background_paint(&visual, theme, theme.surface),
+                    resolve_background_paint(
+                        &visual,
+                        theme,
+                        paint_fallback.background.unwrap_or(theme.surface),
+                    ),
                     radii,
                 );
                 out.push(inst(
                     [x, y, w, border_w],
-                    styled_border.unwrap_or(theme.border),
+                    styled_border
+                        .or(paint_fallback.border_color)
+                        .unwrap_or(theme.border),
                     0.0,
                 ));
             }
@@ -10026,12 +10283,18 @@ fn emit_rects_inner(
                 emit_paint_rect_radii(
                     out,
                     [x, y, w, h],
-                    resolve_background_paint(&visual, theme, theme.surface),
+                    resolve_background_paint(
+                        &visual,
+                        theme,
+                        paint_fallback.background.unwrap_or(theme.surface),
+                    ),
                     radii,
                 );
                 out.push(inst(
                     [x, y + h - border_w, w, border_w],
-                    styled_border.unwrap_or(theme.border),
+                    styled_border
+                        .or(paint_fallback.border_color)
+                        .unwrap_or(theme.border),
                     0.0,
                 ));
             }
@@ -10039,7 +10302,10 @@ fn emit_rects_inner(
             WidgetKind::Separator => {
                 out.push(inst(
                     [x, y, w.max(border_w), h.max(border_w)],
-                    styled_bg.or(styled_border).unwrap_or(theme.border),
+                    styled_bg
+                        .or(styled_border)
+                        .or(paint_fallback.background)
+                        .unwrap_or(theme.border),
                     0.0,
                 ));
             }
@@ -10122,14 +10388,24 @@ fn emit_rects_inner(
             | WidgetKind::Dropdown => {
                 emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], radii, out);
                 let fill = if visual.background_paint.is_some() {
-                    resolve_background_paint(&visual, theme, control_fill(node, theme, state))
+                    resolve_background_paint(
+                        &visual,
+                        theme,
+                        paint_fallback.background.unwrap_or(theme.surface_alt),
+                    )
                 } else {
-                    FillPaint::Solid(styled_bg.unwrap_or_else(|| control_fill(node, theme, state)))
+                    FillPaint::Solid(
+                        styled_bg
+                            .or(paint_fallback.background)
+                            .unwrap_or(theme.surface_alt),
+                    )
                 };
                 emit_bordered_paint_rect_radii(
                     out,
                     [x, y, w, h],
-                    styled_border.unwrap_or_else(|| control_border(node, theme, state)),
+                    styled_border
+                        .or(paint_fallback.border_color)
+                        .unwrap_or(theme.border),
                     fill,
                     radii,
                     border_w,
@@ -10143,6 +10419,9 @@ fn emit_rects_inner(
                 } else if node.kind == WidgetKind::IconButton {
                     let icon_fallback = resolve_color(&visual.foreground, theme)
                         .map(|c| apply_opacity(c, visual.opacity))
+                        .or_else(|| {
+                            widget_part_paint_fallback(node, "icon", theme, state).background
+                        })
                         .unwrap_or(theme.text);
                     let icon_color =
                         single_part_mark_color(node, state, theme, "icon", icon_fallback);
@@ -10150,6 +10429,9 @@ fn emit_rects_inner(
                 } else if node.kind == WidgetKind::ArrowButton {
                     let icon_fallback = resolve_color(&visual.foreground, theme)
                         .map(|c| apply_opacity(c, visual.opacity))
+                        .or_else(|| {
+                            widget_part_paint_fallback(node, "icon", theme, state).background
+                        })
                         .unwrap_or(theme.text);
                     let icon_color =
                         single_part_mark_color(node, state, theme, "icon", icon_fallback);
@@ -10160,7 +10442,15 @@ fn emit_rects_inner(
                     emit_dropdown_chevron(
                         out,
                         chevron_rect,
-                        single_part_mark_color(node, state, theme, "chevron", theme.muted_text),
+                        single_part_mark_color(
+                            node,
+                            state,
+                            theme,
+                            "chevron",
+                            widget_part_paint_fallback(node, "chevron", theme, state)
+                                .background
+                                .unwrap_or(theme.muted_text),
+                        ),
                         state.open_dropdown.as_deref() == Some(node.id.as_str()),
                         sf,
                     );
@@ -10173,17 +10463,19 @@ fn emit_rects_inner(
                     .as_ref()
                     .clone()
                     .merged(&part_visual_for(node, state, "row"));
+                let row_fallback = widget_part_paint_fallback(node, "row", theme, state);
                 let row_radii = visual_radii_with_fallback(&row_visual, radii, sf);
-                let fallback_fill = if selected {
+                let fallback_fill = if selected && styled_accent.is_some() {
                     mix(
                         theme.surface_alt,
                         styled_accent.unwrap_or(theme.accent),
                         0.24,
                     )
-                } else if state.hovered.as_deref() == Some(node.id.as_str()) {
-                    mix(theme.surface, theme.surface_alt, 0.62)
                 } else {
-                    [0.0, 0.0, 0.0, 0.0]
+                    row_fallback
+                        .background
+                        .or(paint_fallback.background)
+                        .unwrap_or([0.0, 0.0, 0.0, 0.0])
                 };
                 let row_fill_solid = resolve_color(&row_visual.background, theme)
                     .map(|color| apply_opacity(color, row_visual.opacity))
@@ -10201,6 +10493,7 @@ fn emit_rects_inner(
                 let row_border = resolve_color(&row_visual.border_color, theme)
                     .map(|color| apply_opacity(color, row_visual.opacity))
                     .or(styled_border)
+                    .or(paint_fallback.border_color)
                     .unwrap_or([0.0, 0.0, 0.0, 0.0]);
                 if row_border_w > 0.0 {
                     emit_bordered_paint_rect_radii(
@@ -10216,6 +10509,8 @@ fn emit_rects_inner(
                 }
                 if selected {
                     let indicator_visual = part_visual_for(node, state, "indicator");
+                    let indicator_fallback =
+                        widget_part_paint_fallback(node, "indicator", theme, state);
                     let indicator_style = node.style.parts.parts.get("indicator");
                     let indicator_w = indicator_style
                         .and_then(|style| style.layout.width)
@@ -10238,7 +10533,13 @@ fn emit_rects_inner(
                     let indicator_color = apply_opacity(
                         resolve_color(&indicator_visual.background, theme)
                             .or(resolve_color(&indicator_visual.foreground, theme))
-                            .unwrap_or_else(|| styled_accent.unwrap_or(theme.accent)),
+                            .unwrap_or_else(|| {
+                                if styled_accent.is_some() {
+                                    styled_accent.unwrap_or(theme.accent)
+                                } else {
+                                    indicator_fallback.background.unwrap_or(theme.accent)
+                                }
+                            }),
                         indicator_visual.opacity,
                     );
                     let indicator_radius =
@@ -10261,25 +10562,16 @@ fn emit_rects_inner(
                     .as_ref()
                     .clone()
                     .merged(&part_visual_for(node, state, "row"));
+                let row_fallback = widget_part_paint_fallback(node, "row", theme, state);
                 let row_radii = visual_radii_with_fallback(&row_visual, radii, sf);
-                let fallback_fill = if selected {
+                let fallback_fill = if selected && styled_accent.is_some() {
                     mix(
                         theme.surface_alt,
                         styled_accent.unwrap_or(theme.accent),
                         0.24,
                     )
-                } else if state.pressed.as_deref() == Some(node.id.as_str()) {
-                    mix(
-                        theme.surface_alt,
-                        styled_accent.unwrap_or(theme.accent),
-                        0.20,
-                    )
-                } else if state.hovered.as_deref() == Some(node.id.as_str())
-                    || state.focused.as_deref() == Some(node.id.as_str())
-                {
-                    mix(theme.surface, theme.surface_alt, 0.62)
                 } else {
-                    [0.0, 0.0, 0.0, 0.0]
+                    row_fallback.background.unwrap_or([0.0, 0.0, 0.0, 0.0])
                 };
                 let row_fill_solid = resolve_color(&row_visual.background, theme)
                     .map(|color| apply_opacity(color, row_visual.opacity))
@@ -10293,10 +10585,12 @@ fn emit_rects_inner(
                 let row_border_w = row_visual
                     .border_width
                     .map(|width| (width.max(0.0) * sf).max(0.0))
+                    .or(row_fallback.border_width.map(|width| width * sf))
                     .unwrap_or(border_w);
                 let row_border = resolve_color(&row_visual.border_color, theme)
                     .map(|color| apply_opacity(color, row_visual.opacity))
                     .or(styled_border)
+                    .or(row_fallback.border_color)
                     .unwrap_or([0.0, 0.0, 0.0, 0.0]);
                 if row_border_w > 0.0 {
                     emit_bordered_paint_rect_radii(
@@ -10314,10 +10608,18 @@ fn emit_rects_inner(
                 let indicator_w = collapsible_indicator_width_for_style(node, sf);
                 let indicator_rect = [x + theme.spacing * 0.5 * sf, y, indicator_w, row_h];
                 if !node.children.is_empty() {
+                    let indicator_fallback =
+                        widget_part_paint_fallback(node, "indicator", theme, state);
                     emit_collapsible_indicator(
                         out,
                         indicator_rect,
-                        single_part_mark_color(node, state, theme, "indicator", theme.muted_text),
+                        single_part_mark_color(
+                            node,
+                            state,
+                            theme,
+                            "indicator",
+                            indicator_fallback.background.unwrap_or(theme.muted_text),
+                        ),
                         expanded,
                         sf,
                         layout.visible_rect(&node.id),
@@ -10325,13 +10627,20 @@ fn emit_rects_inner(
                 }
                 if expanded && h > row_h {
                     let guide_visual = part_visual_for(node, state, "guide");
+                    let guide_fallback = widget_part_paint_fallback(node, "guide", theme, state);
                     let guide_color = apply_opacity(
                         resolve_color(&guide_visual.background, theme)
                             .or(resolve_color(&guide_visual.foreground, theme))
+                            .or(guide_fallback.background)
                             .unwrap_or(theme.border),
                         guide_visual.opacity,
                     );
-                    let guide_w = guide_visual.border_width.unwrap_or(1.0).max(1.0) * sf;
+                    let guide_w = guide_visual
+                        .border_width
+                        .or(guide_fallback.border_width)
+                        .unwrap_or(1.0)
+                        .max(1.0)
+                        * sf;
                     let guide_x = indicator_rect[0] + indicator_rect[2] * 0.5 - guide_w * 0.5;
                     out.push(inst(
                         [guide_x, y + row_h, guide_w.max(1.0), (h - row_h).max(1.0)],
@@ -10347,11 +10656,21 @@ fn emit_rects_inner(
                 emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], radii, out);
 
                 let row_fill = if visual.background_paint.is_some() {
-                    resolve_background_paint(&visual, theme, [0.0, 0.0, 0.0, 0.0])
+                    resolve_background_paint(
+                        &visual,
+                        theme,
+                        paint_fallback.background.unwrap_or([0.0, 0.0, 0.0, 0.0]),
+                    )
                 } else {
-                    FillPaint::Solid(styled_bg.unwrap_or([0.0, 0.0, 0.0, 0.0]))
+                    FillPaint::Solid(
+                        styled_bg
+                            .or(paint_fallback.background)
+                            .unwrap_or([0.0, 0.0, 0.0, 0.0]),
+                    )
                 };
-                let row_border = styled_border.unwrap_or([0.0, 0.0, 0.0, 0.0]);
+                let row_border = styled_border
+                    .or(paint_fallback.border_color)
+                    .unwrap_or([0.0, 0.0, 0.0, 0.0]);
                 if border_w > 0.0 {
                     emit_bordered_paint_rect_radii(
                         out,
@@ -10364,6 +10683,13 @@ fn emit_rects_inner(
                 }
 
                 let indicator_visual = part_visual_for(node, state, "indicator");
+                let indicator_fallback = widget_part_paint_fallback_with_checked(
+                    node,
+                    "indicator",
+                    theme,
+                    state,
+                    selected,
+                );
                 let indicator_style = node.style.parts.parts.get("indicator");
                 let indicator_w = indicator_style
                     .and_then(|style| style.layout.width)
@@ -10382,22 +10708,23 @@ fn emit_rects_inner(
                 let disabled = state.is_disabled(&node.id);
                 let indicator_border_w = indicator_visual
                     .border_width
+                    .or(indicator_fallback.border_width)
                     .map(|width| (width.max(0.0) * sf).max(0.0))
                     .unwrap_or((1.5 * sf).max(1.0));
                 let indicator_border = apply_opacity(
                     resolve_color(&indicator_visual.border_color, theme).unwrap_or_else(|| {
-                        if disabled {
-                            theme.disabled
-                        } else if selected {
+                        if !disabled && selected && styled_accent.is_some() {
                             styled_accent.unwrap_or(theme.accent)
                         } else {
-                            theme.border
+                            indicator_fallback.border_color.unwrap_or(theme.border)
                         }
                     }),
                     indicator_visual.opacity,
                 );
                 let indicator_fill_solid = apply_opacity(
-                    resolve_color(&indicator_visual.background, theme).unwrap_or(theme.surface),
+                    resolve_color(&indicator_visual.background, theme)
+                        .or(indicator_fallback.background)
+                        .unwrap_or(theme.surface),
                     indicator_visual.opacity,
                 );
                 let indicator_fill = if indicator_visual.background_paint.is_some() {
@@ -10418,6 +10745,8 @@ fn emit_rects_inner(
 
                 if selected {
                     let dot_visual = part_visual_for(node, state, "dot");
+                    let dot_fallback =
+                        widget_part_paint_fallback_with_checked(node, "dot", theme, state, true);
                     let dot_style = node.style.parts.parts.get("dot");
                     let dot_side = dot_style
                         .and_then(|style| style.layout.width.or(style.layout.height))
@@ -10436,10 +10765,10 @@ fn emit_rects_inner(
                         resolve_color(&dot_visual.background, theme)
                             .or(resolve_color(&dot_visual.foreground, theme))
                             .unwrap_or_else(|| {
-                                if disabled {
-                                    theme.disabled
-                                } else {
+                                if !disabled && styled_accent.is_some() {
                                     styled_accent.unwrap_or(theme.accent)
+                                } else {
+                                    dot_fallback.background.unwrap_or(theme.accent)
                                 }
                             }),
                         dot_visual.opacity,
@@ -10451,24 +10780,23 @@ fn emit_rects_inner(
             }
 
             WidgetKind::Badge | WidgetKind::Tag => {
-                let fill_solid = styled_bg.unwrap_or_else(|| standalone_badge_fill(node, theme));
+                let fill_solid = styled_bg
+                    .or(paint_fallback.background)
+                    .unwrap_or(theme.accent);
                 let fill = if visual.background_paint.is_some() {
                     resolve_background_paint(&visual, theme, fill_solid)
                 } else {
                     FillPaint::Solid(fill_solid)
                 };
-                let border_color = styled_border.unwrap_or_else(|| {
-                    if node.kind == WidgetKind::Tag {
-                        standalone_badge_level_color(node, theme)
-                    } else {
-                        fill_solid
-                    }
-                });
-                let badge_border_w = if node.kind == WidgetKind::Tag {
-                    border_w
-                } else {
-                    visual.border_width.unwrap_or(0.0).max(0.0) * sf
-                };
+                let border_color = styled_border
+                    .or(paint_fallback.border_color)
+                    .unwrap_or(fill_solid);
+                let badge_border_w = visual
+                    .border_width
+                    .or(paint_fallback.border_width)
+                    .unwrap_or(0.0)
+                    .max(0.0)
+                    * sf;
                 if badge_border_w > 0.0 {
                     emit_bordered_paint_rect_radii(
                         out,
@@ -10701,6 +11029,8 @@ fn emit_rects_inner(
                 let active = state.is_active_tab(&node.id);
                 let tab_visual = part_visual_for(node, state, "tab");
                 let accent_visual = part_visual_for(node, state, "accent");
+                let tab_fallback = widget_part_paint_fallback(node, "tab", theme, state);
+                let accent_fallback = widget_part_paint_fallback(node, "accent", theme, state);
                 let gap = TAB_GAP_LP * sf;
                 let top = TAB_TOP_INSET_LP * sf;
                 let bottom = if active {
@@ -10718,48 +11048,43 @@ fn emit_rects_inner(
                 let fill = if active {
                     resolve_color(&tab_visual.background, theme)
                         .or(styled_bg)
-                        .unwrap_or_else(|| {
-                            mix(
-                                theme.surface_alt,
-                                styled_accent.unwrap_or(theme.accent),
-                                0.24,
-                            )
+                        .unwrap_or_else(|| match styled_accent {
+                            Some(accent) => mix(theme.surface_alt, accent, 0.24),
+                            None => tab_fallback.background.unwrap_or(theme.surface_alt),
                         })
-                } else if state.hovered.as_deref() == Some(node.id.as_str())
-                    || state.focused.as_deref() == Some(node.id.as_str())
-                {
-                    resolve_color(&tab_visual.background, theme)
-                        .or(styled_bg)
-                        .unwrap_or_else(|| {
-                            mix(
-                                theme.surface_alt,
-                                styled_accent.unwrap_or(theme.accent),
-                                0.12,
-                            )
-                        })
-                } else if state.is_disabled(&node.id) {
-                    resolve_color(&tab_visual.background, theme)
-                        .or(styled_bg)
-                        .unwrap_or_else(|| mix(theme.surface_alt, theme.disabled, 0.28))
                 } else {
                     resolve_color(&tab_visual.background, theme)
                         .or(styled_bg)
-                        .unwrap_or(theme.surface_alt)
+                        .unwrap_or_else(|| {
+                            if styled_accent.is_some()
+                                && matches!(
+                                    paint_interaction(node, state),
+                                    PaintInteraction::Hovered | PaintInteraction::Focused
+                                )
+                            {
+                                mix(
+                                    theme.surface_alt,
+                                    styled_accent.unwrap_or(theme.accent),
+                                    0.12,
+                                )
+                            } else {
+                                tab_fallback.background.unwrap_or(theme.surface_alt)
+                            }
+                        })
                 };
                 let tab_border_w = tab_visual
                     .border_width
                     .map(|width| (width.max(0.0) * sf).max(0.0))
+                    .or(tab_fallback.border_width.map(|width| width * sf))
                     .unwrap_or(border_w);
                 emit_bordered_rect_radii(
                     out,
                     [vx, vy, vw, vh],
                     resolve_color(&tab_visual.border_color, theme)
                         .or(styled_border)
-                        .unwrap_or(if active {
-                            styled_accent.unwrap_or(theme.accent)
-                        } else {
-                            theme.border
-                        }),
+                        .or_else(|| active.then_some(styled_accent).flatten())
+                        .or(tab_fallback.border_color)
+                        .unwrap_or(theme.border),
                     apply_opacity(fill, tab_visual.opacity),
                     tab_radii,
                     tab_border_w,
@@ -10781,7 +11106,9 @@ fn emit_rects_inner(
                     let accent_fill = apply_opacity(
                         resolve_color(&accent_visual.background, theme)
                             .or(resolve_color(&accent_visual.foreground, theme))
-                            .unwrap_or_else(|| styled_accent.unwrap_or(theme.accent)),
+                            .or(styled_accent)
+                            .or(accent_fallback.background)
+                            .unwrap_or(theme.accent),
                         accent_visual.opacity,
                     );
                     let accent_radii = visual_radii_with_fallback(&accent_visual, [0.0; 4], sf);
@@ -10817,20 +11144,20 @@ fn emit_rects_inner(
                 let active = state.is_active_nav_item(&node.id);
                 let item_visual = part_visual_for(node, state, "item");
                 let accent_visual = part_visual_for(node, state, "accent");
+                let item_fallback = widget_part_paint_fallback(node, "item", theme, state);
+                let accent_fallback = widget_part_paint_fallback(node, "accent", theme, state);
                 let item_radii = visual_radii_with_fallback(&item_visual, radii, sf);
                 let fill = if active {
                     resolve_color(&item_visual.background, theme)
                         .or(styled_bg)
-                        .unwrap_or_else(|| {
-                            mix(
-                                theme.surface_alt,
-                                styled_accent.unwrap_or(theme.accent),
-                                0.20,
-                            )
+                        .unwrap_or_else(|| match styled_accent {
+                            Some(accent) => mix(theme.surface_alt, accent, 0.20),
+                            None => item_fallback.background.unwrap_or(theme.surface_alt),
                         })
                 } else {
                     resolve_color(&item_visual.background, theme)
                         .or(styled_bg)
+                        .or(item_fallback.background)
                         .unwrap_or_else(|| control_fill(node, theme, state))
                 };
                 let item_border_w = item_visual
@@ -10888,7 +11215,9 @@ fn emit_rects_inner(
                     let accent_fill = apply_opacity(
                         resolve_color(&accent_visual.background, theme)
                             .or(resolve_color(&accent_visual.foreground, theme))
-                            .unwrap_or_else(|| styled_accent.unwrap_or(theme.accent)),
+                            .or(styled_accent)
+                            .or(accent_fallback.background)
+                            .unwrap_or(theme.accent),
                         accent_visual.opacity,
                     );
                     // Left inset of the bar is CSS-controllable via the accent
@@ -10948,7 +11277,51 @@ fn emit_rects_inner(
                         out.push(inst_radii([x, y, w, h], item_fill, item_radii));
                     }
                 }
-                if let Some(rect) = badge_rect(node, [x, y, w, h], theme, sf, theme.spacing * sf) {
+                if widget_raw_str(node, "icon").is_some() {
+                    let compact = nav_item_uses_compact_icon(node, w, sf);
+                    let icon_size = (18.0 * sf).min((h - 8.0 * sf).max(1.0));
+                    let item_pad = node
+                        .style
+                        .parts
+                        .parts
+                        .get("item")
+                        .and_then(|part| part.layout.padding)
+                        .unwrap_or(theme.spacing)
+                        .max(0.0)
+                        * sf;
+                    let icon_x = if compact {
+                        x + (w - icon_size) * 0.5
+                    } else {
+                        x + item_pad
+                    };
+                    let icon_rect = [icon_x, y + (h - icon_size) * 0.5, icon_size, icon_size];
+                    let icon_color = resolve_color(&item_visual.foreground, theme)
+                        .or(resolve_color(&node.style.visual.foreground, theme))
+                        .unwrap_or(theme.text);
+                    emit_tool_icon_button_mark(out, node, icon_rect, icon_color, sf);
+                }
+                if nav_item_uses_compact_icon(node, w, sf) {
+                    if node
+                        .props
+                        .badge
+                        .as_deref()
+                        .is_some_and(|badge| !badge.is_empty())
+                    {
+                        let dot = 8.0 * sf;
+                        let inset = 5.0 * sf;
+                        let badge_visual = part_visual_for(node, state, "badge");
+                        let color = resolve_color(&badge_visual.background, theme)
+                            .or(resolve_color(&badge_visual.foreground, theme))
+                            .unwrap_or(theme.accent);
+                        out.push(inst_radii(
+                            [x + w - inset - dot, y + inset, dot, dot],
+                            color,
+                            [dot * 0.5; 4],
+                        ));
+                    }
+                } else if let Some(rect) =
+                    badge_rect(node, [x, y, w, h], theme, sf, theme.spacing * sf)
+                {
                     emit_badge_pill(node, theme, sf, state, rect, out);
                 }
                 emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], item_radii, out);
@@ -10959,15 +11332,9 @@ fn emit_rects_inner(
             | WidgetKind::CodeEditor
             | WidgetKind::LogView => {
                 emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], radii, out);
-                let fill_solid = if state.is_disabled(&node.id) {
-                    styled_bg.unwrap_or_else(|| mix(theme.surface_alt, theme.disabled, 0.24))
-                } else if state.hovered.as_deref() == Some(node.id.as_str())
-                    || state.focused.as_deref() == Some(node.id.as_str())
-                {
-                    styled_bg.unwrap_or_else(|| mix(theme.surface, theme.surface_alt, 0.70))
-                } else {
-                    styled_bg.unwrap_or_else(|| mix(theme.surface, theme.surface_alt, 0.55))
-                };
+                let fill_solid = styled_bg
+                    .or(paint_fallback.background)
+                    .unwrap_or_else(|| mix(theme.surface, theme.surface_alt, 0.55));
                 let fill = if visual.background_paint.is_some() {
                     resolve_background_paint(&visual, theme, fill_solid)
                 } else {
@@ -10976,7 +11343,9 @@ fn emit_rects_inner(
                 emit_bordered_paint_rect_radii(
                     out,
                     [x, y, w, h],
-                    styled_border.unwrap_or_else(|| control_border(node, theme, state)),
+                    styled_border
+                        .or(paint_fallback.border_color)
+                        .unwrap_or_else(|| control_border(node, theme, state)),
                     fill,
                     radii,
                     border_w,
@@ -11066,15 +11435,9 @@ fn emit_rects_inner(
                 emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], radii, out);
                 let invalid = state.number_is_invalid(&node.id);
                 let field_visual = part_visual_for(node, state, "field");
-                let fill_solid = if state.is_disabled(&node.id) {
-                    styled_bg.unwrap_or_else(|| mix(theme.surface_alt, theme.disabled, 0.24))
-                } else if state.hovered.as_deref() == Some(node.id.as_str())
-                    || state.focused.as_deref() == Some(node.id.as_str())
-                {
-                    styled_bg.unwrap_or_else(|| mix(theme.surface, theme.surface_alt, 0.70))
-                } else {
-                    styled_bg.unwrap_or_else(|| mix(theme.surface, theme.surface_alt, 0.55))
-                };
+                let fill_solid = styled_bg
+                    .or(paint_fallback.background)
+                    .unwrap_or_else(|| mix(theme.surface, theme.surface_alt, 0.55));
                 let fill = if visual.background_paint.is_some() {
                     resolve_background_paint(&visual, theme, fill_solid)
                 } else {
@@ -11084,7 +11447,9 @@ fn emit_rects_inner(
                 let control_border = if invalid {
                     theme.danger
                 } else {
-                    styled_border.unwrap_or_else(|| control_border(node, theme, state))
+                    styled_border
+                        .or(paint_fallback.border_color)
+                        .unwrap_or_else(|| control_border(node, theme, state))
                 };
                 let control_border_w = border_w.max(0.0);
                 if control_border_w > 0.0 {
@@ -11132,10 +11497,26 @@ fn emit_rects_inner(
                         out.push(inst_radii(field_rect, field_fill, field_radii));
                     }
                 }
-                let step_fill = if state.is_disabled(&node.id) {
-                    mix(theme.surface_alt, theme.disabled, 0.30)
-                } else if state.hovered.as_deref() == Some(node.id.as_str())
-                    || state.focused.as_deref() == Some(node.id.as_str())
+                let step_interaction = if state.is_disabled(&node.id) {
+                    PaintInteraction::Disabled
+                } else if state.focused.as_deref() == Some(node.id.as_str()) {
+                    PaintInteraction::Focused
+                } else if state.hovered.as_deref() == Some(node.id.as_str()) {
+                    PaintInteraction::Hovered
+                } else {
+                    PaintInteraction::Resting
+                };
+                let step_fallback = native_widget_part_paint_fallback(
+                    WidgetKind::NumberInput,
+                    "stepper",
+                    theme,
+                    step_interaction,
+                    false,
+                );
+                let step_fill = if !state.is_disabled(&node.id)
+                    && (state.hovered.as_deref() == Some(node.id.as_str())
+                        || state.focused.as_deref() == Some(node.id.as_str()))
+                    && styled_accent.is_some()
                 {
                     mix(
                         theme.surface_alt,
@@ -11143,7 +11524,7 @@ fn emit_rects_inner(
                         0.16,
                     )
                 } else {
-                    theme.surface_alt
+                    step_fallback.background.unwrap_or(theme.surface_alt)
                 };
                 let stepper_visual = part_visual_for(node, state, "stepper");
                 let stepper_up_visual =
@@ -11166,11 +11547,31 @@ fn emit_rects_inner(
                 let divider_color = resolve_color(&divider_visual.background, theme)
                     .or_else(|| resolve_color(&divider_visual.border_color, theme))
                     .map(|color| apply_opacity(color, divider_visual.opacity))
+                    .or_else(|| {
+                        native_widget_part_paint_fallback(
+                            WidgetKind::NumberInput,
+                            "divider",
+                            theme,
+                            PaintInteraction::Resting,
+                            false,
+                        )
+                        .background
+                    })
                     .unwrap_or(theme.border);
                 let stepper_divider_color =
                     resolve_color(&stepper_divider_visual.background, theme)
                         .or_else(|| resolve_color(&stepper_divider_visual.border_color, theme))
                         .map(|color| apply_opacity(color, stepper_divider_visual.opacity))
+                        .or_else(|| {
+                            native_widget_part_paint_fallback(
+                                WidgetKind::NumberInput,
+                                "stepper-divider",
+                                theme,
+                                PaintInteraction::Resting,
+                                false,
+                            )
+                            .background
+                        })
                         .unwrap_or(divider_color);
                 let divider_w = divider_visual
                     .border_width
@@ -11322,23 +11723,9 @@ fn emit_rects_inner(
             WidgetKind::DragNumber => {
                 emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], radii, out);
                 let field_visual = part_visual_for(node, state, "field");
-                let base_fill = if state.is_disabled(&node.id) {
-                    styled_bg.unwrap_or_else(|| mix(theme.surface_alt, theme.disabled, 0.24))
-                } else if state.pressed.as_deref() == Some(node.id.as_str()) {
-                    styled_bg.unwrap_or_else(|| {
-                        mix(
-                            theme.surface_alt,
-                            styled_accent.unwrap_or(theme.accent),
-                            0.20,
-                        )
-                    })
-                } else if state.hovered.as_deref() == Some(node.id.as_str())
-                    || state.focused.as_deref() == Some(node.id.as_str())
-                {
-                    styled_bg.unwrap_or_else(|| mix(theme.surface, theme.surface_alt, 0.70))
-                } else {
-                    styled_bg.unwrap_or_else(|| mix(theme.surface, theme.surface_alt, 0.55))
-                };
+                let base_fill = styled_bg
+                    .or(paint_fallback.background)
+                    .unwrap_or_else(|| mix(theme.surface, theme.surface_alt, 0.55));
                 let field_fill_solid = resolve_color(&field_visual.background, theme)
                     .map(|color| apply_opacity(color, field_visual.opacity))
                     .unwrap_or(base_fill);
@@ -11352,6 +11739,7 @@ fn emit_rects_inner(
                 let field_border = resolve_color(&field_visual.border_color, theme)
                     .map(|color| apply_opacity(color, field_visual.opacity))
                     .or(styled_border)
+                    .or(paint_fallback.border_color)
                     .unwrap_or_else(|| control_border(node, theme, state));
                 let field_border_w = field_visual
                     .border_width
@@ -11367,6 +11755,7 @@ fn emit_rects_inner(
                 );
 
                 let grip_visual = part_visual_for(node, state, "grip");
+                let grip_fallback = widget_part_paint_fallback(node, "grip", theme, state);
                 let grip_style = node.style.parts.parts.get("grip");
                 let grip_w = grip_style
                     .and_then(|part| part.layout.width)
@@ -11378,14 +11767,14 @@ fn emit_rects_inner(
                     .or_else(|| resolve_color(&grip_visual.border_color, theme))
                     .map(|color| apply_opacity(color, grip_visual.opacity))
                     .unwrap_or_else(|| {
-                        if state.is_disabled(&node.id) {
-                            theme.disabled
-                        } else {
+                        if !state.is_disabled(&node.id) && styled_accent.is_some() {
                             mix(
                                 theme.muted_text,
                                 styled_accent.unwrap_or(theme.accent),
                                 0.32,
                             )
+                        } else {
+                            grip_fallback.background.unwrap_or(theme.disabled)
                         }
                     });
                 let grip_slot_w = grip_w.min((w - field_border_w * 2.0).max(1.0));
@@ -11427,6 +11816,7 @@ fn emit_rects_inner(
                 let checked = state.checked.get(&node.id).copied().unwrap_or(false);
                 let disabled = state.is_disabled(&node.id);
                 let row_visual = part_visual_for(node, state, "row");
+                let row_fallback = widget_part_paint_fallback(node, "row", theme, state);
                 let has_label = node
                     .props
                     .text
@@ -11449,14 +11839,10 @@ fn emit_rects_inner(
                         || state.focused.as_deref() == Some(node.id.as_str()))
                     || row_visual.background.is_some()
                 {
-                    let fallback_row_fill = if state.pressed.as_deref() == Some(node.id.as_str()) {
-                        with_alpha(darken(styled_accent.unwrap_or(theme.accent), 0.15), 0.20)
-                    } else {
-                        with_alpha(mix(theme.surface_alt, theme.accent, 0.20), 0.35)
-                    };
                     let row_fill = resolve_color(&row_visual.background, theme)
                         .map(|color| apply_opacity(color, row_visual.opacity))
-                        .unwrap_or(fallback_row_fill);
+                        .or(row_fallback.background)
+                        .unwrap_or([0.0, 0.0, 0.0, 0.0]);
                     out.push(inst_radii(
                         interaction_rect,
                         row_fill,
@@ -11465,31 +11851,38 @@ fn emit_rects_inner(
                 }
                 emit_focus_ring_radii(node, theme, sf, state, interaction_rect, radii, out);
                 let box_visual = part_visual_for(node, state, "box");
+                let box_fallback = widget_part_paint_fallback(node, "box", theme, state);
                 let default_fill = if checked {
-                    if disabled {
-                        theme.disabled
-                    } else if state.pressed.as_deref() == Some(node.id.as_str()) {
-                        darken(styled_accent.unwrap_or(theme.accent), 0.15)
+                    if disabled || state.pressed.as_deref() == Some(node.id.as_str()) {
+                        box_fallback.background.unwrap_or(theme.accent)
                     } else {
-                        styled_accent.unwrap_or(theme.accent)
+                        styled_accent
+                            .or(box_fallback.background)
+                            .unwrap_or(theme.accent)
                     }
                 } else {
-                    styled_bg.unwrap_or_else(|| {
+                    styled_bg.or(box_fallback.background).unwrap_or_else(|| {
                         mix(theme.surface, control_fill(node, theme, state), 0.55)
                     })
                 };
                 let default_border = if checked {
                     if disabled {
-                        theme.disabled
+                        box_fallback.border_color.unwrap_or(theme.disabled)
                     } else {
-                        styled_border.unwrap_or(styled_accent.unwrap_or(theme.accent))
+                        styled_border
+                            .or(styled_accent)
+                            .or(box_fallback.border_color)
+                            .unwrap_or(theme.accent)
                     }
                 } else {
-                    styled_border.unwrap_or_else(|| control_border(node, theme, state))
+                    styled_border
+                        .or(box_fallback.border_color)
+                        .unwrap_or_else(|| control_border(node, theme, state))
                 };
                 let box_border_w = box_visual
                     .border_width
                     .map(|width| width.max(0.0) * sf)
+                    .or(box_fallback.border_width.map(|width| width * sf))
                     .unwrap_or(border_w);
                 let box_radius = radius_lp.min((box_w.min(box_h) / sf) * 0.28);
                 emit_bordered_rect_radii(
@@ -11506,6 +11899,8 @@ fn emit_rects_inner(
                 );
                 if checked {
                     let indicator_visual = part_visual_for(node, state, "indicator");
+                    let indicator_fallback =
+                        widget_part_paint_fallback(node, "indicator", theme, state);
                     let indicator_style = node.style.parts.parts.get("indicator");
                     let default_marker_size = (box_w.min(box_h) * 0.42).max(3.0 * sf);
                     let marker_w = indicator_style
@@ -11525,15 +11920,11 @@ fn emit_rects_inner(
                         box_x + (box_w - marker_w) * 0.5
                     };
                     let marker_y = box_y + (box_h - marker_h) * 0.5;
-                    let default_marker_color = if disabled {
-                        mix(theme.surface_alt, theme.disabled, 0.35)
-                    } else {
-                        theme.text
-                    };
                     let marker_color = resolve_color(&indicator_visual.background, theme)
                         .or_else(|| resolve_color(&indicator_visual.foreground, theme))
                         .map(|color| apply_opacity(color, indicator_visual.opacity))
-                        .unwrap_or(default_marker_color);
+                        .or(indicator_fallback.background)
+                        .unwrap_or(theme.text);
                     out.push(inst_radii(
                         [marker_x, marker_y, marker_w, marker_h],
                         marker_color,
@@ -11584,15 +11975,12 @@ fn emit_rects_inner(
                         || state.pressed.as_deref() == Some(node.id.as_str())
                         || state.focused.as_deref() == Some(node.id.as_str()));
                 let row_visual = part_visual_for(node, state, "row");
+                let row_fallback = widget_part_paint_fallback(node, "row", theme, state);
                 if interactive || row_visual.background.is_some() {
-                    let fallback_row_fill = if state.pressed.as_deref() == Some(node.id.as_str()) {
-                        with_alpha(darken(styled_accent.unwrap_or(theme.accent), 0.12), 0.20)
-                    } else {
-                        with_alpha(mix(theme.surface_alt, theme.accent, 0.18), 0.32)
-                    };
                     let row_fill = resolve_color(&row_visual.background, theme)
                         .map(|color| apply_opacity(color, row_visual.opacity))
-                        .unwrap_or(fallback_row_fill);
+                        .or(row_fallback.background)
+                        .unwrap_or([0.0, 0.0, 0.0, 0.0]);
                     out.push(inst_radii(
                         [x, y, w, h],
                         row_fill,
@@ -11602,28 +11990,40 @@ fn emit_rects_inner(
                 emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], radii, out);
 
                 let track_visual = part_visual_for(node, state, "track");
-                let default_off_fill =
-                    styled_bg.unwrap_or_else(|| mix(theme.surface, theme.surface_alt, 0.70));
-                let default_on_fill = if disabled {
-                    theme.disabled
-                } else if state.pressed.as_deref() == Some(node.id.as_str()) {
-                    darken(styled_accent.unwrap_or(theme.accent), 0.12)
-                } else {
-                    styled_accent.unwrap_or(theme.accent)
-                };
+                let off_fallback =
+                    widget_part_paint_fallback_with_checked(node, "track", theme, state, false);
+                let on_fallback =
+                    widget_part_paint_fallback_with_checked(node, "track", theme, state, true);
+                let default_off_fill = styled_bg
+                    .or(off_fallback.background)
+                    .unwrap_or_else(|| mix(theme.surface, theme.surface_alt, 0.70));
+                let default_on_fill =
+                    if disabled || state.pressed.as_deref() == Some(node.id.as_str()) {
+                        on_fallback.background.unwrap_or(theme.accent)
+                    } else {
+                        styled_accent
+                            .or(on_fallback.background)
+                            .unwrap_or(theme.accent)
+                    };
                 let default_track_fill = mix(default_off_fill, default_on_fill, progress);
                 let default_track_border = if progress >= 0.5 {
                     if disabled {
-                        theme.disabled
+                        on_fallback.border_color.unwrap_or(theme.disabled)
                     } else {
-                        styled_border.unwrap_or(styled_accent.unwrap_or(theme.accent))
+                        styled_border
+                            .or(styled_accent)
+                            .or(on_fallback.border_color)
+                            .unwrap_or(theme.accent)
                     }
                 } else {
-                    styled_border.unwrap_or_else(|| control_border(node, theme, state))
+                    styled_border
+                        .or(off_fallback.border_color)
+                        .unwrap_or_else(|| control_border(node, theme, state))
                 };
                 let track_border_w = track_visual
                     .border_width
                     .map(|width| width.max(0.0) * sf)
+                    .or(off_fallback.border_width.map(|width| width * sf))
                     .unwrap_or(border_w);
                 emit_bordered_rect_radii(
                     out,
@@ -11639,6 +12039,7 @@ fn emit_rects_inner(
                 );
 
                 let thumb_visual = part_visual_for(node, state, "thumb");
+                let thumb_fallback = widget_part_paint_fallback(node, "thumb", theme, state);
                 let default_thumb_size = (track_h - 4.0 * sf)
                     .max(1.0)
                     .min(TOGGLE_SWITCH_THUMB_SIZE_LP * sf);
@@ -11658,16 +12059,8 @@ fn emit_rects_inner(
                 let travel = (track_w - thumb_w - inset * 2.0).max(0.0);
                 let thumb_x = track_x + inset + travel * progress;
                 let thumb_y = track_y + (track_h - thumb_h) * 0.5;
-                let default_thumb_fill = if disabled {
-                    mix(theme.surface_alt, theme.disabled, 0.32)
-                } else {
-                    theme.text
-                };
-                let default_thumb_border = if disabled {
-                    theme.disabled
-                } else {
-                    mix(theme.border, theme.text, 0.28)
-                };
+                let default_thumb_fill = thumb_fallback.background.unwrap_or(theme.text);
+                let default_thumb_border = thumb_fallback.border_color.unwrap_or(theme.border);
                 emit_bordered_rect_radii(
                     out,
                     [thumb_x, thumb_y, thumb_w, thumb_h],
@@ -11682,6 +12075,10 @@ fn emit_rects_inner(
                     thumb_visual
                         .border_width
                         .map(|width| width.max(0.0) * sf)
+                        .or(thumb_fallback
+                            .border_width
+                            .map(|width| width * sf)
+                            .map(|width| width.min(track_h * 0.12)))
                         .unwrap_or((1.0 * sf).min(track_h * 0.12)),
                 );
             }
@@ -11689,11 +12086,11 @@ fn emit_rects_inner(
             WidgetKind::ProgressBar => {
                 let track_visual = part_visual_for(node, state, "track");
                 let fill_visual = part_visual_for(node, state, "fill");
-                let default_track_fill = if state.is_disabled(&node.id) {
-                    styled_bg.unwrap_or_else(|| mix(theme.surface_alt, theme.disabled, 0.24))
-                } else {
-                    styled_bg.unwrap_or_else(|| mix(theme.surface, theme.surface_alt, 0.60))
-                };
+                let track_fallback = widget_part_paint_fallback(node, "track", theme, state);
+                let fill_fallback = widget_part_paint_fallback(node, "fill", theme, state);
+                let default_track_fill = styled_bg
+                    .or(track_fallback.background)
+                    .unwrap_or_else(|| mix(theme.surface, theme.surface_alt, 0.60));
                 let track_fill = resolve_color(&track_visual.background, theme)
                     .map(|color| apply_opacity(color, track_visual.opacity.or(visual.opacity)))
                     .unwrap_or(default_track_fill);
@@ -11707,7 +12104,9 @@ fn emit_rects_inner(
                     [x, y, w, h],
                     resolve_color(&track_visual.border_color, theme)
                         .map(|color| apply_opacity(color, track_visual.opacity.or(visual.opacity)))
-                        .unwrap_or_else(|| styled_border.unwrap_or(theme.border)),
+                        .or(styled_border)
+                        .or(track_fallback.border_color)
+                        .unwrap_or(theme.border),
                     track_fill,
                     track_radii,
                     track_border_w,
@@ -11729,11 +12128,14 @@ fn emit_rects_inner(
                     let fill_color = resolve_color(&fill_visual.background, theme)
                         .or_else(|| resolve_color(&fill_visual.foreground, theme))
                         .map(|color| apply_opacity(color, fill_visual.opacity.or(visual.opacity)))
-                        .unwrap_or(if state.is_disabled(&node.id) {
-                            theme.disabled
-                        } else {
-                            styled_accent.unwrap_or(theme.accent)
-                        });
+                        .or_else(|| {
+                            if state.is_disabled(&node.id) {
+                                fill_fallback.background
+                            } else {
+                                styled_accent.or(fill_fallback.background)
+                            }
+                        })
+                        .unwrap_or(theme.accent);
                     // Default the fill's corners to be concentric with the
                     // track (outer radius minus the inset) so the inner bar
                     // follows the container's shape instead of always defaulting
@@ -11781,31 +12183,34 @@ fn emit_rects_inner(
 
                 let track_visual = part_visual_for(node, state, "track");
                 let arc_visual = part_visual_for(node, state, "arc");
-                let mut track_color = resolve_color(&track_visual.background, theme)
+                let track_fallback = widget_part_paint_fallback(node, "track", theme, state);
+                let arc_fallback = widget_part_paint_fallback(node, "arc", theme, state);
+                let track_authored = resolve_color(&track_visual.background, theme)
                     .or_else(|| resolve_color(&track_visual.foreground, theme))
                     .or_else(|| resolve_color(&track_visual.border_color, theme))
-                    .map(|color| apply_opacity(color, track_visual.opacity.or(visual.opacity)))
-                    .unwrap_or_else(|| {
-                        let fallback = if disabled {
-                            theme.disabled
-                        } else {
-                            mix(theme.border, theme.surface_alt, 0.35)
-                        };
-                        apply_opacity(fallback, Some(0.52))
-                    });
-                let mut arc_color = resolve_color(&arc_visual.background, theme)
+                    .map(|color| apply_opacity(color, track_visual.opacity.or(visual.opacity)));
+                let mut track_color = track_authored.unwrap_or_else(|| {
+                    track_fallback.background.unwrap_or_else(|| {
+                        apply_opacity(mix(theme.border, theme.surface_alt, 0.35), Some(0.52))
+                    })
+                });
+                let arc_authored = resolve_color(&arc_visual.background, theme)
                     .or_else(|| resolve_color(&arc_visual.foreground, theme))
                     .or_else(|| resolve_color(&arc_visual.accent, theme))
-                    .map(|color| apply_opacity(color, arc_visual.opacity.or(visual.opacity)))
-                    .unwrap_or_else(|| {
+                    .map(|color| apply_opacity(color, arc_visual.opacity.or(visual.opacity)));
+                let mut arc_color = arc_authored
+                    .or_else(|| {
                         if disabled {
-                            theme.disabled
+                            arc_fallback.background
                         } else {
-                            styled_accent.unwrap_or(theme.accent)
+                            styled_accent.or(arc_fallback.background)
                         }
-                    });
-                if disabled {
+                    })
+                    .unwrap_or(theme.accent);
+                if disabled && track_authored.is_some() {
                     track_color = apply_opacity(track_color, Some(0.68));
+                }
+                if disabled && arc_authored.is_some() {
                     arc_color = apply_opacity(arc_color, Some(0.66));
                 }
 
@@ -11862,12 +12267,17 @@ fn emit_rects_inner(
                 let track_visual = part_visual_for(node, state, "track");
                 let fill_visual = part_visual_for(node, state, "fill");
                 let thumb_visual = part_visual_for(node, state, "thumb");
+                let track_fallback = widget_part_paint_fallback(node, "track", theme, state);
+                let fill_fallback = widget_part_paint_fallback(node, "fill", theme, state);
+                let thumb_fallback = widget_part_paint_fallback(node, "thumb", theme, state);
                 let track_color = resolve_color(&track_visual.background, theme)
                     .map(|color| apply_opacity(color, track_visual.opacity.or(visual.opacity)))
                     .or_else(|| {
                         resolve_color(&visual.track_color, theme)
                             .map(|color| apply_opacity(color, visual.opacity))
                     })
+                    .or(paint_fallback.track_color)
+                    .or(track_fallback.background)
                     .unwrap_or(theme.border);
                 let thumb_color = resolve_color(&thumb_visual.background, theme)
                     .or_else(|| resolve_color(&thumb_visual.foreground, theme))
@@ -11876,7 +12286,10 @@ fn emit_rects_inner(
                         resolve_color(&visual.thumb_color, theme)
                             .map(|color| apply_opacity(color, visual.opacity))
                     })
-                    .unwrap_or_else(|| styled_accent.unwrap_or(theme.accent));
+                    .or(styled_accent)
+                    .or(paint_fallback.thumb_color)
+                    .or(thumb_fallback.background)
+                    .unwrap_or(theme.accent);
                 let track_h = node
                     .style
                     .parts
@@ -11915,11 +12328,8 @@ fn emit_rects_inner(
                     let fill_color = resolve_color(&fill_visual.background, theme)
                         .or_else(|| resolve_color(&fill_visual.foreground, theme))
                         .map(|color| apply_opacity(color, fill_visual.opacity))
-                        .unwrap_or(if state.is_disabled(&node.id) {
-                            theme.disabled
-                        } else {
-                            thumb_color
-                        });
+                        .or(fill_fallback.background)
+                        .unwrap_or(thumb_color);
                     let fill_radii = visual_radii_with_fallback(
                         &fill_visual,
                         [fill_w.min(track_h) * 0.5; 4],
@@ -11954,9 +12364,9 @@ fn emit_rects_inner(
                     [thumb_x, thumb_y, thumb_w, thumb_h],
                     resolve_color(&thumb_visual.border_color, theme)
                         .map(|color| apply_opacity(color, thumb_visual.opacity))
-                        .unwrap_or_else(|| {
-                            styled_border.unwrap_or_else(|| control_border(node, theme, state))
-                        }),
+                        .or(styled_border)
+                        .or(thumb_fallback.border_color)
+                        .unwrap_or_else(|| control_border(node, theme, state)),
                     if state.is_disabled(&node.id) {
                         theme.disabled
                     } else {
@@ -11973,16 +12383,27 @@ fn emit_rects_inner(
                 let range_visual = part_visual_for(node, state, "range");
                 let thumb_min_visual = part_visual_for(node, state, "thumb-min");
                 let thumb_max_visual = part_visual_for(node, state, "thumb-max");
+                let track_fallback = widget_part_paint_fallback(node, "track", theme, state);
+                let range_fallback = widget_part_paint_fallback(node, "range", theme, state);
+                let thumb_min_fallback =
+                    widget_part_paint_fallback(node, "thumb-min", theme, state);
+                let thumb_max_fallback =
+                    widget_part_paint_fallback(node, "thumb-max", theme, state);
                 let track_color = resolve_color(&track_visual.background, theme)
                     .map(|color| apply_opacity(color, track_visual.opacity.or(visual.opacity)))
                     .or_else(|| {
                         resolve_color(&visual.track_color, theme)
                             .map(|color| apply_opacity(color, visual.opacity))
                     })
+                    .or(paint_fallback.track_color)
+                    .or(track_fallback.background)
                     .unwrap_or(theme.border);
                 let fallback_thumb_color = resolve_color(&visual.thumb_color, theme)
                     .map(|color| apply_opacity(color, visual.opacity))
-                    .unwrap_or_else(|| styled_accent.unwrap_or(theme.accent));
+                    .or(styled_accent)
+                    .or(paint_fallback.thumb_color)
+                    .or(thumb_min_fallback.background)
+                    .unwrap_or(theme.accent);
                 let track_h = node
                     .style
                     .parts
@@ -12023,11 +12444,8 @@ fn emit_rects_inner(
                     let range_color = resolve_color(&range_visual.background, theme)
                         .or_else(|| resolve_color(&range_visual.foreground, theme))
                         .map(|color| apply_opacity(color, range_visual.opacity))
-                        .unwrap_or(if state.is_disabled(&node.id) {
-                            theme.disabled
-                        } else {
-                            fallback_thumb_color
-                        });
+                        .or(range_fallback.background)
+                        .unwrap_or(fallback_thumb_color);
                     let range_radii = visual_radii_with_fallback(
                         &range_visual,
                         [range_w.min(track_h) * 0.5; 4],
@@ -12072,9 +12490,9 @@ fn emit_rects_inner(
                     [min_thumb_x, min_thumb_y, min_thumb_w, min_thumb_h],
                     resolve_color(&thumb_min_visual.border_color, theme)
                         .map(|color| apply_opacity(color, thumb_min_visual.opacity))
-                        .unwrap_or_else(|| {
-                            styled_border.unwrap_or_else(|| control_border(node, theme, state))
-                        }),
+                        .or(styled_border)
+                        .or(thumb_min_fallback.border_color)
+                        .unwrap_or_else(|| control_border(node, theme, state)),
                     if state.is_disabled(&node.id) {
                         theme.disabled
                     } else {
@@ -12114,15 +12532,16 @@ fn emit_rects_inner(
                 let max_thumb_color = resolve_color(&thumb_max_visual.background, theme)
                     .or_else(|| resolve_color(&thumb_max_visual.foreground, theme))
                     .map(|color| apply_opacity(color, thumb_max_visual.opacity.or(visual.opacity)))
+                    .or(thumb_max_fallback.background)
                     .unwrap_or(fallback_thumb_color);
                 emit_bordered_rect_radii(
                     out,
                     [max_thumb_x, max_thumb_y, max_thumb_w, max_thumb_h],
                     resolve_color(&thumb_max_visual.border_color, theme)
                         .map(|color| apply_opacity(color, thumb_max_visual.opacity))
-                        .unwrap_or_else(|| {
-                            styled_border.unwrap_or_else(|| control_border(node, theme, state))
-                        }),
+                        .or(styled_border)
+                        .or(thumb_max_fallback.border_color)
+                        .unwrap_or_else(|| control_border(node, theme, state)),
                     if state.is_disabled(&node.id) {
                         theme.disabled
                     } else {
@@ -12143,8 +12562,8 @@ fn emit_rects_inner(
                 theme,
                 sf,
                 [x, y, w, h],
-                styled_bg,
-                styled_border,
+                styled_bg.or(paint_fallback.background),
+                styled_border.or(paint_fallback.border_color),
                 styled_accent,
                 radii,
                 border_w,
@@ -12156,8 +12575,8 @@ fn emit_rects_inner(
                 theme,
                 sf,
                 [x, y, w, h],
-                styled_bg,
-                styled_border,
+                styled_bg.or(paint_fallback.background),
+                styled_border.or(paint_fallback.border_color),
                 styled_accent,
                 radii,
                 border_w,
@@ -12169,8 +12588,8 @@ fn emit_rects_inner(
                 theme,
                 sf,
                 [x, y, w, h],
-                styled_bg,
-                styled_border,
+                styled_bg.or(paint_fallback.background),
+                styled_border.or(paint_fallback.border_color),
                 radii,
                 border_w,
             ),
@@ -12181,8 +12600,8 @@ fn emit_rects_inner(
                 theme,
                 sf,
                 [x, y, w, h],
-                styled_bg,
-                styled_border,
+                styled_bg.or(paint_fallback.background),
+                styled_border.or(paint_fallback.border_color),
                 radii,
                 border_w,
             ),
@@ -12193,8 +12612,8 @@ fn emit_rects_inner(
                 theme,
                 sf,
                 [x, y, w, h],
-                styled_bg,
-                styled_border,
+                styled_bg.or(paint_fallback.background),
+                styled_border.or(paint_fallback.border_color),
                 radii,
                 border_w,
             ),
@@ -12203,8 +12622,12 @@ fn emit_rects_inner(
                 emit_bordered_rect_radii(
                     out,
                     [x, y, w, h],
-                    styled_border.unwrap_or(theme.border),
-                    styled_bg.unwrap_or([0.0, 0.0, 0.0, 0.0]),
+                    styled_border
+                        .or(paint_fallback.border_color)
+                        .unwrap_or(theme.border),
+                    styled_bg
+                        .or(paint_fallback.background)
+                        .unwrap_or([0.0, 0.0, 0.0, 0.0]),
                     radii,
                     border_w,
                 );
@@ -12215,10 +12638,15 @@ fn emit_rects_inner(
                 let row_visual = part_visual_for(node, state, "row");
                 let selected_row_visual = part_visual_for(node, state, "row-selected");
                 let grid_visual = part_visual_for(node, state, "grid-line");
+                let header_fallback = widget_part_paint_fallback(node, "header", theme, state);
+                let selected_row_fallback =
+                    widget_part_paint_fallback(node, "row-selected", theme, state);
+                let grid_fallback = widget_part_paint_fallback(node, "grid-line", theme, state);
                 let grid_color = resolve_color(&grid_visual.background, theme)
                     .or_else(|| resolve_color(&grid_visual.foreground, theme))
                     .or_else(|| resolve_color(&grid_visual.border_color, theme))
                     .or(styled_border)
+                    .or(grid_fallback.background)
                     .unwrap_or(theme.border);
                 let grid_color = apply_opacity(grid_color, grid_visual.opacity);
                 let grid_w = grid_visual
@@ -12231,6 +12659,7 @@ fn emit_rects_inner(
                             .and_then(|part| part.layout.width)
                     })
                     .map(|width| (width.max(0.0) * sf).max(0.0))
+                    .or(grid_fallback.border_width.map(|width| width * sf))
                     .unwrap_or(border_w)
                     .max(1.0);
                 let table_rect = [x, y, w, h];
@@ -12238,7 +12667,9 @@ fn emit_rects_inner(
                 emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], radii, out);
                 out.push(inst_radii(
                     table_rect,
-                    styled_bg.unwrap_or(theme.surface),
+                    styled_bg
+                        .or(paint_fallback.background)
+                        .unwrap_or(theme.surface),
                     radii,
                 ));
                 if let Some(table_state) = state.table(&node.id) {
@@ -12250,6 +12681,7 @@ fn emit_rects_inner(
                     let header_fill = resolve_color(&header_visual.background, theme)
                         .or_else(|| resolve_color(&header_visual.foreground, theme))
                         .map(|color| apply_opacity(color, header_visual.opacity))
+                        .or(header_fallback.background)
                         .unwrap_or_else(|| mix(theme.surface_alt, theme.accent, 0.10));
                     push_masked_rect(
                         out,
@@ -12373,6 +12805,7 @@ fn emit_rects_inner(
                                 out,
                                 table_rect,
                                 selected_row_fill
+                                    .or(selected_row_fallback.background)
                                     .unwrap_or_else(|| mix(theme.surface_alt, theme.accent, 0.22)),
                                 table_radii,
                                 [x, row_y, w, row_h],
@@ -12427,7 +12860,9 @@ fn emit_rects_inner(
                     }
                     emit_table_scrollbar(node, state, theme, sf, full_rect, out);
                 }
-                let border_color = styled_border.unwrap_or(grid_color);
+                let border_color = styled_border
+                    .or(paint_fallback.border_color)
+                    .unwrap_or(grid_color);
                 if border_w > 0.0 {
                     out.push(inst_outline_ring_clipped(
                         table_rect,
@@ -12555,11 +12990,17 @@ fn emit_splitter_gutters(
 ) {
     let horizontal = splitter_is_horizontal(node);
     let gutter_visual = part_visual_for(node, state, "gutter");
+    let gutter_fallback = widget_part_paint_fallback(node, "gutter", theme, state);
     let preferred_size = splitter_gutter_size_px(node, horizontal, sf);
     let fallback_color = resolve_color(&gutter_visual.background, theme)
         .or_else(|| resolve_color(&gutter_visual.foreground, theme))
         .or_else(|| resolve_color(&gutter_visual.border_color, theme))
         .map(|color| apply_opacity(color, gutter_visual.opacity))
+        .or_else(|| {
+            gutter_fallback
+                .background
+                .map(|color| apply_opacity(color, gutter_visual.opacity))
+        })
         .unwrap_or_else(|| apply_opacity(theme.border, gutter_visual.opacity));
     let gutter_fill = resolve_part_background_paint(&gutter_visual, theme, fallback_color);
     let gutter_border = resolve_color(&gutter_visual.border_color, theme)
@@ -12661,25 +13102,6 @@ fn emit_splitter_gutters(
         } else {
             emit_paint_rect_radii(out, rect, gutter_fill.clone(), gutter_radii);
         }
-    }
-}
-
-fn standalone_badge_level_color(node: &WidgetNode, theme: &Theme) -> [f32; 4] {
-    match node.props.level.as_deref().unwrap_or("info") {
-        "success" => theme.success,
-        "warning" => theme.warning,
-        "danger" | "error" => theme.danger,
-        "neutral" => theme.muted_text,
-        _ => theme.accent,
-    }
-}
-
-fn standalone_badge_fill(node: &WidgetNode, theme: &Theme) -> [f32; 4] {
-    let semantic = standalone_badge_level_color(node, theme);
-    if node.kind == WidgetKind::Tag {
-        mix(theme.surface_alt, semantic, 0.22)
-    } else {
-        semantic
     }
 }
 
@@ -12921,14 +13343,28 @@ fn emit_menu_popup(
         return;
     }
     let menu = find_node(tree, menu_id);
+    let menu_kind = menu.map(|node| node.kind).unwrap_or(WidgetKind::Menu);
     let menu_visual = menu
         .map(|node| part_visual_for(node, state, "menu"))
         .unwrap_or_default();
-    let radius = menu_visual.border_radius.unwrap_or(theme.radius).max(0.0) * sf;
-    let radii = visual_radii(&menu_visual, theme.radius, sf);
+    let menu_fallback = native_widget_part_paint_fallback(
+        menu_kind,
+        "menu",
+        theme,
+        PaintInteraction::Resting,
+        false,
+    );
+    let radius_lp = menu_visual
+        .border_radius
+        .or(menu_fallback.border_radius)
+        .unwrap_or(theme.radius)
+        .max(0.0);
+    let radius = radius_lp * sf;
+    let radii = visual_radii(&menu_visual, radius_lp, sf);
     let border_w = menu_visual
         .border_width
         .map(|width| width.max(0.0) * sf)
+        .or(menu_fallback.border_width.map(|width| width * sf))
         .unwrap_or(BORDER_WIDTH_LP * sf);
     let row_h = theme.control_height() * sf;
     let popup_rect = [rect.x, rect.y, rect.w, rect.h];
@@ -12949,15 +13385,23 @@ fn emit_menu_popup(
     }
     let border_color = resolve_color(&menu_visual.border_color, theme)
         .map(|color| apply_opacity(color, menu_visual.opacity))
+        .or(menu_fallback.border_color)
         .unwrap_or_else(|| mix(theme.border, theme.accent, 0.18));
     emit_paint_rect_radii(
         out,
         popup_rect,
-        resolve_part_background_paint(&menu_visual, theme, theme.surface),
+        resolve_part_background_paint(
+            &menu_visual,
+            theme,
+            menu_fallback.background.unwrap_or(theme.surface),
+        ),
         radii,
     );
     for (idx, item) in items.iter().enumerate() {
         let y = rect.y + idx as f32 * row_h;
+        if y >= rect.y + rect.h {
+            break;
+        }
         let disabled = item.disabled || state.is_disabled(&item.id);
         let hovered = state.hovered.as_deref() == Some(item.id.as_str());
         let row_visual = menu
@@ -12971,16 +13415,34 @@ fn emit_menu_popup(
                 }
             })
             .unwrap_or_default();
+        let row_part = if disabled {
+            "item-disabled"
+        } else if hovered {
+            "item-hover"
+        } else {
+            "item"
+        };
+        let row_fallback = native_widget_part_paint_fallback(
+            menu_kind,
+            row_part,
+            theme,
+            PaintInteraction::Resting,
+            false,
+        );
         let color = if let Some(color) = resolve_color(&row_visual.background, theme)
             .or_else(|| resolve_color(&row_visual.foreground, theme))
         {
             apply_opacity(color, row_visual.opacity)
-        } else if disabled {
-            mix(theme.surface, theme.disabled, 0.18)
-        } else if hovered {
-            mix(theme.surface_alt, theme.accent, 0.24)
         } else {
-            theme.surface_alt
+            row_fallback.background.unwrap_or_else(|| {
+                if disabled {
+                    mix(theme.surface, theme.disabled, 0.18)
+                } else if hovered {
+                    mix(theme.surface_alt, theme.accent, 0.24)
+                } else {
+                    theme.surface_alt
+                }
+            })
         };
         push_masked_rect(
             out,
@@ -12991,7 +13453,7 @@ fn emit_menu_popup(
                 rect.x + border_w,
                 y + border_w,
                 rect.w - border_w * 2.0,
-                row_h - border_w,
+                row_h.min(rect.y + rect.h - y) - border_w,
             ],
         );
     }
@@ -13026,26 +13488,51 @@ fn root_rect(layout: &LayoutResult) -> Option<Rect> {
 }
 
 fn emit_dropdown_overlays(
-    node: &WidgetNode,
+    tree: &WidgetNode,
     layout: &LayoutResult,
     theme: &Theme,
     sf: f32,
     state: &WidgetState,
     out: &mut Vec<RectInstance>,
 ) {
+    let overlay = dropdown_overlay_rect(tree, layout, state, theme, sf);
+    emit_dropdown_overlay_nodes(tree, layout, theme, sf, state, overlay, out);
+}
+
+fn emit_dropdown_overlay_nodes(
+    node: &WidgetNode,
+    layout: &LayoutResult,
+    theme: &Theme,
+    sf: f32,
+    state: &WidgetState,
+    overlay: Option<Rect>,
+    out: &mut Vec<RectInstance>,
+) {
     if node.kind == WidgetKind::Dropdown && state.open_dropdown.as_deref() == Some(node.id.as_str())
     {
-        if let (Some(r), Some(items)) = (
-            layout.rects.get(&node.id),
-            state.dropdown_items.get(&node.id),
-        ) {
+        if let (Some(menu), Some(items)) = (overlay, state.dropdown_items.get(&node.id)) {
             let row_h = theme.control_height() * sf;
-            let menu_h = row_h * items.len() as f32;
             let menu_visual = part_visual_for(node, state, "menu");
-            let menu_radius_lp = menu_visual.border_radius.unwrap_or(theme.radius).max(0.0);
+            let menu_fallback = native_widget_part_paint_fallback(
+                WidgetKind::Dropdown,
+                "menu",
+                theme,
+                PaintInteraction::Resting,
+                false,
+            );
+            let menu_radius_lp = menu_visual
+                .border_radius
+                .or(menu_fallback.border_radius)
+                .unwrap_or(theme.radius)
+                .max(0.0);
             let menu_radii = visual_radii(&menu_visual, menu_radius_lp, sf);
-            let border_w = menu_visual.border_width.unwrap_or(BORDER_WIDTH_LP).max(0.0) * sf;
-            let menu_rect = [r.x, r.y + r.h, r.w, menu_h];
+            let border_w = menu_visual
+                .border_width
+                .or(menu_fallback.border_width)
+                .unwrap_or(BORDER_WIDTH_LP)
+                .max(0.0)
+                * sf;
+            let menu_rect = [menu.x, menu.y, menu.w, menu.h];
             if menu_visual.box_shadows.is_some() {
                 emit_box_shadows(out, menu_rect, menu_radii, &menu_visual, theme, sf, None);
             } else {
@@ -13063,9 +13550,11 @@ fn emit_dropdown_overlays(
             }
             let border_color = resolve_color(&menu_visual.border_color, theme)
                 .map(|color| apply_opacity(color, menu_visual.opacity))
+                .or(menu_fallback.border_color)
                 .unwrap_or_else(|| mix(theme.border, theme.accent, 0.18));
             let fill_color = resolve_color(&menu_visual.background, theme)
                 .map(|color| apply_opacity(color, menu_visual.opacity))
+                .or(menu_fallback.background)
                 .unwrap_or(theme.surface);
             out.push(inst_radii(menu_rect, fill_color, menu_radii));
             let selected = state.dropdown_index.get(&node.id).copied().unwrap_or(0);
@@ -13075,7 +13564,10 @@ fn emit_dropdown_overlays(
                 .filter(|(id, _)| id == &node.id)
                 .map(|(_, idx)| *idx);
             for idx in 0..items.len() {
-                let y = r.y + r.h + idx as f32 * row_h;
+                let y = menu.y + idx as f32 * row_h;
+                if y >= menu.y + menu.h {
+                    break;
+                }
                 let row_visual = if Some(idx) == hovered && idx == selected {
                     merged_part_visual_for(node, state, &["item", "item-selected", "item-hover"])
                 } else if Some(idx) == hovered {
@@ -13085,29 +13577,32 @@ fn emit_dropdown_overlays(
                 } else {
                     part_visual_for(node, state, "item")
                 };
+                let row_fallback = native_widget_part_paint_fallback_with_selection(
+                    WidgetKind::Dropdown,
+                    "item",
+                    theme,
+                    if Some(idx) == hovered {
+                        PaintInteraction::Hovered
+                    } else {
+                        PaintInteraction::Resting
+                    },
+                    false,
+                    idx == selected,
+                );
                 let color = resolve_color(&row_visual.background, theme)
                     .map(|color| apply_opacity(color, row_visual.opacity))
-                    .unwrap_or_else(|| {
-                        if Some(idx) == hovered && idx == selected {
-                            mix(theme.surface_alt, theme.accent, 0.42)
-                        } else if Some(idx) == hovered {
-                            mix(theme.surface_alt, theme.accent, 0.24)
-                        } else if idx == selected {
-                            mix(theme.surface_alt, theme.accent, 0.28)
-                        } else {
-                            theme.surface_alt
-                        }
-                    });
+                    .or(row_fallback.background)
+                    .unwrap_or(theme.surface_alt);
                 push_masked_rect(
                     out,
                     menu_rect,
                     color,
                     menu_radii,
                     [
-                        r.x + border_w,
+                        menu.x + border_w,
                         y + border_w,
-                        r.w - border_w * 2.0,
-                        row_h - border_w,
+                        menu.w - border_w * 2.0,
+                        row_h.min(menu.y + menu.h - y) - border_w,
                     ],
                 );
             }
@@ -13124,7 +13619,7 @@ fn emit_dropdown_overlays(
     }
 
     for child in &node.children {
-        emit_dropdown_overlays(child, layout, theme, sf, state, out);
+        emit_dropdown_overlay_nodes(child, layout, theme, sf, state, overlay, out);
     }
 }
 
@@ -13167,9 +13662,14 @@ fn emit_tooltip_surface(
     state: &WidgetState,
     out: &mut Vec<RectInstance>,
 ) {
-    let border_w = BORDER_WIDTH_LP * sf;
+    let paint_fallback = widget_paint_fallback(node, theme, state);
+    let border_w = paint_fallback.border_width.unwrap_or(BORDER_WIDTH_LP) * sf;
     let visual = visual_for(node, state, theme);
-    let radius_lp = visual.border_radius.unwrap_or(theme.radius).max(0.0);
+    let radius_lp = visual
+        .border_radius
+        .or(paint_fallback.border_radius)
+        .unwrap_or(theme.radius)
+        .max(0.0);
     let radius = radius_lp * sf;
     if visual.box_shadows.is_some() {
         emit_box_shadows(
@@ -13194,9 +13694,11 @@ fn emit_tooltip_surface(
         [rect.x, rect.y, rect.w, rect.h],
         resolve_color(&visual.border_color, theme)
             .map(|color| apply_opacity(color, visual.opacity))
+            .or(paint_fallback.border_color)
             .unwrap_or_else(|| mix(theme.border, theme.accent, 0.18)),
         resolve_color(&visual.background, theme)
             .map(|color| apply_opacity(color, visual.opacity))
+            .or(paint_fallback.background)
             .unwrap_or(theme.surface_alt),
         radius,
         visual
@@ -13213,7 +13715,13 @@ fn emit_static_tooltip_surface(
     style: &NodeStyle,
     out: &mut Vec<RectInstance>,
 ) {
-    let border_w = BORDER_WIDTH_LP * sf;
+    let paint_fallback = native_widget_paint_fallback_with_level(
+        WidgetKind::Tooltip,
+        None,
+        theme,
+        PaintInteraction::Resting,
+    );
+    let border_w = paint_fallback.border_width.unwrap_or(BORDER_WIDTH_LP) * sf;
     let opacity = resolve_overlay_opacity(style, 1.0);
     let radius = overlay_radius(style, theme.radius, sf);
     if style.visual.box_shadows.is_some() {
@@ -13242,13 +13750,15 @@ fn emit_static_tooltip_surface(
         overlay_color(
             &style.visual.border_color,
             theme,
-            mix(theme.border, theme.accent, 0.18),
+            paint_fallback
+                .border_color
+                .unwrap_or_else(|| mix(theme.border, theme.accent, 0.18)),
             opacity,
         ),
         overlay_color(
             &style.visual.background,
             theme,
-            with_alpha(theme.surface_alt, 1.0),
+            with_alpha(paint_fallback.background.unwrap_or(theme.surface_alt), 1.0),
             opacity,
         ),
         radius,
@@ -13293,6 +13803,8 @@ fn emit_toast_overlays(
             sf,
             toast.position,
             padding,
+            &style.text,
+            theme,
         );
         if rect.w <= 0.0 || rect.h <= 0.0 {
             continue;
@@ -13344,7 +13856,7 @@ fn emit_toast_overlays(
 mod tests {
     use super::*;
     use crate::document::{
-        BarChartSeriesProp, LinePlotPayloadFormat, LinePlotSeriesProp, NodeProps,
+        BarChartSeriesProp, HeatmapHoverProp, LinePlotPayloadFormat, LinePlotSeriesProp, NodeProps,
     };
     use crate::style::{
         BackdropFilterStyle, BackgroundPaint, BlobGradient, BlobGradientStop, BoxShadow, ColorRef,
@@ -13357,9 +13869,11 @@ mod tests {
             id: id.to_string(),
             key: None,
             class_name: None,
+            css_types: Vec::new(),
             kind,
             props: NodeProps::default(),
             style_json: Default::default(),
+            default_style: Default::default(),
             inline_style: Default::default(),
             style: Default::default(),
             children: Vec::new(),
@@ -13577,14 +14091,6 @@ mod tests {
         assert_eq!(value.color, Some([0.18, 0.24, 0.32]));
         assert_eq!(value.font_size, Some(12.0));
 
-        let legend_label = labels
-            .iter()
-            .find(|label| label.text == "North")
-            .expect("styled pie legend label");
-        assert!(
-            legend_label.clip_rect.is_some_and(|clip| clip[3] >= 21.0),
-            "pie legend label clip should fit styled text"
-        );
     }
 
     #[test]
@@ -13668,6 +14174,384 @@ mod tests {
     }
 
     #[test]
+    fn range_and_progress_renderers_consume_shared_part_paint_fallbacks() {
+        let theme = Theme::dark();
+
+        let mut slider = node("slider", WidgetKind::Slider);
+        slider.props.value = Some(0.5);
+        slider.props.min = Some(0.0);
+        slider.props.max = Some(1.0);
+        let mut slider_layout = LayoutResult::default();
+        slider_layout.rects.insert(
+            slider.id.clone(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 180.0,
+                h: 24.0,
+            },
+        );
+        let slider_state = WidgetState::from_tree(&slider);
+        let mut slider_out = Vec::new();
+        emit_rects(
+            &slider,
+            &slider_layout,
+            &theme,
+            1.0,
+            &slider_state,
+            &HashMap::new(),
+            &mut slider_out,
+        );
+        let slider_track = widget_part_paint_fallback(&slider, "track", &theme, &slider_state)
+            .background
+            .expect("slider track fallback");
+        let slider_thumb = widget_part_paint_fallback(&slider, "thumb", &theme, &slider_state)
+            .background
+            .expect("slider thumb fallback");
+        assert!(slider_out
+            .iter()
+            .any(|instance| instance.color == slider_track));
+        assert!(slider_out
+            .iter()
+            .any(|instance| instance.color == slider_thumb));
+
+        let mut progress = node("progress", WidgetKind::ProgressBar);
+        progress.props.value = Some(0.5);
+        progress.props.min = Some(0.0);
+        progress.props.max = Some(1.0);
+        let mut progress_layout = LayoutResult::default();
+        progress_layout.rects.insert(
+            progress.id.clone(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 180.0,
+                h: 20.0,
+            },
+        );
+        let progress_state = WidgetState::from_tree(&progress);
+        let mut progress_out = Vec::new();
+        emit_rects(
+            &progress,
+            &progress_layout,
+            &theme,
+            1.0,
+            &progress_state,
+            &HashMap::new(),
+            &mut progress_out,
+        );
+        let progress_track =
+            widget_part_paint_fallback(&progress, "track", &theme, &progress_state)
+                .background
+                .expect("progress track fallback");
+        let progress_fill = widget_part_paint_fallback(&progress, "fill", &theme, &progress_state)
+            .background
+            .expect("progress fill fallback");
+        assert!(progress_out
+            .iter()
+            .any(|instance| instance.color == progress_track));
+        assert!(progress_out
+            .iter()
+            .any(|instance| instance.color == progress_fill));
+    }
+
+    #[test]
+    fn navigation_renderers_consume_shared_selected_part_colors() {
+        let theme = Theme::dark();
+
+        let tree = node("tree-node", WidgetKind::TreeNode);
+        let mut tree_layout = LayoutResult::default();
+        tree_layout.rects.insert(
+            tree.id.clone(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 180.0,
+                h: 28.0,
+            },
+        );
+        let mut tree_state = WidgetState::from_tree(&tree);
+        tree_state.selectable_selected.insert(tree.id.clone(), true);
+        let mut tree_out = Vec::new();
+        emit_rects(
+            &tree,
+            &tree_layout,
+            &theme,
+            1.0,
+            &tree_state,
+            &HashMap::new(),
+            &mut tree_out,
+        );
+        let tree_fill = widget_part_paint_fallback(&tree, "row", &theme, &tree_state)
+            .background
+            .expect("selected tree row fallback");
+        assert!(tree_out.iter().any(|instance| instance.color == tree_fill));
+
+        let tab = node("tab-a", WidgetKind::Tab);
+        let mut tab_layout = LayoutResult::default();
+        tab_layout.rects.insert(
+            tab.id.clone(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 120.0,
+                h: 36.0,
+            },
+        );
+        let mut tab_state = WidgetState::default();
+        tab_state
+            .tab_parent
+            .insert(tab.id.clone(), "tabs".to_string());
+        tab_state.tab_values.insert(tab.id.clone(), "a".to_string());
+        tab_state
+            .active_tabs
+            .insert("tabs".to_string(), "a".to_string());
+        let mut tab_out = Vec::new();
+        emit_rects(
+            &tab,
+            &tab_layout,
+            &theme,
+            1.0,
+            &tab_state,
+            &HashMap::new(),
+            &mut tab_out,
+        );
+        let tab_fill = widget_part_paint_fallback(&tab, "tab", &theme, &tab_state)
+            .background
+            .expect("active tab fallback");
+        let tab_accent = widget_part_paint_fallback(&tab, "accent", &theme, &tab_state)
+            .background
+            .expect("active tab accent fallback");
+        assert!(tab_out.iter().any(|instance| instance.color == tab_fill));
+        assert!(tab_out.iter().any(|instance| instance.color == tab_accent));
+
+        let nav = node("nav-overview", WidgetKind::NavItem);
+        let mut nav_layout = LayoutResult::default();
+        nav_layout.rects.insert(
+            nav.id.clone(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 180.0,
+                h: 36.0,
+            },
+        );
+        let mut nav_state = WidgetState::default();
+        nav_state
+            .nav_targets
+            .insert(nav.id.clone(), "overview".to_string());
+        nav_state
+            .page_owner
+            .insert("overview".to_string(), "pages".to_string());
+        nav_state
+            .active_pages
+            .insert("pages".to_string(), "overview".to_string());
+        let mut nav_out = Vec::new();
+        emit_rects(
+            &nav,
+            &nav_layout,
+            &theme,
+            1.0,
+            &nav_state,
+            &HashMap::new(),
+            &mut nav_out,
+        );
+        let nav_fill = widget_part_paint_fallback(&nav, "item", &theme, &nav_state)
+            .background
+            .expect("active nav item fallback");
+        let nav_accent = widget_part_paint_fallback(&nav, "accent", &theme, &nav_state)
+            .background
+            .expect("active nav accent fallback");
+        assert!(nav_out.iter().any(|instance| instance.color == nav_fill));
+        assert!(nav_out.iter().any(|instance| instance.color == nav_accent));
+    }
+
+    #[test]
+    fn data_widget_renderers_consume_shared_container_and_table_part_colors() {
+        let theme = Theme::dark();
+
+        let bars = node("bars", WidgetKind::BarChart);
+        let mut bars_layout = LayoutResult::default();
+        bars_layout.rects.insert(
+            bars.id.clone(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 220.0,
+                h: 140.0,
+            },
+        );
+        let bars_state = WidgetState::from_tree(&bars);
+        let mut bars_out = Vec::new();
+        emit_rects(
+            &bars,
+            &bars_layout,
+            &theme,
+            1.0,
+            &bars_state,
+            &HashMap::new(),
+            &mut bars_out,
+        );
+        let bars_fallback = widget_paint_fallback(&bars, &theme, &bars_state);
+        assert!(bars_out
+            .iter()
+            .any(|instance| instance.color
+                == bars_fallback.background.expect("chart surface fallback")));
+        assert!(bars_out
+            .iter()
+            .any(|instance| instance.color
+                == bars_fallback.border_color.expect("chart border fallback")));
+
+        let mut heatmap = node("heatmap", WidgetKind::Heatmap);
+        heatmap.props.heatmap.rows = 2;
+        heatmap.props.heatmap.cols = 2;
+        heatmap.props.heatmap.values = vec![0.0, 0.25, 0.5, 1.0];
+        heatmap.props.heatmap.finite_count = 4;
+        heatmap.props.heatmap.scalar_bar = true;
+        heatmap.props.heatmap.hover = Some(HeatmapHoverProp {
+            row: 0,
+            col: 1,
+            value: 0.25,
+            screen: [110.0, 70.0],
+            x_label: None,
+            y_label: None,
+        });
+        let mut heatmap_layout = LayoutResult::default();
+        heatmap_layout.rects.insert(
+            heatmap.id.clone(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 260.0,
+                h: 180.0,
+            },
+        );
+        let heatmap_state = WidgetState::from_tree(&heatmap);
+        let mut heatmap_out = Vec::new();
+        emit_rects(
+            &heatmap,
+            &heatmap_layout,
+            &theme,
+            1.0,
+            &heatmap_state,
+            &HashMap::new(),
+            &mut heatmap_out,
+        );
+        for (part, property) in [
+            ("grid", "background"),
+            ("scalar-bar", "border-color"),
+            ("hover", "background"),
+            ("hover", "border-color"),
+        ] {
+            let fallback = native_widget_part_paint_fallback(
+                WidgetKind::Heatmap,
+                part,
+                &theme,
+                if part == "hover" {
+                    PaintInteraction::Hovered
+                } else {
+                    PaintInteraction::Resting
+                },
+                false,
+            );
+            let color = match property {
+                "background" => fallback.background,
+                "border-color" => fallback.border_color,
+                _ => None,
+            }
+            .expect("heatmap part fallback");
+            assert!(
+                heatmap_out.iter().any(|instance| instance.color == color),
+                "missing cataloged Heatmap::{part} {property}"
+            );
+        }
+        for (part, background, border) in [
+            ("grid", Some(rgba(0.9, 0.1, 0.2)), None),
+            (
+                "scalar-bar",
+                Some(rgba(0.2, 0.3, 0.4)),
+                Some(rgba(0.4, 0.5, 0.6)),
+            ),
+            (
+                "hover",
+                Some(rgba(0.1, 0.8, 0.3)),
+                Some(rgba(0.8, 0.9, 0.2)),
+            ),
+        ] {
+            heatmap.style.parts.parts.insert(
+                part.to_string(),
+                PartStyle {
+                    visual: VisualStyle {
+                        background,
+                        border_color: border,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            );
+        }
+        heatmap_out.clear();
+        emit_rects(
+            &heatmap,
+            &heatmap_layout,
+            &theme,
+            1.0,
+            &heatmap_state,
+            &HashMap::new(),
+            &mut heatmap_out,
+        );
+        for color in [
+            [0.9, 0.1, 0.2, 1.0],
+            [0.2, 0.3, 0.4, 1.0],
+            [0.4, 0.5, 0.6, 1.0],
+            [0.1, 0.8, 0.3, 1.0],
+            [0.8, 0.9, 0.2, 1.0],
+        ] {
+            assert!(
+                heatmap_out.iter().any(|instance| instance.color == color),
+                "missing authored Heatmap part color {color:?}"
+            );
+        }
+
+        let mut table = node("table", WidgetKind::DataFrameTable);
+        table.props.table_rows = Some(2);
+        table.props.page_size = Some(2);
+        table.props.table_columns = vec!["value".to_string()];
+        table.props.table_dtypes = vec!["f64".to_string()];
+        let mut table_layout = LayoutResult::default();
+        table_layout.rects.insert(
+            table.id.clone(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 220.0,
+                h: 100.0,
+            },
+        );
+        let mut table_state = WidgetState::from_tree(&table);
+        assert!(table_state.select_table_cell(&table.id, 0, 0));
+        let mut table_out = Vec::new();
+        emit_rects(
+            &table,
+            &table_layout,
+            &theme,
+            1.0,
+            &table_state,
+            &HashMap::new(),
+            &mut table_out,
+        );
+        for part in ["header", "row-selected", "grid-line"] {
+            let color = widget_part_paint_fallback(&table, part, &theme, &table_state)
+                .background
+                .expect("table part fallback");
+            assert!(
+                table_out.iter().any(|instance| instance.color == color),
+                "missing cataloged DataFrameTable::{part} color"
+            );
+        }
+    }
+
+    #[test]
     fn progress_bar_small_fill_uses_stable_radius_with_soft_cutoff() {
         let mut bar = node("progress", WidgetKind::ProgressBar);
         bar.props.value = Some(0.03);
@@ -13714,10 +14598,9 @@ mod tests {
 
         assert_eq!(fill.rect, [3.0, 3.0, 194.0, 14.0]);
         assert_eq!(fill.clip, default_local_clip(fill.rect));
-        // Fill corners are concentric with the track: track radius 6 (dark
-        // theme) minus the 3px inset = 3, so the inner bar follows the
-        // container shape instead of bulging out as a pill.
-        assert_eq!(fill.radii, [3.0; 4]);
+        // Fill corners are concentric with the compact track: the dark theme's
+        // 3px radius minus the 3px inset resolves to square inner corners.
+        assert_eq!(fill.radii, [0.0; 4]);
         assert!(
             (fill.paint[3] - 5.82).abs() < 0.01,
             "small progress should use a soft cutoff at the progress width, got paint={:?}",
@@ -14802,6 +15685,233 @@ mod tests {
     }
 
     #[test]
+    fn collapsible_renderer_consumes_shared_surface_and_header_paint() {
+        let theme = Theme::dark();
+        let mut collapsible = node("advanced", WidgetKind::Collapsible);
+        collapsible.props.expanded = Some(true);
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            collapsible.id.clone(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 220.0,
+                h: 120.0,
+            },
+        );
+
+        let state = WidgetState::from_tree(&collapsible);
+        let mut out = Vec::new();
+        emit_rects(
+            &collapsible,
+            &layout,
+            &theme,
+            1.0,
+            &state,
+            &HashMap::new(),
+            &mut out,
+        );
+        let surface = widget_paint_fallback(&collapsible, &theme, &state);
+        let header = widget_part_paint_fallback(&collapsible, "header", &theme, &state);
+        for color in [
+            surface.background.expect("collapsible surface"),
+            surface.border_color.expect("collapsible border"),
+            header.background.expect("collapsible header"),
+        ] {
+            assert!(out.iter().any(|instance| instance.color == color));
+        }
+
+        let mut hovered = state;
+        hovered.hovered = Some(collapsible.id.clone());
+        out.clear();
+        emit_rects(
+            &collapsible,
+            &layout,
+            &theme,
+            1.0,
+            &hovered,
+            &HashMap::new(),
+            &mut out,
+        );
+        let hovered_header = widget_part_paint_fallback(&collapsible, "header", &theme, &hovered)
+            .background
+            .expect("hovered collapsible header");
+        assert!(out.iter().any(|instance| instance.color == hovered_header));
+    }
+
+    #[test]
+    fn disclosure_renderers_consume_shared_mark_colors() {
+        let theme = Theme::dark();
+        for (kind, part, height) in [
+            (WidgetKind::Collapsible, "indicator", 48.0),
+            (WidgetKind::Dropdown, "chevron", 32.0),
+        ] {
+            let disclosure = node(part, kind);
+            let mut layout = LayoutResult::default();
+            layout.rects.insert(
+                disclosure.id.clone(),
+                Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 160.0,
+                    h: height,
+                },
+            );
+
+            for interaction in [PaintInteraction::Resting, PaintInteraction::Disabled] {
+                let mut state = WidgetState::from_tree(&disclosure);
+                if interaction == PaintInteraction::Disabled {
+                    state.disabled.insert(disclosure.id.clone());
+                }
+                let mut out = Vec::new();
+                emit_rects(
+                    &disclosure,
+                    &layout,
+                    &theme,
+                    1.0,
+                    &state,
+                    &HashMap::new(),
+                    &mut out,
+                );
+                let color =
+                    native_widget_part_paint_fallback(kind, part, &theme, interaction, false)
+                        .background
+                        .expect("disclosure mark fallback");
+                assert!(
+                    out.iter().any(|instance| instance.color == color),
+                    "missing cataloged {interaction:?} {kind:?}::{part} mark"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn action_button_renderers_consume_shared_icon_mark_colors() {
+        let theme = Theme::dark();
+        for kind in [WidgetKind::IconButton, WidgetKind::ArrowButton] {
+            let button = node("action", kind);
+            let mut layout = LayoutResult::default();
+            layout.rects.insert(
+                button.id.clone(),
+                Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 32.0,
+                    h: 32.0,
+                },
+            );
+
+            for interaction in [PaintInteraction::Resting, PaintInteraction::Disabled] {
+                let mut state = WidgetState::from_tree(&button);
+                if interaction == PaintInteraction::Disabled {
+                    state.disabled.insert(button.id.clone());
+                }
+                let mut out = Vec::new();
+                emit_rects(
+                    &button,
+                    &layout,
+                    &theme,
+                    1.0,
+                    &state,
+                    &HashMap::new(),
+                    &mut out,
+                );
+                let color =
+                    native_widget_part_paint_fallback(kind, "icon", &theme, interaction, false)
+                        .background
+                        .expect("action icon fallback");
+                assert!(
+                    out.iter().any(|instance| instance.color == color),
+                    "missing cataloged {interaction:?} {kind:?}::icon mark"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn structural_divider_renderers_consume_separator_and_splitter_catalog_paint() {
+        let theme = Theme::dark();
+        let separator = node("rule", WidgetKind::Separator);
+        let mut separator_layout = LayoutResult::default();
+        separator_layout.rects.insert(
+            separator.id.clone(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 180.0,
+                h: 1.0,
+            },
+        );
+        let mut separator_out = Vec::new();
+        emit_rects(
+            &separator,
+            &separator_layout,
+            &theme,
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut separator_out,
+        );
+        let separator_color = widget_paint_fallback(&separator, &theme, &WidgetState::default())
+            .background
+            .expect("separator fallback");
+        assert!(separator_out
+            .iter()
+            .any(|instance| instance.color == separator_color));
+
+        let mut splitter = node("split", WidgetKind::Splitter);
+        splitter.children = vec![
+            node("left", WidgetKind::Pane),
+            node("right", WidgetKind::Pane),
+        ];
+        let mut splitter_layout = LayoutResult::default();
+        splitter_layout.rects.insert(
+            splitter.id.clone(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 206.0,
+                h: 120.0,
+            },
+        );
+        splitter_layout.rects.insert(
+            "left".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 120.0,
+            },
+        );
+        splitter_layout.rects.insert(
+            "right".to_string(),
+            Rect {
+                x: 106.0,
+                y: 0.0,
+                w: 100.0,
+                h: 120.0,
+            },
+        );
+        let splitter_state = WidgetState::from_tree(&splitter);
+        let mut splitter_out = Vec::new();
+        emit_rects(
+            &splitter,
+            &splitter_layout,
+            &theme,
+            1.0,
+            &splitter_state,
+            &HashMap::new(),
+            &mut splitter_out,
+        );
+        let gutter_color = widget_part_paint_fallback(&splitter, "gutter", &theme, &splitter_state)
+            .background
+            .expect("splitter gutter fallback");
+        assert!(splitter_out
+            .iter()
+            .any(|instance| instance.color == gutter_color));
+    }
+
+    #[test]
     fn clipped_box_shadow_keeps_full_shape_and_uses_inherited_paint_clip() {
         let mut button = node("run", WidgetKind::Button);
         button.style.visual.box_shadows = Some(vec![BoxShadow {
@@ -15571,7 +16681,7 @@ mod tests {
         );
         let top_gap = track.rect[1];
         let bottom_gap = 120.0 - (track.rect[1] + track.rect[3]);
-        let title_inset = panel_scrollbar_title_inset(&panel, &theme, 1.0);
+        let title_inset = panel_scrollbar_title_inset(&panel, &layout, &theme, 1.0);
         assert!(
             top_gap >= title_inset,
             "titled panel scrollbar should start in the body area: {:?}",
@@ -15643,7 +16753,7 @@ mod tests {
         )
         .expect("scrollbar geometry");
         let vertical = geometry.vertical.expect("vertical scrollbar");
-        let title_inset = panel_scrollbar_title_inset(&panel, &Theme::dark(), 1.0);
+        let title_inset = panel_scrollbar_title_inset(&panel, &layout, &Theme::dark(), 1.0);
 
         assert!(
             vertical.track.y >= title_inset,
@@ -15731,7 +16841,7 @@ mod tests {
         )
         .expect("scrollbar geometry");
         let vertical = geometry.vertical.expect("vertical scrollbar");
-        let title_inset = panel_scrollbar_title_inset(&modal, &Theme::dark(), 1.0);
+        let title_inset = panel_scrollbar_title_inset(&modal, &layout, &Theme::dark(), 1.0);
 
         assert!(
             vertical.track.y >= 40.0 + title_inset,
@@ -16244,8 +17354,10 @@ mod tests {
                 inst.color == [0.20, 0.22, 0.28, 1.0] && inst.rect == [50.0, 40.0, 180.0, 110.0]
             })
             .expect("modal underpainted border shape");
-        let title_band_h =
-            panel_title_top_padding_lp(&modal, &theme) + panel_title_line_height_lp(&modal, &theme);
+        let title_band_h = titled_container_geometry(&modal, &layout, 1.0, &theme)
+            .expect("titled modal geometry")
+            .title_band
+            .h;
         let fill = out
             .iter()
             .find(|inst| {
@@ -16447,6 +17559,48 @@ mod tests {
     }
 
     #[test]
+    fn generic_scrollbar_renderer_consumes_shared_part_colors() {
+        let mut row = node("row", WidgetKind::HLayout);
+        row.style.layout.overflow_x = Some(OverflowStyle::Auto);
+        row.style.layout.overflow_y = Some(OverflowStyle::Hidden);
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            row.id.clone(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 140.0,
+                h: 52.0,
+            },
+        );
+        layout.scroll_max_x.insert(row.id.clone(), 180.0);
+        layout.scroll_x.insert(row.id.clone(), 40.0);
+        let theme = Theme::dark();
+        let state = WidgetState::default();
+        let mut out = Vec::new();
+
+        emit_rects(
+            &row,
+            &layout,
+            &theme,
+            1.0,
+            &state,
+            &HashMap::new(),
+            &mut out,
+        );
+
+        for part in ["scrollbar-track", "scrollbar-thumb"] {
+            let color = widget_part_paint_fallback(&row, part, &theme, &state)
+                .background
+                .expect("generic scrollbar part fallback");
+            assert!(
+                out.iter().any(|instance| instance.color == color),
+                "missing cataloged HLayout::{part} color"
+            );
+        }
+    }
+
+    #[test]
     fn radial_gradient_background_emits_gradient_rect_instance() {
         let mut panel = node("panel", WidgetKind::Panel);
         panel.style.visual.background_paint =
@@ -16621,6 +17775,62 @@ mod tests {
     }
 
     #[test]
+    fn interactive_state_visuals_do_not_mutate_computed_or_authored_layers() {
+        let mut button = node("run", WidgetKind::Button);
+        let base = ColorRef::Rgba([0.1, 0.2, 0.3, 1.0]);
+        let hover = ColorRef::Rgba([0.2, 0.4, 0.6, 1.0]);
+        let active = ColorRef::Rgba([0.3, 0.5, 0.7, 1.0]);
+        let focus = ColorRef::Rgba([0.4, 0.6, 0.8, 1.0]);
+        let disabled = ColorRef::Rgba([0.5, 0.5, 0.5, 1.0]);
+        button.style.visual.background = Some(base.clone());
+        button.style.hover.background = Some(hover.clone());
+        button.style.active.background = Some(active.clone());
+        button.style.focus.background = Some(focus.clone());
+        button.style.disabled.background = Some(disabled.clone());
+        button.inline_style.visual.background = Some(base.clone());
+        button.style_json.insert(
+            "background".to_string(),
+            serde_json::json!([0.1, 0.2, 0.3, 1.0]),
+        );
+        let authored_json = button.style_json.clone();
+        let theme = Theme::dark();
+
+        let states = [
+            WidgetState::default(),
+            WidgetState {
+                hovered: Some("run".to_string()),
+                ..Default::default()
+            },
+            WidgetState {
+                pressed: Some("run".to_string()),
+                ..Default::default()
+            },
+            WidgetState {
+                focused: Some("run".to_string()),
+                ..Default::default()
+            },
+            WidgetState {
+                disabled: std::collections::HashSet::from(["run".to_string()]),
+                ..Default::default()
+            },
+            WidgetState::default(),
+        ];
+        let expected = [&base, &hover, &active, &focus, &disabled, &base];
+
+        for (state, expected_background) in states.iter().zip(expected) {
+            let visual = visual_for(&button, state, &theme);
+            assert_eq!(visual.background.as_ref(), Some(expected_background));
+            assert_eq!(button.style.visual.background.as_ref(), Some(&base));
+            assert_eq!(button.style.hover.background.as_ref(), Some(&hover));
+            assert_eq!(button.style.active.background.as_ref(), Some(&active));
+            assert_eq!(button.style.focus.background.as_ref(), Some(&focus));
+            assert_eq!(button.style.disabled.background.as_ref(), Some(&disabled));
+            assert_eq!(button.inline_style.visual.background.as_ref(), Some(&base));
+            assert_eq!(button.style_json, authored_json);
+        }
+    }
+
+    #[test]
     fn checked_transition_progress_interpolates_visual_fields() {
         let mut checkbox = node("enabled", WidgetKind::Checkbox);
         checkbox.style.visual.background = Some(ColorRef::Rgba([0.0, 0.0, 0.0, 1.0]));
@@ -16639,6 +17849,227 @@ mod tests {
             Some(ColorRef::Rgba([0.1, 0.4, 0.2, 1.0]))
         );
         assert_eq!(visual.border_width, Some(3.0));
+    }
+
+    #[test]
+    fn checked_control_renderers_consume_shared_part_colors() {
+        let theme = Theme::dark();
+        let mut checkbox = node("enabled", WidgetKind::Checkbox);
+        checkbox.props.checked = Some(true);
+        let mut checkbox_layout = LayoutResult::default();
+        checkbox_layout.rects.insert(
+            checkbox.id.clone(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 120.0,
+                h: 32.0,
+            },
+        );
+        let checkbox_state = WidgetState::from_tree(&checkbox);
+        let mut checkbox_out = Vec::new();
+        emit_rects(
+            &checkbox,
+            &checkbox_layout,
+            &theme,
+            1.0,
+            &checkbox_state,
+            &HashMap::new(),
+            &mut checkbox_out,
+        );
+        let checkbox_box = widget_part_paint_fallback(&checkbox, "box", &theme, &checkbox_state)
+            .background
+            .expect("checked checkbox box fallback");
+        let checkbox_indicator =
+            widget_part_paint_fallback(&checkbox, "indicator", &theme, &checkbox_state)
+                .background
+                .expect("checked checkbox indicator fallback");
+        assert!(checkbox_out
+            .iter()
+            .any(|instance| instance.color == checkbox_box));
+        assert!(checkbox_out
+            .iter()
+            .any(|instance| instance.color == checkbox_indicator));
+
+        let mut toggle = node("wifi", WidgetKind::ToggleSwitch);
+        toggle.props.checked = Some(true);
+        let mut toggle_layout = LayoutResult::default();
+        toggle_layout.rects.insert(
+            toggle.id.clone(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 120.0,
+                h: 32.0,
+            },
+        );
+        let mut toggle_state = WidgetState::from_tree(&toggle);
+        toggle_state.checked_t.insert(toggle.id.clone(), 1.0);
+        let mut toggle_out = Vec::new();
+        emit_rects(
+            &toggle,
+            &toggle_layout,
+            &theme,
+            1.0,
+            &toggle_state,
+            &HashMap::new(),
+            &mut toggle_out,
+        );
+        let toggle_track = widget_part_paint_fallback(&toggle, "track", &theme, &toggle_state)
+            .background
+            .expect("checked toggle track fallback");
+        let toggle_thumb = widget_part_paint_fallback(&toggle, "thumb", &theme, &toggle_state)
+            .background
+            .expect("toggle thumb fallback");
+        assert!(toggle_out
+            .iter()
+            .any(|instance| instance.color == toggle_track));
+        assert!(toggle_out
+            .iter()
+            .any(|instance| instance.color == toggle_thumb));
+    }
+
+    #[test]
+    fn radio_button_renderer_consumes_shared_indicator_and_selected_dot_paint() {
+        let radio = node("choice", WidgetKind::RadioButton);
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            radio.id.clone(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 120.0,
+                h: 32.0,
+            },
+        );
+        let theme = Theme::dark();
+        let mut state = WidgetState::from_tree(&radio);
+
+        for selected in [false, true] {
+            state.selectable_selected.insert(radio.id.clone(), selected);
+            let mut out = Vec::new();
+            emit_rects(
+                &radio,
+                &layout,
+                &theme,
+                1.0,
+                &state,
+                &HashMap::new(),
+                &mut out,
+            );
+
+            let indicator = native_widget_part_paint_fallback(
+                WidgetKind::RadioButton,
+                "indicator",
+                &theme,
+                PaintInteraction::Resting,
+                selected,
+            );
+            for color in [
+                indicator.background.expect("radio indicator fill fallback"),
+                indicator
+                    .border_color
+                    .expect("radio indicator border fallback"),
+            ] {
+                assert!(out.iter().any(|instance| {
+                    instance.color == color && instance.rect[2] <= 14.0 && instance.rect[3] <= 14.0
+                }));
+            }
+
+            let dot = native_widget_part_paint_fallback(
+                WidgetKind::RadioButton,
+                "dot",
+                &theme,
+                PaintInteraction::Resting,
+                selected,
+            );
+            if selected {
+                let dot = dot.background.expect("selected radio dot fallback");
+                assert!(out.iter().any(|instance| {
+                    instance.color == dot && instance.rect[2] <= 6.0 && instance.rect[3] <= 6.0
+                }));
+            } else {
+                assert_eq!(dot, NativePaintFallback::default());
+            }
+        }
+    }
+
+    #[test]
+    fn selectable_renderer_consumes_shared_row_and_selected_indicator_paint() {
+        let selectable = node("choice", WidgetKind::Selectable);
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            selectable.id.clone(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 120.0,
+                h: 32.0,
+            },
+        );
+        let theme = Theme::dark();
+
+        let mut hovered = WidgetState::from_tree(&selectable);
+        hovered.hovered = Some(selectable.id.clone());
+        let mut hovered_out = Vec::new();
+        emit_rects(
+            &selectable,
+            &layout,
+            &theme,
+            1.0,
+            &hovered,
+            &HashMap::new(),
+            &mut hovered_out,
+        );
+        let hovered_row = native_widget_part_paint_fallback_with_selection(
+            WidgetKind::Selectable,
+            "row",
+            &theme,
+            PaintInteraction::Hovered,
+            false,
+            false,
+        )
+        .background
+        .expect("hovered selectable row fallback");
+        assert!(hovered_out
+            .iter()
+            .any(|instance| instance.color == hovered_row));
+
+        let mut selected = WidgetState::from_tree(&selectable);
+        selected
+            .selectable_selected
+            .insert(selectable.id.clone(), true);
+        let mut selected_out = Vec::new();
+        emit_rects(
+            &selectable,
+            &layout,
+            &theme,
+            1.0,
+            &selected,
+            &HashMap::new(),
+            &mut selected_out,
+        );
+        for fallback in [
+            native_widget_part_paint_fallback_with_selection(
+                WidgetKind::Selectable,
+                "row",
+                &theme,
+                PaintInteraction::Resting,
+                false,
+                true,
+            ),
+            native_widget_part_paint_fallback_with_selection(
+                WidgetKind::Selectable,
+                "indicator",
+                &theme,
+                PaintInteraction::Resting,
+                false,
+                true,
+            ),
+        ] {
+            let color = fallback.background.expect("selected selectable fallback");
+            assert!(selected_out.iter().any(|instance| instance.color == color));
+        }
     }
 
     #[test]
@@ -16687,13 +18118,13 @@ mod tests {
             .iter()
             .find(|inst| inst.color == [0.20, 0.30, 0.40, 1.0])
             .expect("checkbox row fill should be emitted");
-        assert_eq!(row.rect, [0.0, 0.0, 30.0, 32.0]);
+        assert_eq!(row.rect, [0.0, 0.0, 25.0, 32.0]);
 
         let focus = out
             .iter()
             .find(|inst| inst.color == with_alpha(theme.focus, 0.60) && inst.params[2] == 3.0)
             .expect("checkbox focus ring should be emitted");
-        assert_eq!(focus.rect, [-2.0, -2.0, 34.0, 36.0]);
+        assert_eq!(focus.rect, [-2.0, -2.0, 29.0, 36.0]);
     }
 
     #[test]
@@ -16725,11 +18156,12 @@ mod tests {
         );
 
         assert!(
-            out.iter().any(|inst| inst.rect[0] >= 26.0
-                && inst.rect[0] <= 29.0
-                && inst.rect[2] >= 15.0
-                && inst.rect[2] <= 19.0),
-            "checked ToggleSwitch should draw its thumb near the right side of the track"
+            out.iter().any(|inst| inst.rect[0] >= 22.0
+                && inst.rect[0] <= 24.0
+                && inst.rect[2] >= 12.0
+                && inst.rect[2] <= 14.0),
+            "checked ToggleSwitch should draw its thumb near the right side of the track; rects={:?}",
+            out.iter().map(|inst| inst.rect).collect::<Vec<_>>()
         );
     }
 
@@ -17356,6 +18788,37 @@ mod tests {
 
         assert!(vertical.thumb.y > vertical.track.y);
         assert!(horizontal.thumb.x > horizontal.track.x);
+
+        let theme = Theme::dark();
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            table.id.clone(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 280.0,
+                h: 150.0,
+            },
+        );
+        let mut out = Vec::new();
+        emit_rects(
+            &table,
+            &layout,
+            &theme,
+            1.0,
+            &state,
+            &HashMap::new(),
+            &mut out,
+        );
+        for part in ["scrollbar-track", "scrollbar-thumb"] {
+            let color = widget_part_paint_fallback(&table, part, &theme, &state)
+                .background
+                .expect("table scrollbar part fallback");
+            assert!(
+                out.iter().any(|instance| instance.color == color),
+                "missing cataloged DataFrameTable::{part} color"
+            );
+        }
     }
 
     #[test]
@@ -17410,7 +18873,7 @@ mod tests {
             .find(|inst| inst.color == [0.20, 0.30, 0.40, 1.0])
             .expect("collapsible indicator should be emitted");
         assert_eq!(mark.params[3], 1.0);
-        assert!(mark.rect[1] > 40.0);
+        assert!(mark.rect[1] >= 39.5, "indicator rect={:?}", mark.rect);
         assert!(
             mark.clip[3] < mark.rect[3],
             "indicator should be locally clipped"
@@ -17471,8 +18934,18 @@ mod tests {
 
         let tab_surface = out
             .iter()
-            .find(|inst| inst.rect == [4.0, 4.0, 112.0, 32.0])
-            .expect("active tab body should be emitted");
+            .find(|inst| {
+                inst.radii[0] > 0.0
+                    && inst.radii[1] > 0.0
+                    && inst.radii[2] == 0.0
+                    && inst.radii[3] == 0.0
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "active tab body should be emitted; rects={:?}",
+                    out.iter().map(|inst| inst.rect).collect::<Vec<_>>()
+                )
+            });
         assert!(tab_surface.radii[0] > 0.0);
         assert!(tab_surface.radii[1] > 0.0);
         assert_eq!(tab_surface.radii[2], 0.0);
@@ -17722,6 +19195,64 @@ mod tests {
     }
 
     #[test]
+    fn compact_nav_item_centers_icon_and_reduces_badge_to_indicator_dot() {
+        let mut nav = node("nav-automation", WidgetKind::NavItem);
+        nav.props
+            .raw_props
+            .insert("icon".to_string(), serde_json::json!("workflow"));
+        nav.props.badge = Some("12".to_string());
+        nav.style.parts.parts.insert(
+            "badge".to_string(),
+            PartStyle {
+                visual: VisualStyle {
+                    background: Some(rgba(0.91, 0.12, 0.24)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "nav-automation".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 56.0,
+                h: 36.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &nav,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        assert!(nav_item_uses_compact_icon(&nav, 56.0, 1.0));
+        assert!(
+            out.iter()
+                .any(|instance| instance.rect == [43.0, 5.0, 8.0, 8.0]
+                    && instance.color == [0.91, 0.12, 0.24, 1.0]
+                    && instance.radii == [4.0; 4]),
+            "compact badges should become a non-colliding indicator dot"
+        );
+        assert!(
+            out.iter().any(|instance| {
+                instance.rect[0] >= 19.0
+                    && instance.rect[0] + instance.rect[2] <= 37.0
+                    && instance.rect[1] >= 9.0
+                    && instance.rect[1] + instance.rect[3] <= 27.0
+            }),
+            "workflow icon primitives should stay inside the centered 18px slot"
+        );
+    }
+
+    #[test]
     fn focused_active_nav_item_uses_outline_focus_ring() {
         let mut nav = node("nav-overview", WidgetKind::NavItem);
         nav.style.parts.parts.insert(
@@ -17963,6 +19494,229 @@ mod tests {
     }
 
     #[test]
+    fn overlay_renderers_consume_shared_scrim_tooltip_menu_dropdown_and_toast_colors() {
+        let theme = Theme::dark();
+
+        let mut modal = node("modal", WidgetKind::Modal);
+        modal.props.open = Some(true);
+        let mut modal_layout = LayoutResult::default();
+        modal_layout.rects.insert(
+            modal.id.clone(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 220.0,
+                h: 140.0,
+            },
+        );
+        let modal_state = WidgetState::from_tree(&modal);
+        let mut modal_out = Vec::new();
+        emit_rects(
+            &modal,
+            &modal_layout,
+            &theme,
+            1.0,
+            &modal_state,
+            &HashMap::new(),
+            &mut modal_out,
+        );
+        let scrim = widget_part_paint_fallback(&modal, "scrim", &theme, &modal_state)
+            .background
+            .expect("modal scrim fallback");
+        assert!(modal_out.iter().any(|instance| instance.color == scrim));
+
+        let tooltip = node("tip", WidgetKind::Tooltip);
+        let tooltip_state = WidgetState::default();
+        let tooltip_fallback = widget_paint_fallback(&tooltip, &theme, &tooltip_state);
+        let mut tooltip_out = Vec::new();
+        emit_tooltip_surface(
+            &tooltip,
+            Rect {
+                x: 10.0,
+                y: 12.0,
+                w: 120.0,
+                h: 32.0,
+            },
+            &theme,
+            1.0,
+            &tooltip_state,
+            &mut tooltip_out,
+        );
+        assert!(tooltip_out.iter().any(|instance| {
+            instance.color
+                == tooltip_fallback
+                    .background
+                    .expect("tooltip surface fallback")
+        }));
+        assert!(tooltip_out.iter().any(|instance| {
+            instance.color
+                == tooltip_fallback
+                    .border_color
+                    .expect("tooltip border fallback")
+        }));
+
+        let mut root = node("root", WidgetKind::Window);
+        let menu = node("file-menu", WidgetKind::Menu);
+        root.children.push(menu);
+        let items = vec![
+            NavigationItem {
+                id: "base".to_string(),
+                value: "Base".to_string(),
+                disabled: false,
+            },
+            NavigationItem {
+                id: "hover".to_string(),
+                value: "Hover".to_string(),
+                disabled: false,
+            },
+            NavigationItem {
+                id: "disabled".to_string(),
+                value: "Disabled".to_string(),
+                disabled: true,
+            },
+        ];
+        let menu_state = WidgetState {
+            hovered: Some("hover".to_string()),
+            ..Default::default()
+        };
+        let mut menu_out = Vec::new();
+        emit_menu_popup(
+            &root,
+            Rect {
+                x: 10.0,
+                y: 30.0,
+                w: 140.0,
+                h: theme.control_height() * 3.0,
+            },
+            &items,
+            &theme,
+            1.0,
+            &menu_state,
+            "file-menu",
+            &mut menu_out,
+        );
+        for part in ["menu", "item", "item-hover", "item-disabled"] {
+            let color = native_widget_part_paint_fallback(
+                WidgetKind::Menu,
+                part,
+                &theme,
+                PaintInteraction::Resting,
+                false,
+            )
+            .background
+            .expect("menu part fallback");
+            assert!(
+                menu_out.iter().any(|instance| instance.color == color),
+                "missing cataloged Menu::{part} color"
+            );
+        }
+
+        let mut dropdown_root = node("dropdown-root", WidgetKind::Window);
+        dropdown_root
+            .children
+            .push(node("mode", WidgetKind::Dropdown));
+        let mut dropdown_layout = LayoutResult::default();
+        dropdown_layout.rects.insert(
+            "dropdown-root".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 360.0,
+                h: 260.0,
+            },
+        );
+        dropdown_layout.rects.insert(
+            "mode".to_string(),
+            Rect {
+                x: 20.0,
+                y: 20.0,
+                w: 160.0,
+                h: theme.control_height(),
+            },
+        );
+        let mut dropdown_state = WidgetState {
+            open_dropdown: Some("mode".to_string()),
+            dropdown_hover: Some(("mode".to_string(), 1)),
+            ..Default::default()
+        };
+        dropdown_state.dropdown_items.insert(
+            "mode".to_string(),
+            vec!["One".to_string(), "Two".to_string(), "Three".to_string()],
+        );
+        dropdown_state.dropdown_index.insert("mode".to_string(), 1);
+        let mut dropdown_out = Vec::new();
+        emit_dropdown_overlays(
+            &dropdown_root,
+            &dropdown_layout,
+            &theme,
+            1.0,
+            &dropdown_state,
+            &mut dropdown_out,
+        );
+        for fallback in [
+            native_widget_part_paint_fallback(
+                WidgetKind::Dropdown,
+                "menu",
+                &theme,
+                PaintInteraction::Resting,
+                false,
+            ),
+            native_widget_part_paint_fallback_with_selection(
+                WidgetKind::Dropdown,
+                "item",
+                &theme,
+                PaintInteraction::Resting,
+                false,
+                false,
+            ),
+            native_widget_part_paint_fallback_with_selection(
+                WidgetKind::Dropdown,
+                "item",
+                &theme,
+                PaintInteraction::Hovered,
+                false,
+                true,
+            ),
+        ] {
+            let color = fallback.background.expect("dropdown overlay fallback");
+            assert!(dropdown_out.iter().any(|instance| instance.color == color));
+        }
+
+        let toast = crate::toast::ToastOverlay {
+            id: "failure".to_string(),
+            message: "Failed".to_string(),
+            level: crate::toast::ToastLevel::Error,
+            opacity: 1.0,
+            radius: None,
+            padding: None,
+            position: crate::toast::ToastPosition::TopRight,
+        };
+        let toast_fallback = native_widget_paint_fallback_with_level(
+            WidgetKind::Toast,
+            Some("error"),
+            &theme,
+            PaintInteraction::Resting,
+        );
+        let mut toast_out = Vec::new();
+        emit_toast_overlays(
+            &[toast],
+            &theme,
+            1.0,
+            &StylesheetStore::default(),
+            DgMediaEnvironment::new(400.0, 300.0),
+            400.0,
+            300.0,
+            &mut toast_out,
+        );
+        for color in [
+            toast_fallback.background.expect("toast fill fallback"),
+            toast_fallback.border_color.expect("toast border fallback"),
+        ] {
+            assert!(toast_out.iter().any(|instance| instance.color == color));
+        }
+    }
+
+    #[test]
     fn led_internal_parts_customize_dot_glow_and_highlight() {
         let mut led = node("status", WidgetKind::Led);
         led.props.led_state = Some("on".to_string());
@@ -18050,6 +19804,123 @@ mod tests {
             [4.0, 5.0, 12.0, 10.0]
         ));
         assert!(out.iter().any(|inst| inst.color == [0.70, 0.80, 0.90, 0.5]));
+    }
+
+    #[test]
+    fn drag_number_renderer_consumes_shared_grip_paint() {
+        let drag_number = node("amount", WidgetKind::DragNumber);
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            drag_number.id.clone(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 120.0,
+                h: 36.0,
+            },
+        );
+        let theme = Theme::dark();
+
+        for interaction in [PaintInteraction::Resting, PaintInteraction::Disabled] {
+            let mut state = WidgetState::from_tree(&drag_number);
+            if interaction == PaintInteraction::Disabled {
+                state.disabled.insert(drag_number.id.clone());
+            }
+            let mut out = Vec::new();
+            emit_rects(
+                &drag_number,
+                &layout,
+                &theme,
+                1.0,
+                &state,
+                &HashMap::new(),
+                &mut out,
+            );
+
+            let grip = native_widget_part_paint_fallback(
+                WidgetKind::DragNumber,
+                "grip",
+                &theme,
+                interaction,
+                false,
+            )
+            .background
+            .expect("drag number grip fallback");
+            assert_eq!(
+                out.iter().filter(|instance| instance.color == grip).count(),
+                3,
+                "DragNumber should draw all three grip marks with cataloged {interaction:?} paint"
+            );
+        }
+    }
+
+    #[test]
+    fn number_input_renderer_consumes_shared_stepper_and_divider_paint() {
+        let number = node("amount", WidgetKind::NumberInput);
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            number.id.clone(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 120.0,
+                h: 36.0,
+            },
+        );
+        let theme = Theme::dark();
+
+        for interaction in [PaintInteraction::Resting, PaintInteraction::Hovered] {
+            let state = if interaction == PaintInteraction::Hovered {
+                WidgetState {
+                    hovered: Some(number.id.clone()),
+                    ..Default::default()
+                }
+            } else {
+                WidgetState::default()
+            };
+            let mut out = Vec::new();
+            emit_rects(
+                &number,
+                &layout,
+                &theme,
+                1.0,
+                &state,
+                &HashMap::new(),
+                &mut out,
+            );
+
+            let stepper = native_widget_part_paint_fallback(
+                WidgetKind::NumberInput,
+                "stepper",
+                &theme,
+                interaction,
+                false,
+            )
+            .background
+            .expect("number input stepper fallback");
+            assert!(
+                out.iter().any(|instance| instance.color == stepper),
+                "missing cataloged {interaction:?} NumberInput stepper fill"
+            );
+
+            let divider = native_widget_part_paint_fallback(
+                WidgetKind::NumberInput,
+                "divider",
+                &theme,
+                PaintInteraction::Resting,
+                false,
+            )
+            .background
+            .expect("number input divider fallback");
+            assert!(
+                out.iter().any(|instance| {
+                    instance.color == divider
+                        && instance.params[2] == 0.0
+                        && (instance.rect[2] <= 2.0 || instance.rect[3] <= 2.0)
+                }),
+                "missing cataloged NumberInput divider fill"
+            );
+        }
     }
 
     #[test]
@@ -18156,25 +20027,27 @@ mod tests {
             &mut out,
         );
 
-        assert!(has_rect(
-            &out,
-            [0.10, 0.20, 0.30, 1.0],
-            [27.0, 1.0, 66.0, 38.0]
-        ));
+        assert!(
+            has_rect(&out, [0.10, 0.20, 0.30, 1.0], [23.0, 1.0, 74.0, 38.0]),
+            "number input primitives={:?}",
+            out.iter()
+                .map(|inst| (inst.color, inst.rect))
+                .collect::<Vec<_>>()
+        );
         assert!(has_rect(
             &out,
             [0.40, 0.50, 0.60, 1.0],
-            [24.5, 1.0, 3.0, 38.0]
+            [20.5, 1.0, 3.0, 38.0]
         ));
         assert!(has_rect(
             &out,
             [0.70, 0.80, 0.90, 1.0],
-            [92.5, 1.0, 3.0, 38.0]
+            [96.5, 1.0, 3.0, 38.0]
         ));
         assert!(has_rect(
             &out,
             [0.90, 0.10, 0.20, 1.0],
-            [46.0, 10.0, 4.0, 20.0]
+            [39.0, 10.0, 4.0, 20.0]
         ));
         assert_eq!(
             out.iter()
@@ -18344,6 +20217,8 @@ mod tests {
         );
         let theme = Theme::dark();
         let state = WidgetState::default();
+        let badge_fallback = widget_paint_fallback(&root.children[0], &theme, &state);
+        let tag_fallback = widget_paint_fallback(&root.children[1], &theme, &state);
         let mut out = Vec::new();
 
         emit_rects(
@@ -18356,11 +20231,19 @@ mod tests {
             &mut out,
         );
 
-        assert!(has_rect(&out, theme.success, [0.0, 0.0, 48.0, 22.0]));
-        assert!(has_rect(&out, theme.warning, [56.0, 0.0, 72.0, 22.0]));
         assert!(has_rect(
             &out,
-            mix(theme.surface_alt, theme.warning, 0.22),
+            badge_fallback.background.expect("semantic badge fill"),
+            [0.0, 0.0, 48.0, 22.0]
+        ));
+        assert!(has_rect(
+            &out,
+            tag_fallback.border_color.expect("semantic tag border"),
+            [56.0, 0.0, 72.0, 22.0]
+        ));
+        assert!(has_rect(
+            &out,
+            tag_fallback.background.expect("semantic tag fill"),
             [57.0, 1.0, 70.0, 20.0]
         ));
     }

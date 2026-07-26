@@ -15,6 +15,18 @@ pub(crate) const TOGGLE_SWITCH_THUMB_SIZE_LP: f32 = 14.0;
 
 pub(crate) const DROPDOWN_CHEVRON_WIDTH_LP: f32 = 8.0;
 
+pub(crate) fn native_fallback_font_size(theme: &Theme) -> f32 {
+    theme.font_size
+}
+
+pub(crate) fn native_fallback_font_weight() -> u16 {
+    400
+}
+
+pub(crate) fn native_fallback_opacity() -> f32 {
+    1.0
+}
+
 pub(crate) const SLIDER_TRACK_MARGIN_LP: f32 = 6.0;
 pub(crate) const SLIDER_TRACK_HEIGHT_LP: f32 = 3.0;
 pub(crate) const SLIDER_THUMB_WIDTH_LP: f32 = 12.0;
@@ -88,8 +100,10 @@ pub(crate) fn badge_width_for_text(style: &NodeStyle, badge: &str, theme: &Theme
     if let Some(width_lp) = badge_part.and_then(|part| part.layout.width) {
         return (width_lp.max(1.0) * sf).max(1.0);
     }
-    let font_size = badge_font_size_lp(style, theme);
-    let text_w = badge.chars().count() as f32 * font_size * 0.68;
+    let text_style = inline_badge_text_style(style, theme);
+    let text_w = crate::text::measure_text_for_layout(badge, &text_style, theme)
+        .width
+        .ceil();
     let padding = badge_part
         .and_then(|part| part.layout.padding)
         .unwrap_or(BADGE_PAD_X_LP)
@@ -150,11 +164,33 @@ pub(crate) fn standalone_badge_width_for_text(
     if let Some(width_lp) = style.layout.width {
         return (width_lp.max(1.0) * sf).max(1.0);
     }
-    let font_size = badge_font_size_lp(style, theme);
-    let text_w = badge.chars().count() as f32 * font_size * 0.90;
+    let mut text_style = style.text.clone();
+    text_style.font_size = Some(badge_font_size_lp(style, theme));
+    let text_w = crate::text::measure_text_for_layout(badge, &text_style, theme)
+        .width
+        .ceil();
     let (left, right) = standalone_badge_horizontal_padding_lp(style);
     let border = style.visual.border_width.unwrap_or(0.0).max(0.0);
     ((text_w + left + right + border * 2.0 + 8.0).max(BADGE_MIN_HEIGHT_LP) * sf).max(1.0)
+}
+
+fn inline_badge_text_style(style: &NodeStyle, theme: &Theme) -> TextStyle {
+    let mut text = style.text.clone();
+    text.font_size = Some(badge_font_size_lp(style, theme));
+    if let Some(part) = style.parts.parts.get("badge") {
+        text.font_family = part
+            .text
+            .font_family
+            .clone()
+            .or_else(|| text.font_family.clone());
+        text.font_weight = part.text.font_weight.or(text.font_weight);
+        text.text_transform = part.text.text_transform.or(text.text_transform);
+        text.letter_spacing = part.text.letter_spacing.or(text.letter_spacing);
+        text.line_height = part.text.line_height.or(text.line_height);
+        text.font_style = part.text.font_style.or(text.font_style);
+        text.font_variant_numeric = part.text.font_variant_numeric.or(text.font_variant_numeric);
+    }
+    text
 }
 
 pub(crate) fn standalone_badge_horizontal_padding_lp(style: &NodeStyle) -> (f32, f32) {
@@ -210,6 +246,25 @@ use serde_json::Value;
 use crate::events::WidgetState;
 use crate::theme::{parse_hex_color, parse_web_color, Color, Theme};
 
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct StyleDeclarationProvenance {
+    pub origin: String,
+    pub source_origin: Option<String>,
+    pub inherited_from: Option<String>,
+    pub python_widget_type: Option<String>,
+    pub python_class: Option<String>,
+    pub construction: Option<String>,
+    pub authored_property: String,
+    pub selector: Option<String>,
+    pub value: Option<Value>,
+    pub important: bool,
+    pub source_index: Option<u32>,
+    pub source_line: Option<u32>,
+    pub source_column: Option<u32>,
+    pub source_order: Option<u32>,
+    pub specificity: Option<[u16; 3]>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct NodeStyle {
     pub layout: LayoutStyle,
@@ -228,6 +283,9 @@ pub struct NodeStyle {
     pub expanded: VisualStyle,
     pub collapsed: VisualStyle,
     pub selected: VisualStyle,
+    /// Ordered declaration candidates for each authored property. The last
+    /// candidate is the current winner; earlier candidates were overridden.
+    pub provenance: BTreeMap<String, Vec<StyleDeclarationProvenance>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -461,6 +519,7 @@ fn format_css_float(value: f32) -> String {
 pub struct LayoutStyle {
     pub display: Option<DisplayStyle>,
     pub flex_direction: Option<FlexDirectionStyle>,
+    pub flex_wrap: Option<FlexWrapStyle>,
     pub align_items: Option<AlignItemsStyle>,
     pub align_self: Option<AlignItemsStyle>,
     pub width: Option<f32>,
@@ -559,6 +618,13 @@ pub enum FlexDirectionStyle {
     Column,
     RowReverse,
     ColumnReverse,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlexWrapStyle {
+    NoWrap,
+    Wrap,
+    WrapReverse,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1238,6 +1304,7 @@ fn parse_layout(map: &serde_json::Map<String, Value>, out: &mut LayoutStyle) {
         .get("flex_direction")
         .and_then(Value::as_str)
         .and_then(parse_flex_direction);
+    out.flex_wrap = text_value(map, "flex_wrap", "flex-wrap").and_then(parse_flex_wrap);
     out.align_items = text_value(map, "align_items", "align-items").and_then(parse_align_items);
     out.align_self = text_value(map, "align_self", "align-self").and_then(parse_align_items);
     out.width = number(map.get("width"));
@@ -2188,6 +2255,15 @@ fn parse_flex_direction(value: &str) -> Option<FlexDirectionStyle> {
     }
 }
 
+fn parse_flex_wrap(value: &str) -> Option<FlexWrapStyle> {
+    match value.trim().to_ascii_lowercase().replace('_', "-").as_str() {
+        "nowrap" | "no-wrap" => Some(FlexWrapStyle::NoWrap),
+        "wrap" => Some(FlexWrapStyle::Wrap),
+        "wrap-reverse" => Some(FlexWrapStyle::WrapReverse),
+        _ => None,
+    }
+}
+
 fn parse_overflow(value: &str) -> Option<OverflowStyle> {
     match value.trim().to_ascii_lowercase().as_str() {
         "visible" => Some(OverflowStyle::Visible),
@@ -2743,6 +2819,12 @@ mod tests {
         assert_eq!(filter.blur, 8.0);
         assert!((filter.brightness - 1.2).abs() < 0.001);
         assert_eq!(filter.saturate, 0.75);
+    }
+
+    #[test]
+    fn parses_inline_flex_wrap() {
+        let style = NodeStyle::from_json(Some(&json!({"flex_wrap": "wrap-reverse"})));
+        assert_eq!(style.layout.flex_wrap, Some(FlexWrapStyle::WrapReverse));
     }
 
     #[test]

@@ -40,16 +40,17 @@ Common live methods:
 | Widget | Features |
 | --- | --- |
 | `Window(title, width=1024, height=768)` | Root container and native window metadata. Must be created outside any active layout context. |
-| `AppShell(gap=0)` | Bounded full-window app root for sidebar plus main-body layouts. Defaults to hidden outer overflow and safe min sizes. |
+| `AppShell(gap=0, direction="row", wrap=False, min_content_width=160, min_content_height=96)` | Responsive full-window app root for sidebar plus main-body layouts. Application CSS can change direction at breakpoints; eligible chrome yields before protected main content falls below its safeguards. |
 | `Body(scroll="y", gap=None)` | Flexible scroll-owning main content pane for `AppShell`. Defaults to `min_width=0`, `min_height=0`, and fill behavior. |
-| `HLayout` | Horizontal flex container. Useful for rows, split panes, and button groups. |
+| `FlexLayout(direction="row", wrap=False, gap=8, align_items="stretch")` | General flex container whose construction values remain overridable by application CSS and media rules. |
+| `HLayout` | Non-wrapping horizontal flex container. Useful for one-line rows, split panes, and button groups whose children can fit or shrink. |
 | `VLayout` | Vertical flex container. Useful for forms, panels, and stacked sections. |
 | `ScrollArea(axis="y", gap=None, width=None, height=None)` | Bounded scroll viewport for content that may exceed its parent. Defaults to vertical scrolling and uses a vertical layout for children. |
-| `GridLayout(columns=2, min_column_width=320, gap=None, row_gap=None)` | Responsive grid container for cards and dashboards. Integer `columns` values are maximum columns when `min_column_width` is set; the grid collapses to fewer columns when narrow. |
-| `FlowLayout(gap=None, row_gap=None, align="start", cross_align="start")` | Wrapping row container for intrinsic-width buttons, tags, and badges. |
+| `GridLayout(columns=2, min_column_width=320, masonry=False, balance_last_row=False, gap=None, row_gap=None)` | Responsive grid container for cards and dashboards. `columns` accepts an integer, `"auto"`, `"auto-fit"`, or a logical-viewport map such as `{"default": 4, 1100: 2, 700: 1}`. Integer/responsive counts remain maxima when `min_column_width` is set. |
+| `FlowLayout(gap=None, row_gap=None, align="start", cross_align="start")` | Wrapping row container for intrinsic-width buttons, tags, and badges; prefer it over `HLayout` when row width is uncertain. |
 | `Panel(title=None, width=None)` | Titled or untitled container with optional preferred width. Vertically scrolls overflowing child content with the mouse wheel. Supports `Panel::accent`. |
 | `Collapsible(title, expanded=True, on_change=None, disabled=False)` | Header/body container for optional sections. Header toggles expanded state; children lay out only when expanded. Supports `set_expanded()`, `expand()`, `collapse()`, `toggle()`, and `Collapsible::header`, `indicator`, `body`. |
-| `Sidebar(title=None, width=220)` | Fixed-width navigation/rail container. |
+| `Sidebar(title=None, width=220, collapsed_width=56, state="auto", collapsible=True, compact_mode="rail", mobile_mode="drawer")` | Responsive navigation container with expanded, collapsed rail, hidden, and overlay-drawer states. Auto mode uses compact policy through 700 logical pixels and closed mobile-drawer policy through 480. `menu_button()` creates an accessible opener; closing restores its focus and the previous Sidebar state. |
 | `StatusBar(height=28)` | Bottom/status container with fixed height. |
 | `Spacer(width=None, height=None)` | Empty flexible or fixed space. Width/height must be non-negative. |
 | `Separator(orientation="auto")` | Visual divider. Orientation may be `auto`, `horizontal`, or `vertical`. |
@@ -93,7 +94,9 @@ Helper builders:
 | `Tab(label, value=None, badge=None, disabled=False)` | Tab page container. `value` defaults to a route-safe version of `label`. Must be created directly inside `Tabs`. Optional badge supports `set_badge(value)`. Supports `Tab::tab`, `accent`, and `badge`. |
 | `Pages(value=None, on_change=None)` | Container for route-based `Page` children. If `value` is omitted, the first page becomes active. `set_value(value, notify=False)` switches pages programmatically; pass `notify=True` to invoke `on_change`. Native page-route changes emit `change` when `on_change` is supplied; programmatic construction does not call it. |
 | `Page(value, title=None)` | Page container. Must be created directly inside `Pages`. |
-| `NavItem(label, page, badge=None, disabled=False)` | Navigation row targeting a `Page` route. Optional badge supports `set_badge(value)`. Supports `NavItem::item`, `accent`, and `badge`. |
+| `NavItem(label, page, icon=None, compact_label=None, badge=None, disabled=False)` | Navigation row targeting a `Page` route. Icon-bearing rows use compact labels at intermediate widths and centered icon-only presentation at rail widths; compact badges become indicator dots. The full label remains the accessible name and default tooltip. Optional badge supports `set_badge(value)`. Supports `NavItem::item`, `accent`, and `badge`. |
+| `Breadcrumbs(items, current=None, width=None, min_width=0, max_width=None, grow=False, shrink=True)` | Full-width, shrink-safe path navigation. Long paths may be collapsed with `max_items`; explicit bounds and growth control the outer row without styling generated buttons and separators. |
+| `TreeView(items=None, selected=None, width=None, min_width=0, max_width=None, grow=True, shrink=True)` | Hierarchical navigation viewport. It remains flexible by default, unlike content-sized form composites, but its bounds and growth can be controlled directly. |
 
 ## Text And Basic Controls
 
@@ -105,9 +108,12 @@ Helper builders:
 | `LED(state=False, states=None, on_color="success", off_color="disabled", size=14)` | Compact status light. Boolean state maps to `on`/`off`; string state names resolve through `states`. Supports `set_state()`, `set_on()`, `set_color()`, and `set_size()`. |
 | `Button(text, on_click=None, badge=None, disabled=False)` | Clickable button. Emits `click` when `on_click` is supplied and not disabled. `click()` invokes the Python callback directly. Optional badge supports `set_badge(value)`. |
 | `TextInput(value="", placeholder="", on_change=None, disabled=False)` | Editable text field. `set_value(value)` updates text. |
+| `SearchBox(value="", placeholder="Search...", width=340, min_width=180, max_width=None, grow=False, shrink=True, clearable=True)` | Composite search field with fixed search/clear chrome and a flexible inner input. It uses a 340-pixel standalone preferred width, shrinks safely to 180 pixels, and fills remaining toolbar or row space with `grow=True`. `clearable=False` releases the clear-button slot. Explicit `style` sizing remains authoritative. |
 | `TextArea(value="", placeholder="", rows=4, wrap=True, on_change=None, disabled=False)` | Editable multiline text field. Newlines are preserved; `rows` controls preferred height; overflow scrolls inside the field; `wrap` controls long-line wrapping. `set_value(value)` updates text. |
 | `Checkbox(label, checked=False, on_change=None, disabled=False)` | Boolean control. `set_checked(checked)` updates state. Supports `Checkbox::row`, `box`, `indicator`, and `label`. |
 | `Dropdown(items, value=None, on_change=None, disabled=False)` | Select control. `items` must be non-empty; `value` must be in `items` when supplied. `set_value(value)` updates selection. Supports field, chevron, menu, and item parts. |
+| `SelectableList(items, selection_mode="single", max_height=None, width=None, min_width=0, max_width=None, grow=False, shrink=True)` | Content-sized selection list built from generated rows. `max_height` enables bounded vertical scrolling; outer bounds and growth no longer require styling child rows. |
+| `RadioGroup(items, orientation="vertical", width=None, min_width=0, max_width=None, grow=False, shrink=True)` | Content-sized group of radio buttons. Horizontal groups wrap under width pressure instead of allowing fixed radio rows to escape the composite. |
 
 ## Numeric Controls
 
@@ -115,8 +121,11 @@ Helper builders:
 | --- | --- |
 | `Slider(value=0, min=0, max=1, step=0.01, on_change=None, disabled=False)` | Numeric slider. Clamps initial and live values to `[min, max]`; `step` must be greater than zero. Supports `Slider::track`, `fill`, and `thumb`. |
 | `NumberInput(value=0, min=None, max=None, step=1, on_change=None, disabled=False)` | Numeric text field with left decrement and right increment steppers. Values must be finite; `step` must be finite and greater than zero. Supports `NumberInput::field`, `stepper`, `stepper-up`, `stepper-down`, `stepper-divider`, `divider`, and `caret`. |
+| `DragVector(value, component_width=88, width=None, min_width=0, max_width=None, grow=False, shrink=True)` | Wrapping vector editor built from fixed component groups and `DragNumber` fields. Its outer composite is content-sized and shrink-safe by default; set `grow=True` to consume remaining parent space. |
 | `ProgressBar(value=0, min=0, max=1, label=None, show_value=False, disabled=False)` | Read-only progress display. `set_value(value)` updates progress and, when `show_value=True`, updates the generated percentage label. Supports `ProgressBar::track`, `fill`, and `label`. |
-| `ColorPicker(value=(255, 100, 0), alpha=True, on_change=None, title="Color", width=320)` | Composite panel made from a swatch, sliders, and labels. Accepts RGB/RGBA values as 0-255 integers or normalized 0.0-1.0 floats. `set_value(value, notify=False)` updates the displayed color; pass `notify=True` to invoke `on_change`. User interaction always invokes `on_change`. |
+| `ColorPicker(value=(255, 100, 0), alpha=True, on_change=None, title="Color", width=320, min_width=180, max_width=None, grow=False, shrink=True)` | Composite panel made from a swatch, zero-basis flexible sliders, and fixed-width labels. Accepts RGB/RGBA values as 0-255 integers or normalized 0.0-1.0 floats. `set_value(value, notify=False)` updates the displayed color; pass `notify=True` to invoke `on_change`. |
+| `PropertyGrid(values=None, schema=None, label_width=140, width=None, min_width=0, max_width=None, grow=False, shrink=True)` | Schema-driven property editor. It fills available cross-axis width, remains content-sized on its parent's main axis, and keeps editor slots shrink-safe. Explicit bounds or `grow=True` control outer allocation without styling internal rows. |
+| `Property(label, editor=None, label_width=None, width=None, min_width=0, max_width=None, grow=False, shrink=True)` | Hand-authored property row with a fixed label and zero-basis flexible editor slot. It fills available cross-axis width while remaining content-sized on the parent main axis. |
 
 ## Media And Data
 

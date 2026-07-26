@@ -139,6 +139,12 @@ def test_builtin_help_manual_exposes_nested_sections() -> None:
     assert dg.help.find_symbol("NumberInput")["path"] == "reference.widgets.number_input"
     assert dg.help.dialogs is dg.help.reference.dialogs
     assert dg.help.reference.css_type_selectors is dg.help.reference.css_selectors
+    selectors = dg.help.reference.css_selectors()
+    assert "`SearchBox`" in selectors
+    assert "`ColorPicker`" in selectors
+    assert "public Python base-type chain" in selectors
+    assert "`button { ... }`" not in selectors
+    assert "CSS type selector: `ColorPicker`" in dg.help.reference.widgets.color_picker()
     assert "CSS Limits" in dg.help.reference.css_limits()
     assert "Thread-Safe Updates" in dg.help.live_updates.threads()
     assert dg.help.search("thread safe updates")[0]["path"] == "live_updates.threads"
@@ -573,6 +579,122 @@ def test_widget_style_and_class_serialize_as_v1_metadata() -> None:
     assert number.to_dict()["style"]["parts"]["stepper_up"]["background"] == "surface_alt"
 
 
+def test_composite_widgets_serialize_public_css_type_chain() -> None:
+    search = dg.SearchBox(parent=None)
+    toolbar = dg.Toolbar(parent=None)
+    shell = dg.AppShell(parent=None)
+    workbench = dg.WorkbenchLayout(parent=None)
+
+    assert search.to_dict()["css_types"] == ["SearchBox", "HLayout", "Container", "Widget"]
+    assert toolbar.to_dict()["css_types"] == ["Toolbar", "HLayout", "Container", "Widget"]
+    assert shell.to_dict()["css_types"] == [
+        "AppShell",
+        "FlexLayout",
+        "HLayout",
+        "Container",
+        "Widget",
+    ]
+    assert workbench.to_dict()["css_types"] == [
+        "WorkbenchLayout",
+        "VLayout",
+        "Container",
+        "Widget",
+    ]
+
+
+def test_search_box_keeps_dynamic_default_separate_from_static_framework_style() -> None:
+    baseline = dg.SearchBox(parent=None).to_dict()
+    authored = dg.SearchBox(style={"width": 220, "border_width": 3}, parent=None).to_dict()
+
+    assert baseline["default_style"] == {
+        "align_items": "center",
+        "flex_grow": 0,
+        "flex_shrink": 1,
+        "width": 340.0,
+        "min_width": 180.0,
+    }
+    assert baseline["default_style_sources"]["align-items"] == {
+        "widget_type": "SearchBox",
+        "python_class": "dragongui.widgets.SearchBox",
+        "construction": "widget-default",
+    }
+    assert "style" not in baseline
+    assert authored["default_style"] == baseline["default_style"]
+    assert authored["style"] == {"width": 220, "border_width": 3}
+
+
+def test_widget_default_sources_use_canonical_state_and_part_keys() -> None:
+    number = dg.NumberInput(1, parent=None)
+    number._merge_default_style(
+        {
+            "hover": {"background": "surface_alt"},
+            "parts": {
+                "stepper": {
+                    "width": 28,
+                    "hover": {"background": "accent"},
+                }
+            },
+        }
+    )
+
+    sources = number.to_dict()["default_style_sources"]
+
+    assert sources["hover.background"]["widget_type"] == "NumberInput"
+    assert sources["part(stepper).width"]["python_class"] == (
+        "dragongui.widgets.NumberInput"
+    )
+    assert sources["part(stepper).hover.background"]["construction"] == (
+        "widget-default"
+    )
+
+
+def test_widget_css_type_chain_supports_subclasses_aliases_and_suppression() -> None:
+    class PublicSearch(dg.SearchBox):
+        CSS_TYPE = "CommandSearch"
+        CSS_TYPE_ALIASES = ("GlobalSearch", "SearchBox")
+
+    class SuppressedSearch(dg.SearchBox):
+        CSS_TYPE = None
+
+    class _PrivateSearch(dg.SearchBox):
+        pass
+
+    assert dg.Button("Run", parent=None).css_types() == ("Button", "Widget")
+    assert PublicSearch(parent=None).css_types() == (
+        "CommandSearch",
+        "GlobalSearch",
+        "SearchBox",
+        "HLayout",
+        "Container",
+        "Widget",
+    )
+    assert SuppressedSearch(parent=None).css_types() == (
+        "SearchBox",
+        "HLayout",
+        "Container",
+        "Widget",
+    )
+    assert _PrivateSearch(parent=None).css_types() == (
+        "SearchBox",
+        "HLayout",
+        "Container",
+        "Widget",
+    )
+
+
+def test_widget_css_type_declarations_are_validated() -> None:
+    class InvalidType(dg.Button):
+        CSS_TYPE = "not a selector"
+
+    class InvalidAliases(dg.Button):
+        CSS_TYPE_ALIASES = ["Alias"]  # type: ignore[assignment]
+
+    with pytest.raises(ValueError, match="CSS_TYPE"):
+        InvalidType("Run", parent=None).to_dict()
+    with pytest.raises(TypeError, match="CSS_TYPE_ALIASES"):
+        InvalidAliases("Run", parent=None).to_dict()
+
+
 def test_toggle_switch_serializes_and_validates() -> None:
     calls: list[bool] = []
     toggle = dg.ToggleSwitch(
@@ -988,9 +1110,12 @@ def test_color_picker_serializes_and_updates_from_channel_callback() -> None:
     assert serialized["type"] == "panel"
     assert serialized["props"]["title"] == "Color"
     assert serialized["props"]["width"] is None
-    assert serialized["style"]["max_width"] == 320
-    assert serialized["style"]["flex_shrink"] == 1
-    assert serialized["style"]["gap"] == 6
+    assert serialized["default_style"] == {
+        "flex_grow": 0,
+        "flex_shrink": 1,
+        "width": 320.0,
+        "min_width": 180.0,
+    }
     assert serialized["children"][0]["type"] == "button"
     assert serialized["children"][0]["style"]["background"] == "#ff8000"
     assert serialized["children"][1]["style"]["height"] == 32
@@ -998,8 +1123,15 @@ def test_color_picker_serializes_and_updates_from_channel_callback() -> None:
     assert serialized["children"][1]["children"][0]["props"]["text"] == "R"
     assert serialized["children"][1]["children"][0]["style"]["width"] == 26
     assert serialized["children"][1]["children"][0]["style"]["height"] == 32
+    assert serialized["children"][1]["children"][0]["style"]["flex_shrink"] == 0
     assert serialized["children"][1]["children"][0]["style"]["color"] == "text"
     assert serialized["children"][1]["children"][0]["style"]["text_align"] == "center"
+    assert serialized["children"][1]["children"][1]["style"] == {
+        "width": 0,
+        "flex": 1,
+        "min_width": 0,
+    }
+    assert serialized["children"][1]["children"][2]["style"]["flex_shrink"] == 0
     assert picker.value == (255, 128, 0)
 
     _, change_cbs = _collect_runtime_callbacks(picker)
@@ -1030,7 +1162,10 @@ def test_color_picker_serializes_and_updates_from_channel_callback() -> None:
     assert dg.ColorPicker((1, 1, 1), alpha=False, parent=None).value == (1, 1, 1)
     assert dg.ColorPicker((1.0, 1.0, 1.0), alpha=False, parent=None).value == (255, 255, 255)
     assert dg.ColorPicker((0.0, 0.5, 1.0), alpha=True, parent=None).value == (0, 128, 255, 255)
-    assert "max_width" not in dg.ColorPicker((1, 2, 3), width=None, parent=None).to_dict()["style"]
+    no_width = dg.ColorPicker((1, 2, 3), width=None, parent=None).to_dict()
+    assert "width" not in no_width["default_style"]
+    assert "max_width" not in no_width["default_style"]
+    assert "style" not in no_width
 
     with pytest.raises(ValueError, match="3 RGB or 4 RGBA"):
         dg.ColorPicker((1, 2), parent=None)
@@ -1437,6 +1572,11 @@ def test_drag_vector_builds_component_drag_numbers() -> None:
 
     assert serialized["type"] == "flow_layout"
     assert serialized["props"]["cross_align"] == "center"
+    assert serialized["default_style"]["gap"] == 8
+    assert serialized["default_style"]["row_gap"] == 6
+    assert serialized["default_style"]["flex_grow"] == 0
+    assert serialized["default_style"]["flex_shrink"] == 1
+    assert serialized["default_style"]["min_width"] == 0
     assert [child["type"] for child in serialized["children"]] == [
         "h_layout",
         "h_layout",
@@ -1459,6 +1599,19 @@ def test_drag_vector_builds_component_drag_numbers() -> None:
 
     with pytest.raises(ValueError, match="component_width"):
         dg.DragVector((1, 2), component_width=0, parent=None)
+
+    growing = dg.DragVector(
+        (1, 2),
+        width=420,
+        min_width=120,
+        max_width=480,
+        grow=True,
+        parent=None,
+    ).to_dict()
+    assert growing["default_style"]["width"] == 420.0
+    assert growing["default_style"]["min_width"] == 120.0
+    assert growing["default_style"]["max_width"] == 480.0
+    assert growing["default_style"]["flex_grow"] == 1
 
 
 def test_splitter_and_pane_serialize_size_defaults() -> None:
@@ -1495,7 +1648,6 @@ def test_splitter_and_pane_serialize_size_defaults() -> None:
         "max_size": None,
         "flex": 1.0,
     }
-
     split.set_sizes((260, "2fr"))
     updated = split.to_dict()
 
@@ -1526,6 +1678,17 @@ def test_splitter_and_pane_serialize_size_defaults() -> None:
         dg.Splitter(sizes=("0fr",), parent=None)
     with pytest.raises(ValueError, match="flex"):
         dg.Pane(flex=0, parent=None)
+
+
+def test_theme_exposes_derived_spacing_scale() -> None:
+    theme = dg.Theme.dark(spacing=6.0)
+
+    assert theme.space_xs == 3.0
+    assert theme.space_sm == 6.0
+    assert theme.space_md == 12.0
+    assert theme.space_lg == 18.0
+    assert theme.space_xl == 24.0
+    assert theme.to_dict()["spacing"] == 6.0
 
 
 def test_widget_set_style_updates_python_state_and_live_native_style() -> None:
@@ -1858,13 +2021,16 @@ def test_app_handle_coalesces_python_task_drain_wakeups() -> None:
     assert sender.wake_count == 2
 
 
-def test_app_handle_request_redraw_and_exit_enqueue_native_commands() -> None:
+def test_app_handle_window_requests_reach_native_sender() -> None:
     class Sender:
         def __init__(self) -> None:
             self.calls: list[str] = []
 
         def enqueue_request_redraw(self) -> None:
             self.calls.append("redraw")
+
+        def request_window_resize(self, width: int, height: int) -> None:
+            self.calls.append(f"resize:{width}x{height}")
 
         def enqueue_request_exit(self) -> None:
             self.calls.append("exit")
@@ -1877,9 +2043,12 @@ def test_app_handle_request_redraw_and_exit_enqueue_native_commands() -> None:
     handle._bind_native_sender(sender)
 
     handle.request_redraw()
+    handle.request_window_resize(640, 480)
     handle.request_exit()
 
-    assert sender.calls == ["redraw", "exit"]
+    assert sender.calls == ["redraw", "resize:640x480", "exit"]
+    with pytest.raises(ValueError, match="positive"):
+        handle.request_window_resize(0, 480)
 
 
 def test_app_handle_bounds_python_task_drain() -> None:
@@ -4053,8 +4222,9 @@ def test_drag_drop_widgets_serialize_and_dispatch_payload() -> None:
     assert zone.to_dict()["props"]["accept"] == ["file", ".csv"]
     assert zone.to_dict()["props"]["text"] == "Drop CSV files"
     assert zone.to_dict()["children"][0]["type"] == "label"
-    assert "background" not in zone.to_dict()["style"]
-    assert "border_color" not in zone.to_dict()["style"]
+    assert "style" not in zone.to_dict()
+    assert "background" not in zone.to_dict()["default_style"]
+    assert "border_color" not in zone.to_dict()["default_style"]
 
     _, change_cbs = _collect_runtime_callbacks(win)
     change_cbs["target"](
@@ -4108,6 +4278,11 @@ def test_property_grid_builds_schema_rows_and_emits_changes() -> None:
 
     assert serialized["type"] == "v_layout"
     assert serialized["class"] == "property-grid"
+    assert serialized["default_style"] == {
+        "flex_grow": 0,
+        "flex_shrink": 1,
+        "min_width": 0.0,
+    }
     assert [child["type"] for child in serialized["children"]] == ["collapsible", "collapsible"]
     tuning_rows = serialized["children"][1]["children"]
     assert [row["type"] for row in tuning_rows] == ["h_layout", "h_layout", "h_layout", "h_layout"]
@@ -4134,6 +4309,23 @@ def test_property_grid_builds_schema_rows_and_emits_changes() -> None:
 
     with pytest.raises(ValueError, match="label_width"):
         dg.PropertyGrid(label_width=0, parent=None)
+
+    bounded = dg.PropertyGrid(
+        width=420,
+        min_width=180,
+        max_width=640,
+        grow=True,
+        style={"width": 360},
+        parent=None,
+    ).to_dict()
+    assert bounded["default_style"] == {
+        "flex_grow": 1,
+        "flex_shrink": 1,
+        "width": 420.0,
+        "min_width": 180.0,
+        "max_width": 640.0,
+    }
+    assert bounded["style"]["width"] == 360
 
 
 def test_property_grid_multiline_editor_fills_available_row_width() -> None:
@@ -4228,6 +4420,12 @@ def test_breadcrumbs_serialize_and_emit_selection() -> None:
 
     assert serialized["type"] == "h_layout"
     assert serialized["class"] == "breadcrumbs"
+    assert serialized["default_style"] == {
+        "align_items": "center",
+        "flex_grow": 0,
+        "flex_shrink": 1,
+        "min_width": 0.0,
+    }
     assert [child["type"] for child in serialized["children"]] == [
         "small_button",
         "label",
@@ -4297,8 +4495,13 @@ def test_toolbar_and_toolbar_separator_serialize() -> None:
     assert serialized["type"] == "h_layout"
     assert serialized["class"] == "toolbar toolbar-horizontal"
     assert serialized["props"] == {"orientation": "horizontal", "compact": True}
-    assert serialized["style"]["flex_direction"] == "row"
-    assert serialized["style"]["height"] == 38
+    assert "style" not in serialized
+    assert serialized["default_style"]["flex_direction"] == "row"
+    assert "flex_grow" not in serialized["default_style"]
+    assert "flex_shrink" not in serialized["default_style"]
+    assert "min_width" not in serialized["default_style"]
+    assert serialized["default_style"]["min_height"] == 38
+    assert serialized["default_style"]["flex_wrap"] == "wrap"
     assert [child["type"] for child in serialized["children"]] == [
         "icon_button",
         "separator",
@@ -4306,7 +4509,7 @@ def test_toolbar_and_toolbar_separator_serialize() -> None:
     ]
     assert serialized["children"][1]["class"] == "toolbar-separator"
     assert serialized["children"][1]["props"]["orientation"] == "vertical"
-    assert serialized["children"][1]["style"] == {"width": 1, "height": 24}
+    assert serialized["children"][1]["default_style"] == {"width": 1, "height": 24}
 
     click_cbs, _ = _collect_runtime_callbacks(toolbar)
     click_cbs[toolbar.children[0].id]()
@@ -4324,12 +4527,14 @@ def test_vertical_toolbar_separator_and_validation() -> None:
     serialized = toolbar.to_dict()
 
     assert serialized["class"] == "toolbar toolbar-vertical"
-    assert serialized["style"]["flex_direction"] == "column"
-    assert serialized["style"]["width"] == 44
-    assert serialized["style"]["height"] == "100%"
-    assert serialized["style"]["gap"] == 8.0
+    assert serialized["default_style"]["flex_direction"] == "column"
+    assert "flex_grow" not in serialized["default_style"]
+    assert "flex_shrink" not in serialized["default_style"]
+    assert serialized["default_style"]["width"] == 44
+    assert serialized["default_style"]["height"] == "100%"
+    assert serialized["default_style"]["gap"] == 8.0
     assert serialized["children"][1]["props"]["orientation"] == "horizontal"
-    assert serialized["children"][1]["style"] == {"width": 24, "height": 1}
+    assert serialized["children"][1]["default_style"] == {"width": 24, "height": 1}
 
     with pytest.raises(ValueError, match="orientation"):
         dg.Toolbar(orientation="diagonal", parent=None)
@@ -4350,10 +4555,13 @@ def test_search_box_serializes_and_emits_change_and_clear() -> None:
 
     assert serialized["type"] == "h_layout"
     assert serialized["class"] == "search-box"
-    assert serialized["style"]["align_items"] == "center"
-    assert serialized["style"]["height"] == 38
-    assert serialized["style"]["flex_grow"] == 0
-    assert serialized["style"]["flex_shrink"] == 0
+    assert serialized["default_style"] == {
+        "align_items": "center",
+        "flex_grow": 0,
+        "flex_shrink": 1,
+        "width": 340.0,
+        "min_width": 180.0,
+    }
     assert [child["type"] for child in serialized["children"]] == [
         "icon_button",
         "text_input",
@@ -4361,6 +4569,11 @@ def test_search_box_serializes_and_emits_change_and_clear() -> None:
     ]
     assert serialized["children"][1]["props"]["value"] == "gpu"
     assert serialized["children"][1]["props"]["placeholder"] == "Filter commands..."
+    assert serialized["children"][1]["style"] == {
+        "width": 0,
+        "flex": 1,
+        "min_width": 0,
+    }
     assert box.input is not None
 
     click_cbs, change_cbs = _collect_runtime_callbacks(box)
@@ -4375,6 +4588,42 @@ def test_search_box_serializes_and_emits_change_and_clear() -> None:
     assert box.value == ""
     assert box.input.value == ""
     assert calls == ["cpu", ""]
+
+
+def test_search_box_sizing_api_supports_standalone_toolbar_and_compact_contracts() -> None:
+    standalone = dg.SearchBox(parent=None)
+    growing = dg.SearchBox(
+        width=None,
+        min_width=120,
+        max_width=640,
+        grow=True,
+        parent=None,
+    )
+    compact = dg.SearchBox(clearable=False, width=220, min_width=96, parent=None)
+
+    assert standalone.width == 340.0
+    assert standalone.min_width == 180.0
+    assert standalone.max_width is None
+    assert standalone.grow is False
+    assert standalone.shrink is True
+
+    assert growing.to_dict()["default_style"] == {
+        "align_items": "center",
+        "flex_grow": 1,
+        "flex_shrink": 1,
+        "min_width": 120.0,
+        "max_width": 640.0,
+    }
+    assert len(compact.children) == 2
+    assert compact.clear_button is None
+    assert compact.children[1] is compact.input
+
+    with pytest.raises(ValueError, match="SearchBox width"):
+        dg.SearchBox(width=0, parent=None)
+    with pytest.raises(ValueError, match="SearchBox min_width"):
+        dg.SearchBox(min_width=-1, parent=None)
+    with pytest.raises(ValueError, match="SearchBox max_width"):
+        dg.SearchBox(min_width=200, max_width=160, parent=None)
 
 
 def test_command_palette_filters_and_runs_commands() -> None:
@@ -4397,8 +4646,12 @@ def test_command_palette_filters_and_runs_commands() -> None:
     assert serialized["class"] == "command-palette"
     assert serialized["props"]["open"] is True
     assert serialized["props"]["close_button"] is True
+    assert "default_style" not in serialized
     assert [child["type"] for child in serialized["children"]] == ["h_layout", "v_layout"]
     assert serialized["children"][0]["class"] == "search-box command-palette-search"
+    assert "width" not in serialized["children"][0]["default_style"]
+    assert serialized["children"][0]["default_style"]["min_width"] == 0.0
+    assert serialized["children"][0]["style"] == {"height": 38}
     assert serialized["children"][0]["children"][-1]["class"] == "search-box-clear"
     assert [command.id for command in palette.filtered_commands()] == ["open"]
     assert palette.selected == "open"
@@ -4459,7 +4712,9 @@ def test_radio_button_and_radio_group_serialize() -> None:
     assert group.value == "balanced"
     assert group.to_dict()["type"] == "v_layout"
     assert group.to_dict()["class"] == "radio-group radio-group-horizontal"
-    assert group.to_dict()["style"]["flex_direction"] == "row"
+    assert group.to_dict()["default_style"]["flex_direction"] == "row"
+    assert group.to_dict()["default_style"]["flex_wrap"] == "wrap"
+    assert group.to_dict()["default_style"]["gap"] == 8
     assert [child.to_dict()["type"] for child in group.children] == [
         "radio_button",
         "radio_button",
@@ -4506,6 +4761,56 @@ def test_tree_view_and_tree_node_serialize() -> None:
     }
     assert tree.children[0].children[1].to_dict()["props"]["checked"] is True
     assert tree.children[1].to_dict()["props"]["leaf"] is True
+
+
+def test_remaining_compound_controls_share_outer_sizing_contract() -> None:
+    prop = dg.Property("Name", width=420, min_width=180, grow=True, parent=None)
+    selectable = dg.SelectableList(
+        ["CPU", "GPU"],
+        width=360,
+        max_width=480,
+        parent=None,
+    )
+    crumbs = dg.Breadcrumbs(
+        ["Root", "Project"],
+        width=300,
+        shrink=False,
+        parent=None,
+    )
+    radios = dg.RadioGroup(
+        ["Fast", "Balanced"],
+        width=320,
+        grow=True,
+        parent=None,
+    )
+    tree = dg.TreeView([], width=280, max_width=420, grow=False, parent=None)
+
+    assert prop.to_dict()["default_style"] == {
+        "align_items": "center",
+        "flex_grow": 1,
+        "flex_shrink": 1,
+        "width": 420.0,
+        "min_width": 180.0,
+    }
+    assert prop.to_dict()["children"][1]["style"]["width"] == 0
+    assert selectable.to_dict()["default_style"] == {
+        "flex_grow": 0,
+        "flex_shrink": 1,
+        "width": 360.0,
+        "min_width": 0.0,
+        "max_width": 480.0,
+    }
+    assert crumbs.to_dict()["default_style"]["flex_shrink"] == 0
+    assert crumbs.to_dict()["default_style"]["width"] == 300.0
+    assert radios.to_dict()["default_style"]["flex_grow"] == 1
+    assert radios.to_dict()["default_style"]["min_width"] == 0.0
+    assert tree.to_dict()["default_style"] == {
+        "flex_grow": 0,
+        "flex_shrink": 1,
+        "width": 280.0,
+        "min_width": 0.0,
+        "max_width": 420.0,
+    }
 
 
 def test_change_callback_wrappers_update_python_handles() -> None:
@@ -4919,6 +5224,78 @@ def test_navigation_widgets_serialize_and_register_callbacks() -> None:
     change_cbs[tabs["id"]]("scatter")
 
     assert calls == [("page", "table"), ("tab", "scatter")]
+
+
+def test_responsive_sidebar_and_compact_nav_metadata_serialize() -> None:
+    win = dg.Window("Responsive navigation")
+    with dg.Sidebar(
+        title="Aurora",
+        width=232,
+        collapsed_width=56,
+        state="collapsed",
+        collapsible=True,
+        compact_mode="rail",
+        mobile_mode="drawer",
+        id="navigation",
+    ) as sidebar:
+        dg.NavItem(
+            "Automation",
+            page="automation",
+            icon="workflow",
+            compact_label="Flows",
+            badge=3,
+            id="automation-nav",
+        )
+
+    node = win.to_dict()["children"][0]
+    assert node["props"] == {
+        "title": "Aurora",
+        "width": 232,
+        "collapsed_width": 56,
+        "state": "collapsed",
+        "collapsible": True,
+        "compact_mode": "rail",
+        "mobile_mode": "drawer",
+    }
+    item = node["children"][0]
+    assert item["props"]["icon"] == "workflow"
+    assert item["props"]["compact_label"] == "Flows"
+    assert item["props"]["accessible_name"] == "Automation"
+    assert item["props"]["badge"] == "3"
+    assert item["props"]["tooltip"] == "Automation"
+
+    sidebar.set_state("expanded")
+    assert sidebar.state == "expanded"
+    sidebar.toggle_collapsed()
+    assert sidebar.state == "collapsed"
+    sidebar.open_drawer()
+    assert sidebar.state == "drawer"
+    sidebar.close_drawer()
+    assert sidebar.state == "collapsed"
+    menu_button = sidebar.menu_button(parent=None, id="open-navigation")
+    assert menu_button.to_dict()["props"]["icon"] == "menu"
+    assert menu_button.to_dict()["props"]["tooltip"] == "Open navigation"
+    menu_button.click()
+    assert sidebar.state == "drawer"
+
+
+def test_responsive_sidebar_state_validation() -> None:
+    with pytest.raises(ValueError, match="collapsed_width"):
+        dg.Sidebar(width=220, collapsed_width=0, parent=None)
+    with pytest.raises(ValueError, match="cannot exceed"):
+        dg.Sidebar(width=56, collapsed_width=72, parent=None)
+    with pytest.raises(ValueError, match="state"):
+        dg.Sidebar(state="floating", parent=None)
+    with pytest.raises(ValueError, match="compact_mode"):
+        dg.Sidebar(compact_mode="drawer", parent=None)
+    with pytest.raises(ValueError, match="mobile_mode"):
+        dg.Sidebar(mobile_mode="stack", parent=None)
+    with pytest.raises(ValueError, match="non-collapsible"):
+        dg.Sidebar(state="collapsed", collapsible=False, parent=None)
+    with pytest.raises(ValueError, match="icon"):
+        dg.NavItem("Item", page="item", icon=" ", parent=None)
+    with pytest.raises(ValueError, match="compact_label"):
+        dg.NavItem("Item", page="item", compact_label="", parent=None)
 
 
 def test_navigation_set_value_updates_route_and_optional_callback() -> None:
@@ -6435,7 +6812,7 @@ def test_scatter_pack_mesh_payload_roundtrip() -> None:
 def test_scatter_add_convex_hull_returns_handle_without_scipy() -> None:
     s = dg.Scatter3D(DemoFrame(), x="x", y="y", z="z", parent=None)
     try:
-        import scipy  # noqa: F401
+        from scipy.spatial import ConvexHull  # noqa: F401
     except ImportError:
         import pytest
         with pytest.raises(ImportError, match="scipy"):
@@ -6451,7 +6828,7 @@ def test_scatter_add_convex_hull_returns_handle_without_scipy() -> None:
 
 def test_scatter_add_convex_hull_enqueues() -> None:
     try:
-        import scipy  # noqa: F401
+        from scipy.spatial import ConvexHull  # noqa: F401
     except ImportError:
         return  # skip if scipy not available
 
@@ -9156,6 +9533,31 @@ def test_grid_layout_explicit_columns() -> None:
     assert node["props"].get("columns") == 4
 
 
+def test_grid_layout_responsive_columns_are_normalized_by_logical_max_width() -> None:
+    win = dg.Window("Grid")
+    dg.GridLayout(columns={"default": 4, 1100: 2, 700: 1}, id="g")
+    props = win.to_dict()["children"][0]["props"]
+    assert props["columns"] == 4
+    assert props["column_breakpoints"] == [
+        {"max_width": 700, "columns": 1},
+        {"max_width": 1100, "columns": 2},
+    ]
+
+
+def test_grid_layout_auto_fit_and_last_row_balance_serialization() -> None:
+    win = dg.Window("Grid")
+    dg.GridLayout(
+        columns="auto-fit",
+        min_column_width=210,
+        balance_last_row=True,
+        id="g",
+    )
+    props = win.to_dict()["children"][0]["props"]
+    assert "columns" not in props
+    assert props["auto_fit"] is True
+    assert props["balance_last_row"] is True
+
+
 def test_grid_layout_min_column_width() -> None:
     """GridLayout passes min_column_width prop through correctly."""
     win = dg.Window("Grid")
@@ -9181,12 +9583,13 @@ def test_grid_layout_auto_columns_omits_columns_prop() -> None:
 
 
 def test_grid_layout_gap_in_style() -> None:
-    """GridLayout gap/row_gap kwargs are placed into the inline style dict."""
+    """GridLayout gap/row_gap kwargs remain CSS-overridable defaults."""
     win = dg.Window("Grid")
     dg.GridLayout(gap=8, row_gap=4, id="g")
     node = win.to_dict()["children"][0]
-    assert node["style"].get("gap") == 8
-    assert node["style"].get("row_gap") == 4
+    assert node["default_style"].get("gap") == 8
+    assert node["default_style"].get("row_gap") == 4
+    assert "style" not in node
 
 
 def test_grid_layout_template_tracks() -> None:
@@ -9230,6 +9633,14 @@ def test_grid_layout_rejects_invalid_columns() -> None:
         dg.GridLayout(columns=0)
     with pytest.raises(ValueError):
         dg.GridLayout(columns="fixed")
+    with pytest.raises(ValueError, match="'default'"):
+        dg.GridLayout(columns={700: 1})
+    with pytest.raises(ValueError, match="'default'"):
+        dg.GridLayout(columns={"default": 0, 700: 1})
+    with pytest.raises(ValueError, match="breakpoint"):
+        dg.GridLayout(columns={"default": 3, -1: 1})
+    with pytest.raises(ValueError, match="column counts"):
+        dg.GridLayout(columns={"default": 3, 700: 0})
     with pytest.raises(ValueError):
         dg.GridLayout(template_columns=("bogus",))
     with pytest.raises(ValueError):
@@ -9245,12 +9656,61 @@ def test_flow_layout_serialization() -> None:
 
 
 def test_flow_layout_gap_in_style() -> None:
-    """FlowLayout gap/row_gap kwargs are placed into the inline style dict."""
+    """FlowLayout gap/row_gap kwargs remain CSS-overridable defaults."""
     win = dg.Window("Flow")
     dg.FlowLayout(gap=12, row_gap=6, id="f")
     node = win.to_dict()["children"][0]
-    assert node["style"].get("gap") == 12
-    assert node["style"].get("row_gap") == 6
+    assert node["default_style"].get("gap") == 12
+    assert node["default_style"].get("row_gap") == 6
+    assert "style" not in node
+
+
+def test_composite_constructor_defaults_remain_separate_from_author_style() -> None:
+    grid = dg.GridLayout(gap=8, style={"gap": 20}, parent=None).to_dict()
+    drop_zone = dg.DropZone(
+        "Drop files",
+        style={"height": 200},
+        parent=None,
+    ).to_dict()
+    selectable = dg.SelectableList(
+        ["A", "B"],
+        max_height=180,
+        style={"max_height": 240},
+        parent=None,
+    ).to_dict()
+    picker = dg.ColorPicker(
+        style={"max_width": 480},
+        parent=None,
+    ).to_dict()
+    property_row = dg.Property(
+        "Gain",
+        style={"gap": 24},
+        parent=None,
+    ).to_dict()
+
+    assert grid["default_style"]["gap"] == 8
+    assert grid["style"]["gap"] == 20
+    assert drop_zone["default_style"] == {
+        "align_items": "center",
+        "justify_content": "center",
+    }
+    assert drop_zone["style"]["height"] == 200
+    assert selectable["default_style"]["max_height"] == 180
+    assert selectable["style"]["max_height"] == 240
+    assert picker["default_style"] == {
+        "flex_grow": 0,
+        "flex_shrink": 1,
+        "width": 320.0,
+        "min_width": 180.0,
+    }
+    assert picker["style"]["max_width"] == 480
+    assert property_row["default_style"] == {
+        "align_items": "center",
+        "flex_grow": 0,
+        "flex_shrink": 1,
+        "min_width": 0.0,
+    }
+    assert property_row["style"]["gap"] == 24
 
 
 def test_flow_layout_alignment_props() -> None:
@@ -9277,20 +9737,18 @@ def test_scroll_area_default_serialization() -> None:
     node = win.to_dict()["children"][0]
     assert node["type"] == "scroll_area"
     assert node["props"] == {}
-    assert node["style"]["overflow_y"] == "auto"
-    assert node["style"]["overflow_x"] == "hidden"
-    assert node["style"]["flex_grow"] == 1
-    assert node["style"]["flex_shrink"] == 1
-    assert node["style"]["gap"] == 8
-    assert node["style"]["min_height"] == 0
+    assert "style" not in node
+    assert node["default_style"]["overflow_y"] == "auto"
+    assert node["default_style"]["overflow_x"] == "hidden"
+    assert node["default_style"]["gap"] == 8
 
 
 def test_scroll_area_axis_modes() -> None:
     win = dg.Window("Scroll")
     dg.ScrollArea(axis="both", id="both")
     node = win.to_dict()["children"][0]
-    assert node["style"]["overflow_x"] == "auto"
-    assert node["style"]["overflow_y"] == "auto"
+    assert node["default_style"]["overflow_x"] == "auto"
+    assert node["default_style"]["overflow_y"] == "auto"
 
     with pytest.raises(ValueError):
         dg.ScrollArea(axis="diagonal")
@@ -9309,21 +9767,73 @@ def test_app_shell_and_body_provide_safe_app_layout_defaults() -> None:
 
     assert shell["type"] == "h_layout"
     assert shell["class"] == "app-shell"
-    assert shell["style"]["width"] == "100%"
-    assert shell["style"]["height"] == "100%"
-    assert shell["style"]["min_width"] == 0
-    assert shell["style"]["min_height"] == 0
-    assert shell["style"]["overflow_x"] == "hidden"
-    assert shell["style"]["overflow_y"] == "hidden"
+    assert "style" not in shell
+    assert shell["default_style"] == {
+        "display": "flex",
+        "flex_direction": "row",
+        "flex_wrap": "nowrap",
+        "align_items": "stretch",
+        "gap": 0.0,
+    }
     assert body["type"] == "scroll_area"
     assert body["class"] == "body"
-    assert body["style"]["width"] == 0
-    assert body["style"]["flex"] == 1
-    assert body["style"]["min_width"] == 0
-    assert body["style"]["min_height"] == 0
-    assert body["style"]["overflow_y"] == "auto"
-    assert body["style"]["overflow_x"] == "hidden"
-    assert body["style"]["gap"] == 8
+    assert body["default_style"]["overflow_y"] == "auto"
+    assert body["default_style"]["overflow_x"] == "hidden"
+    assert body["default_style"]["gap"] == 8
+    assert body["default_style"]["min_width"] == 160.0
+    assert body["default_style"]["min_height"] == 96.0
+
+
+def test_flex_layout_serializes_lower_origin_responsive_defaults() -> None:
+    layout = dg.FlexLayout(
+        direction="column_reverse",
+        wrap=True,
+        gap=12,
+        align_items="center",
+        style={"flex_direction": "row"},
+        parent=None,
+    ).to_dict()
+
+    assert layout["type"] == "h_layout"
+    assert layout["css_types"] == [
+        "FlexLayout",
+        "HLayout",
+        "Container",
+        "Widget",
+    ]
+    assert layout["default_style"] == {
+        "display": "flex",
+        "flex_direction": "column-reverse",
+        "flex_wrap": "wrap",
+        "align_items": "center",
+        "gap": 12.0,
+    }
+    assert layout["style"]["flex_direction"] == "row"
+
+    with pytest.raises(ValueError, match="FlexLayout direction"):
+        dg.FlexLayout(direction="diagonal", parent=None)
+    with pytest.raises(ValueError, match="FlexLayout align_items"):
+        dg.FlexLayout(align_items="around", parent=None)
+    with pytest.raises(ValueError, match="FlexLayout gap"):
+        dg.FlexLayout(gap=-1, parent=None)
+
+
+def test_app_shell_main_content_safeguard_is_configurable() -> None:
+    with dg.AppShell(
+        direction="column",
+        min_content_width=220,
+        min_content_height=140,
+        parent=None,
+    ) as shell:
+        body = dg.Body()
+
+    serialized = shell.to_dict()
+    assert serialized["default_style"]["flex_direction"] == "column"
+    assert body.to_dict()["default_style"]["min_width"] == 220.0
+    assert body.to_dict()["default_style"]["min_height"] == 140.0
+
+    with pytest.raises(ValueError, match="AppShell min_content_width"):
+        dg.AppShell(min_content_width=-1, parent=None)
 
 
 
@@ -9345,18 +9855,12 @@ def test_workbench_layout_and_main_provide_prompt_first_defaults() -> None:
 
     assert root["type"] == "v_layout"
     assert root["class"] == "workbench-layout"
-    assert root["style"]["width"] == "100%"
-    assert root["style"]["height"] == "100%"
-    assert root["style"]["overflow_y"] == "hidden"
-    assert root["style"]["gap"] == 8.0
-    assert root["style"]["padding"] == 10.0
+    assert root["default_style"] == {"gap": 8.0, "padding": 10.0}
     assert toolbar["class"] == "toolbar toolbar-horizontal"
     assert main["type"] == "scroll_area"
     assert main["class"] == "workbench-main"
-    assert main["style"]["height"] == 0
-    assert main["style"]["flex"] == 1
-    assert main["style"]["overflow_y"] == "auto"
-    assert main["style"]["gap"] == 6
+    assert main["default_style"]["overflow_y"] == "auto"
+    assert main["default_style"]["gap"] == 6
     assert conversation["class"] == "log-view-conversation"
     assert conversation["props"]["rows"] == 18
     assert conversation["props"]["wrap"] is True
@@ -9377,14 +9881,16 @@ def test_log_view_variants_apply_opt_in_layout_presets() -> None:
     assert conversation_node["class"] == "log-view-conversation"
     assert conversation_node["props"]["rows"] == 18
     assert conversation_node["props"]["wrap"] is True
-    assert conversation_node["style"]["flex_grow"] == 1
-    assert conversation_node["style"]["padding_bottom"] == 12
+    assert conversation_node["default_style"]["flex_grow"] == 1
+    assert conversation_node["default_style"]["padding_bottom"] == 12
     assert activity_node["class"] == "log-view-activity extra"
     assert activity_node["props"]["rows"] == 4
     assert activity_node["props"]["wrap"] is False
     assert activity_node["style"]["font_size"] == 13
+    assert activity_node["default_style"]["font_size"] == 12
+    assert activity_node["default_style"]["padding_bottom"] == 8
     assert debug_node["class"] == "log-view-debug"
-    assert debug_node["style"]["font_family"] == "Consolas"
+    assert debug_node["default_style"]["font_family"] == "Consolas"
 
     with pytest.raises(ValueError, match="LogView variant"):
         dg.LogView([], variant="timeline", parent=None)

@@ -111,6 +111,7 @@ Layout properties:
 
 - `display`
 - `flex-direction`
+- `flex-wrap`
 - `flex`
 - `flex-grow`
 - `flex-shrink`
@@ -305,9 +306,9 @@ Constructor fields:
 | `success` | `#43d48f` |
 | `focus` | `#6bdcff` |
 | `disabled` | `#66667a` |
-| `radius` | `6.0` |
-| `spacing` | `8.0` |
-| `font_size` | `14.0` |
+| `radius` | `3.0` |
+| `spacing` | `5.0` |
+| `font_size` | `13.0` |
 
 Helpers:
 
@@ -317,6 +318,9 @@ Helpers:
 | `Theme.light(**overrides)` | Creates a light theme with optional overrides. |
 | `to_dict()` | Serializes the theme for the native runtime. |
 
+Derived spacing properties are `space_xs`, `space_sm`, `space_md`, `space_lg`,
+and `space_xl`, corresponding to `spacing × 0.5`, `1`, `2`, `3`, and `4`.
+
 CSS:
 
 - Theme fields are available as CSS tokens.
@@ -325,7 +329,8 @@ CSS:
   `hsl()/hsla()`, and `hwb()`, plus `lab()`, `lch()`, `oklab()`, `oklch()`,
   `color(srgb ...)`, and `color(srgb-linear ...)`. Theme fields do not resolve
   other theme tokens or `var(...)`.
-- `radius` and `font_size` also feed built-in framework stylesheet variables.
+- `radius`, `font_size`, and the derived spacing scale feed built-in framework
+  stylesheet variables, including `--dg-space-xs` through `--dg-space-xl`.
 
 ### Toast Notifications
 
@@ -438,6 +443,24 @@ CSS:
 - No widget parts.
 - Usually used for root layout, background, padding, gap, and text inheritance.
 
+### `FlexLayout`
+
+Constructor:
+
+```python
+dg.FlexLayout(direction="row", wrap=False, gap=8, align_items="stretch", id=None, key=None, class_=None, style=None, tooltip=None, parent=...)
+```
+
+The constructor values are widget defaults. Application CSS—including active
+media rules—can override `flex-direction`, `flex-wrap`, `gap`, and
+`align-items`. Directions are `row`, `column`, `row-reverse`, and
+`column-reverse`.
+
+CSS:
+
+- Type chain: `FlexLayout`, `HLayout`, `Container`, `Widget`.
+- Parts: `scrollbar-track`, `scrollbar-thumb`.
+
 ### `HLayout`
 
 Constructor:
@@ -451,6 +474,8 @@ CSS:
 - Type selector: `HLayout`.
 - Parts: `scrollbar-track`, `scrollbar-thumb`.
 - Typically styled with `gap`, `padding`, `height`, `flex`, and background.
+- Does not wrap. Use `FlowLayout` for variable-width controls that must move to
+  another row at narrow viewport sizes.
 
 ### `VLayout`
 
@@ -465,6 +490,32 @@ CSS:
 - Type selector: `VLayout`.
 - Parts: `scrollbar-track`, `scrollbar-thumb`.
 - Typically styled with `gap`, `padding`, `width`, `flex`, and background.
+
+### `GridLayout`
+
+Constructor:
+
+```python
+dg.GridLayout(columns=2, min_column_width=320, template_columns=None,
+              template_rows=None, masonry=False, balance_last_row=False,
+              gap=None, row_gap=None, id=None, key=None, class_=None,
+              style=None, tooltip=None, parent=...)
+```
+
+`columns` accepts a positive integer, `"auto"`, `"auto-fit"`, or a responsive
+map such as `{"default": 4, 1100: 2, 700: 1}`. Numeric map keys are inclusive
+logical-viewport `max-width` thresholds; `"default"` is required. An integer or
+resolved responsive count is still capped by what `min_column_width` can fit in
+the grid content box. `balance_last_row=True` centers an incomplete final row
+for ordinary auto-placed grids. Masonry and explicit track placement retain
+their own packing rules.
+
+CSS:
+
+- Type selector: `GridLayout`.
+- Explicit CSS `grid-template-columns` takes precedence over constructor
+  responsive/adaptive tracks.
+- Parts: `scrollbar-track`, `scrollbar-thumb`.
 
 ### `ScrollArea`
 
@@ -904,7 +955,9 @@ CSS:
 Constructor:
 
 ```python
-dg.Sidebar(title=None, width=220, id=None, key=None, class_=None, style=None, tooltip=None, parent=...)
+dg.Sidebar(title=None, width=220, collapsed_width=56, state="auto",
+           collapsible=True, compact_mode="rail", mobile_mode="drawer",
+           id=None, key=None, class_=None, style=None, tooltip=None, parent=...)
 ```
 
 Options:
@@ -912,11 +965,30 @@ Options:
 | Option | Notes |
 | --- | --- |
 | `title` | Optional sidebar title. |
-| `width` | Sidebar width. |
+| `width` | Preferred sidebar width. It may contract in a below-minimum flex row; use authored CSS with `flex-shrink: 0` for an intentional hard width. |
+| `collapsed_width` | Preferred in-flow rail width. Must be positive and no larger than `width`. |
+| `state` | `auto`, `expanded`, `collapsed`, `hidden`, or `drawer`. `drawer` is a fixed overlay and does not consume AppShell flow space. |
+| `collapsible` | Whether Python may switch the sidebar into `collapsed` or `hidden`. |
+| `compact_mode` | Automatic presentation through 700 logical pixels: `rail` or `hidden`. |
+| `mobile_mode` | Automatic presentation through 480 logical pixels: `drawer`, `rail`, or `hidden`. Drawer policy remains closed until opened explicitly. |
+
+Live methods:
+
+- `set_state(state)`
+- `toggle_collapsed()`
+- `open_drawer()`
+- `close_drawer()`
+- `menu_button(...)` creates an `IconButton("menu")` wired to `open_drawer()`.
+
+Opening a drawer remembers the previous Sidebar state and focused opener, then
+moves focus to its first enabled `NavItem`. Closing with `close_drawer()`,
+Escape, or successful navigation restores the previous state and opener focus.
 
 CSS:
 
 - Type selector: `Sidebar`.
+- Attributes: `state`, `collapsed-width`, `collapsible`, `compact-mode`, and
+  `mobile-mode`.
 - Parts: `scrollbar-track`, `scrollbar-thumb`.
 
 ### `NavItem`
@@ -924,7 +996,9 @@ CSS:
 Constructor:
 
 ```python
-dg.NavItem(label, page=..., badge=None, disabled=False, id=None, key=None, class_=None, style=None, tooltip=None, parent=...)
+dg.NavItem(label, page=..., icon=None, compact_label=None, badge=None,
+           disabled=False, id=None, key=None, class_=None, style=None,
+           tooltip=None, parent=...)
 ```
 
 Options:
@@ -933,8 +1007,15 @@ Options:
 | --- | --- |
 | `label` | Visible navigation label. |
 | `page` | Target `Pages` value. |
+| `icon` | Optional normalized icon name used by compact navigation presentation. |
+| `compact_label` | Optional shorter label for constrained navigation modes. |
 | `badge` | Optional inline badge text/count. |
 | `disabled` | Disables navigation. |
+
+At resolved widths of 72 logical pixels or less, an icon-bearing item becomes
+icon-only, uses its full label as the tooltip/accessibility name, and reduces a
+badge to a corner indicator dot. At intermediate widths it prefers
+`compact_label`; expanded rows retain the full label and badge pill.
 
 Live methods:
 
@@ -943,6 +1024,7 @@ Live methods:
 CSS:
 
 - Type selector: `NavItem`.
+- Attributes: `icon`, `compact-label`, and `accessible-name`.
 - Parts: `item`, `accent`, `badge`.
 - `:selected` is supported when the target page is active.
 
@@ -1317,7 +1399,7 @@ CSS:
 Constructor:
 
 ```python
-dg.ColorPicker(value=(255, 100, 0), alpha=True, on_change=None, title="Color", width=320, id=None, key=None, class_=None, style=None, tooltip=None, parent=...)
+dg.ColorPicker(value=(255, 100, 0), alpha=True, on_change=None, title="Color", width=320, min_width=180, max_width=None, grow=False, shrink=True, id=None, key=None, class_=None, style=None, tooltip=None, parent=...)
 ```
 
 Options and callbacks:
@@ -1328,7 +1410,9 @@ Options and callbacks:
 | `alpha` | Includes alpha channel slider when true. |
 | `on_change` | Called with normalized tuple after user edits. |
 | `title` | Panel title. |
-| `width` | Preferred maximum width. |
+| `width` | Preferred outer width; pass `None` for intrinsic sizing. |
+| `min_width` / `max_width` | Optional shrink and growth bounds. |
+| `grow` / `shrink` | Controls participation in parent flex allocation. |
 
 Live methods:
 
@@ -1336,10 +1420,9 @@ Live methods:
 
 CSS:
 
-- `ColorPicker` is built from standard DragonGUI widgets. Style it through
-  `Panel`, `Label`, `Slider`, and `Button` selectors, or through `class_` and
-  `id` on the `ColorPicker` itself, which are passed to the outer `Panel`.
-- There is no separate `ColorPicker` CSS type selector.
+- `ColorPicker` is built from standard DragonGUI widgets. Style its outer
+  composite through the `ColorPicker` type selector and its internals through
+  `Label`, `Slider`, and `Button` selectors or descendant classes.
 
 ## Media And Data Widgets
 

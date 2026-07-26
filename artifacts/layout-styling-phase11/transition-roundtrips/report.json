@@ -1,0 +1,396 @@
+[
+  {
+    "captures": [
+      {
+        "actions": [],
+        "diagnostic_counts": {},
+        "name": "1024x768@1.5x-overview",
+        "route": "overview",
+        "scale": 1.5,
+        "screenshot": "screenshots/aurora-command-center-1024x768@1.5x-overview.png",
+        "size": "1024x768",
+        "snapshot": "snapshots/aurora-command-center-1024x768@1.5x-overview.json",
+        "state": "overview"
+      },
+      {
+        "actions": [],
+        "diagnostic_counts": {},
+        "name": "1024x768@1.5x-analytics",
+        "route": "analytics",
+        "scale": 1.5,
+        "screenshot": "screenshots/aurora-command-center-1024x768@1.5x-analytics.png",
+        "size": "1024x768",
+        "snapshot": "snapshots/aurora-command-center-1024x768@1.5x-analytics.json",
+        "state": "analytics"
+      },
+      {
+        "actions": [],
+        "diagnostic_counts": {},
+        "name": "1024x768@1.5x-automation",
+        "route": "automation",
+        "scale": 1.5,
+        "screenshot": "screenshots/aurora-command-center-1024x768@1.5x-automation.png",
+        "size": "1024x768",
+        "snapshot": "snapshots/aurora-command-center-1024x768@1.5x-automation.json",
+        "state": "automation"
+      },
+      {
+        "actions": [],
+        "diagnostic_counts": {},
+        "name": "1024x768@1.5x-settings",
+        "route": "settings",
+        "scale": 1.5,
+        "screenshot": "screenshots/aurora-command-center-1024x768@1.5x-settings.png",
+        "size": "1024x768",
+        "snapshot": "snapshots/aurora-command-center-1024x768@1.5x-settings.json",
+        "state": "settings"
+      },
+      {
+        "actions": [
+          "click:#new-review",
+          "wait:200"
+        ],
+        "diagnostic_counts": {},
+        "name": "1024x768@1.5x-modal-open",
+        "route": "overview",
+        "scale": 1.5,
+        "screenshot": "screenshots/aurora-command-center-1024x768@1.5x-modal-open.png",
+        "size": "1024x768",
+        "snapshot": "snapshots/aurora-command-center-1024x768@1.5x-modal-open.json",
+        "state": "modal-open"
+      },
+      {
+        "actions": [
+          "click:#sidebar-toggle",
+          "wait:200"
+        ],
+        "diagnostic_counts": {},
+        "name": "1024x768@1.5x-sidebar-collapsed",
+        "route": "overview",
+        "scale": 1.5,
+        "screenshot": "screenshots/aurora-command-center-1024x768@1.5x-sidebar-collapsed.png",
+        "size": "1024x768",
+        "snapshot": "snapshots/aurora-command-center-1024x768@1.5x-sidebar-collapsed.json",
+        "state": "sidebar-collapsed"
+      },
+      {
+        "actions": [
+          "click:#new-review",
+          "wait:100",
+          "click:#review-cancel",
+          "wait:100"
+        ],
+        "diagnostic_counts": {},
+        "name": "1024x768@1.5x-modal-roundtrip",
+        "route": "overview",
+        "scale": 1.5,
+        "screenshot": "screenshots/aurora-command-center-1024x768@1.5x-modal-roundtrip.png",
+        "size": "1024x768",
+        "snapshot": "snapshots/aurora-command-center-1024x768@1.5x-modal-roundtrip.json",
+        "state": "modal-roundtrip"
+      },
+      {
+        "actions": [
+          "click:#sidebar-toggle",
+          "wait:100",
+          "click:#sidebar-toggle",
+          "wait:100"
+        ],
+        "diagnostic_counts": {},
+        "name": "1024x768@1.5x-sidebar-roundtrip",
+        "route": "overview",
+        "scale": 1.5,
+        "screenshot": "screenshots/aurora-command-center-1024x768@1.5x-sidebar-roundtrip.png",
+        "size": "1024x768",
+        "snapshot": "snapshots/aurora-command-center-1024x768@1.5x-sidebar-roundtrip.json",
+        "state": "sidebar-roundtrip"
+      },
+      {
+        "actions": [
+          "click:#workspace-menu",
+          "wait:200"
+        ],
+        "diagnostic_counts": {},
+        "name": "1024x768@1.5x-workspace-menu",
+        "route": "overview",
+        "scale": 1.5,
+        "screenshot": "screenshots/aurora-command-center-1024x768@1.5x-workspace-menu.png",
+        "size": "1024x768",
+        "snapshot": "snapshots/aurora-command-center-1024x768@1.5x-workspace-menu.json",
+        "state": "workspace-menu"
+      },
+      {
+        "actions": [
+          "hover:#sidebar-toggle"
+        ],
+        "diagnostic_counts": {},
+        "name": "1024x768@1.5x-sidebar-tooltip",
+        "route": "overview",
+        "scale": 1.5,
+        "screenshot": "screenshots/aurora-command-center-1024x768@1.5x-sidebar-tooltip.png",
+        "size": "1024x768",
+        "snapshot": "snapshots/aurora-command-center-1024x768@1.5x-sidebar-tooltip.json",
+        "state": "sidebar-tooltip"
+      },
+      {
+        "actions": [
+          "scroll:#analytics-scroll=0,240",
+          "wait:200"
+        ],
+        "diagnostic_counts": {},
+        "name": "1024x768@1.5x-analytics-scrolled",
+        "route": "analytics",
+        "scale": 1.5,
+        "screenshot": "screenshots/aurora-command-center-1024x768@1.5x-analytics-scrolled.png",
+        "size": "1024x768",
+        "snapshot": "snapshots/aurora-command-center-1024x768@1.5x-analytics-scrolled.json",
+        "state": "analytics-scrolled"
+      },
+      {
+        "actions": [
+          "scroll:#analytics-scroll=0,240",
+          "wait:100",
+          "scroll:#analytics-scroll=0,-240",
+          "wait:100"
+        ],
+        "diagnostic_counts": {},
+        "name": "1024x768@1.5x-analytics-scroll-roundtrip",
+        "route": "analytics",
+        "scale": 1.5,
+        "screenshot": "screenshots/aurora-command-center-1024x768@1.5x-analytics-scroll-roundtrip.png",
+        "size": "1024x768",
+        "snapshot": "snapshots/aurora-command-center-1024x768@1.5x-analytics-scroll-roundtrip.json",
+        "state": "analytics-scroll-roundtrip"
+      }
+    ],
+    "category": "layout",
+    "diagnostic_comparisons": [
+      {
+        "diagnostic_delta": {},
+        "from_state": "overview",
+        "scale": 1.5,
+        "size": "1024x768",
+        "to_state": "analytics"
+      },
+      {
+        "diagnostic_delta": {},
+        "from_state": "overview",
+        "scale": 1.5,
+        "size": "1024x768",
+        "to_state": "automation"
+      },
+      {
+        "diagnostic_delta": {},
+        "from_state": "overview",
+        "scale": 1.5,
+        "size": "1024x768",
+        "to_state": "settings"
+      },
+      {
+        "diagnostic_delta": {},
+        "from_state": "overview",
+        "scale": 1.5,
+        "size": "1024x768",
+        "to_state": "modal-open"
+      },
+      {
+        "diagnostic_delta": {},
+        "from_state": "overview",
+        "scale": 1.5,
+        "size": "1024x768",
+        "to_state": "sidebar-collapsed"
+      },
+      {
+        "diagnostic_delta": {},
+        "from_state": "overview",
+        "scale": 1.5,
+        "size": "1024x768",
+        "to_state": "modal-roundtrip"
+      },
+      {
+        "diagnostic_delta": {},
+        "from_state": "overview",
+        "scale": 1.5,
+        "size": "1024x768",
+        "to_state": "sidebar-roundtrip"
+      },
+      {
+        "diagnostic_delta": {},
+        "from_state": "overview",
+        "scale": 1.5,
+        "size": "1024x768",
+        "to_state": "workspace-menu"
+      },
+      {
+        "diagnostic_delta": {},
+        "from_state": "overview",
+        "scale": 1.5,
+        "size": "1024x768",
+        "to_state": "sidebar-tooltip"
+      },
+      {
+        "diagnostic_delta": {},
+        "from_state": "overview",
+        "scale": 1.5,
+        "size": "1024x768",
+        "to_state": "analytics-scrolled"
+      },
+      {
+        "diagnostic_delta": {},
+        "from_state": "overview",
+        "scale": 1.5,
+        "size": "1024x768",
+        "to_state": "analytics-scroll-roundtrip"
+      }
+    ],
+    "features": [
+      "Sophisticated application demo",
+      "AppShell",
+      "Sidebar",
+      "WorkbenchLayout",
+      "MenuBar",
+      "Toolbar",
+      "Pages",
+      "Body",
+      "ScrollArea",
+      "GridLayout",
+      "FlowLayout",
+      "DataFrameTable",
+      "charts",
+      "forms",
+      "Modal",
+      "StatusBar"
+    ],
+    "id": "aurora-command-center",
+    "layout_issue_counts": {},
+    "layout_issues": [],
+    "logs": [
+      "logs/aurora-command-center-1024x768@1.5x-overview.stdout.txt",
+      "logs/aurora-command-center-1024x768@1.5x-overview.stderr.txt",
+      "logs/aurora-command-center-1024x768@1.5x-analytics.stdout.txt",
+      "logs/aurora-command-center-1024x768@1.5x-analytics.stderr.txt",
+      "logs/aurora-command-center-1024x768@1.5x-automation.stdout.txt",
+      "logs/aurora-command-center-1024x768@1.5x-automation.stderr.txt",
+      "logs/aurora-command-center-1024x768@1.5x-settings.stdout.txt",
+      "logs/aurora-command-center-1024x768@1.5x-settings.stderr.txt",
+      "logs/aurora-command-center-1024x768@1.5x-modal-open.stdout.txt",
+      "logs/aurora-command-center-1024x768@1.5x-modal-open.stderr.txt",
+      "logs/aurora-command-center-1024x768@1.5x-sidebar-collapsed.stdout.txt",
+      "logs/aurora-command-center-1024x768@1.5x-sidebar-collapsed.stderr.txt",
+      "logs/aurora-command-center-1024x768@1.5x-modal-roundtrip.stdout.txt",
+      "logs/aurora-command-center-1024x768@1.5x-modal-roundtrip.stderr.txt",
+      "logs/aurora-command-center-1024x768@1.5x-sidebar-roundtrip.stdout.txt",
+      "logs/aurora-command-center-1024x768@1.5x-sidebar-roundtrip.stderr.txt",
+      "logs/aurora-command-center-1024x768@1.5x-workspace-menu.stdout.txt",
+      "logs/aurora-command-center-1024x768@1.5x-workspace-menu.stderr.txt",
+      "logs/aurora-command-center-1024x768@1.5x-sidebar-tooltip.stdout.txt",
+      "logs/aurora-command-center-1024x768@1.5x-sidebar-tooltip.stderr.txt",
+      "logs/aurora-command-center-1024x768@1.5x-analytics-scrolled.stdout.txt",
+      "logs/aurora-command-center-1024x768@1.5x-analytics-scrolled.stderr.txt",
+      "logs/aurora-command-center-1024x768@1.5x-analytics-scroll-roundtrip.stdout.txt",
+      "logs/aurora-command-center-1024x768@1.5x-analytics-scroll-roundtrip.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Aurora Operations Command Center",
+    "notes": "Sleek full-application stress demo intended to expose responsive shell, dense-card, scrolling, and intrinsic-size regressions. Additional run: No visual issue recorded by automated first pass. Additional run: Captured with native DragonGUI window screenshot API.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target aurora-command-center --sizes 1024x768 --scales 1.5 # state=overview",
+      "python tools/visual_audit.py --target aurora-command-center --sizes 1024x768 --scales 1.5 # state=analytics",
+      "python tools/visual_audit.py --target aurora-command-center --sizes 1024x768 --scales 1.5 # state=automation",
+      "python tools/visual_audit.py --target aurora-command-center --sizes 1024x768 --scales 1.5 # state=settings",
+      "python tools/visual_audit.py --target aurora-command-center --sizes 1024x768 --scales 1.5 # state=modal-open",
+      "python tools/visual_audit.py --target aurora-command-center --sizes 1024x768 --scales 1.5 # state=sidebar-collapsed",
+      "python tools/visual_audit.py --target aurora-command-center --sizes 1024x768 --scales 1.5 # state=modal-roundtrip",
+      "python tools/visual_audit.py --target aurora-command-center --sizes 1024x768 --scales 1.5 # state=sidebar-roundtrip",
+      "python tools/visual_audit.py --target aurora-command-center --sizes 1024x768 --scales 1.5 # state=workspace-menu",
+      "python tools/visual_audit.py --target aurora-command-center --sizes 1024x768 --scales 1.5 # state=sidebar-tooltip",
+      "python tools/visual_audit.py --target aurora-command-center --sizes 1024x768 --scales 1.5 # state=analytics-scrolled",
+      "python tools/visual_audit.py --target aurora-command-center --sizes 1024x768 --scales 1.5 # state=analytics-scroll-roundtrip"
+    ],
+    "screenshots": [
+      "screenshots/aurora-command-center-1024x768@1.5x-overview.png",
+      "screenshots/aurora-command-center-1024x768@1.5x-analytics.png",
+      "screenshots/aurora-command-center-1024x768@1.5x-automation.png",
+      "screenshots/aurora-command-center-1024x768@1.5x-settings.png",
+      "screenshots/aurora-command-center-1024x768@1.5x-modal-open.png",
+      "screenshots/aurora-command-center-1024x768@1.5x-sidebar-collapsed.png",
+      "screenshots/aurora-command-center-1024x768@1.5x-modal-roundtrip.png",
+      "screenshots/aurora-command-center-1024x768@1.5x-sidebar-roundtrip.png",
+      "screenshots/aurora-command-center-1024x768@1.5x-workspace-menu.png",
+      "screenshots/aurora-command-center-1024x768@1.5x-sidebar-tooltip.png",
+      "screenshots/aurora-command-center-1024x768@1.5x-analytics-scrolled.png",
+      "screenshots/aurora-command-center-1024x768@1.5x-analytics-scroll-roundtrip.png"
+    ],
+    "script": "examples\\aurora_command_center_demo.py",
+    "snapshots": [
+      "snapshots/aurora-command-center-1024x768@1.5x-overview.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-overview-resize-0-start-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-overview-resize-1-640x480.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-overview-resize-2-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-overview-resize-3-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-analytics.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-analytics-resize-0-start-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-analytics-resize-1-640x480.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-analytics-resize-2-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-analytics-resize-3-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-automation.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-automation-resize-0-start-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-automation-resize-1-640x480.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-automation-resize-2-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-automation-resize-3-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-settings.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-settings-resize-0-start-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-settings-resize-1-640x480.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-settings-resize-2-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-settings-resize-3-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-modal-open.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-modal-open-resize-0-start-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-modal-open-resize-1-640x480.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-modal-open-resize-2-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-modal-open-resize-3-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-sidebar-collapsed.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-sidebar-collapsed-resize-0-start-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-sidebar-collapsed-resize-1-640x480.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-sidebar-collapsed-resize-2-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-sidebar-collapsed-resize-3-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-modal-roundtrip.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-modal-roundtrip-resize-0-start-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-modal-roundtrip-resize-1-640x480.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-modal-roundtrip-resize-2-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-modal-roundtrip-resize-3-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-sidebar-roundtrip.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-sidebar-roundtrip-resize-0-start-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-sidebar-roundtrip-resize-1-640x480.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-sidebar-roundtrip-resize-2-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-sidebar-roundtrip-resize-3-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-workspace-menu.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-workspace-menu-resize-0-start-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-workspace-menu-resize-1-640x480.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-workspace-menu-resize-2-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-workspace-menu-resize-3-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-sidebar-tooltip.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-sidebar-tooltip-resize-0-start-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-sidebar-tooltip-resize-1-640x480.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-sidebar-tooltip-resize-2-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-sidebar-tooltip-resize-3-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-analytics-scrolled.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-analytics-scrolled-resize-0-start-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-analytics-scrolled-resize-1-640x480.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-analytics-scrolled-resize-2-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-analytics-scrolled-resize-3-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-analytics-scroll-roundtrip.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-analytics-scroll-roundtrip-resize-0-start-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-analytics-scroll-roundtrip-resize-1-640x480.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-analytics-scroll-roundtrip-resize-2-1024x768.json",
+      "snapshots/aurora-command-center-1024x768@1.5x-analytics-scroll-roundtrip-resize-3-1024x768.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/layout.rs",
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ],
+    "unmatched_selectors": []
+  }
+]

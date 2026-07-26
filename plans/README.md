@@ -23,6 +23,8 @@ full widget system exists.
 Working note:
 
 - [DragonSci Inventory](./dragonsci-inventory.md)
+- [Layout System Remediation](./layout-system-remediation.md)
+- [Layout and Styling Evolution](./layout-styling-evolution.md)
 
 ## Current Status
 

@@ -418,6 +418,11 @@ Within a stylesheet, the cascade key is:
 
 Inline styles remain the strongest normal author style. This preserves existing
 apps and lets local widget overrides win over global stylesheet rules.
+Constructor-generated widget defaults participate at framework/default
+precedence rather than inline precedence. Consequently, application CSS can
+replace defaults such as a composite's direction or preferred width. Only
+values supplied through the public `style={...}` argument receive inline
+precedence.
 
 Inline color values accept theme tokens, hex colors, `transparent`, the common
 named colors, and practical `rgb()`, `rgba()`, `hsl()`, `hsla()`, `hwb()`,
@@ -522,11 +527,39 @@ Unsupported selector forms produce warnings and are ignored. Examples:
 
 ## Widget Type Names
 
-Type selectors use DragonGUI widget names:
+Type selectors use the stable public Python widget names, not native
+`render_kind` implementation names. Matching follows the public base-type
+chain, so a composite or subclass matches both its most-specific public type
+and its public bases:
+
+```python
+picker = dg.ColorPicker(parent=None)
+print(picker.css_types())
+# ("ColorPicker", "Panel", "Container", "Widget")
+```
+
+```css
+ColorPicker { width: 360px; } /* only ColorPicker composites */
+Panel { padding: 12px; }      /* also matches ColorPicker through Panel */
+```
+
+The same rule applies to framework composites: `SearchBox` also matches
+`HLayout`, `Toolbar` matches `HLayout`, and `AppShell` matches `FlexLayout`.
+Prefer the most-specific public type when styling one widget family. Base-type
+rules are useful for intentional shared behavior.
+
+Representative public type selectors include:
 
 - `Window`
+- `AppShell`
+- `Body`
+- `FlexLayout`
 - `HLayout`
 - `VLayout`
+- `FlowLayout`
+- `GridLayout`
+- `ScrollArea`
+- `WorkbenchLayout`
 - `Panel`
 - `Collapsible`
 - `Modal`
@@ -549,6 +582,7 @@ Type selectors use DragonGUI widget names:
 - `LED`
 - `Button`
 - `TextInput`
+- `SearchBox`
 - `TextArea`
 - `NumberInput`
 - `Slider`
@@ -560,10 +594,14 @@ Type selectors use DragonGUI widget names:
 - `Scatter3D`
 - `DataFrameTable`
 - `Image`
+- `ColorPicker`
+- `PropertyGrid`
+- `Property`
 
-`ColorPicker` is a Python composite widget built from `Panel`, `Label`,
-`Slider`, and `Button`; style it through those underlying widget types, classes,
-or inline styles.
+Type names are exact and case-sensitive. Private helper classes whose Python
+names start with `_` are suppressed. Public subclasses may declare a stable
+`CSS_TYPE`, add `CSS_TYPE_ALIASES`, or set `CSS_TYPE = None` to inherit only
+their public base types.
 
 `Toast` and simple string `Tooltip` overlays are not normal layout widgets, but
 they do participate in type/class CSS matching. Toast levels are exposed as
@@ -579,6 +617,7 @@ Supported layout properties:
 | --- | --- |
 | `display` | `flex`, `grid`, `block`, `none` |
 | `flex-direction` | `row`, `column`, `row-reverse`, `column-reverse` |
+| `flex-wrap` | `nowrap`, `wrap`, `wrap-reverse` |
 | `flex` | maps to `flex-grow` |
 | `flex-grow` | non-negative number |
 | `flex-shrink` | non-negative number |
@@ -936,6 +975,19 @@ Panel {
 }
 ```
 
+Framework and theme `:root` variables are available to later stylesheet
+origins. DragonGUI exposes the active theme spacing scale as:
+
+- `--dg-spacing`
+- `--dg-space-xs` (`spacing × 0.5`)
+- `--dg-space-sm` (`spacing × 1`)
+- `--dg-space-md` (`spacing × 2`)
+- `--dg-space-lg` (`spacing × 3`)
+- `--dg-space-xl` (`spacing × 4`)
+
+These values are regenerated when the framework theme is installed, including
+when application CSS was parsed first.
+
 V2 supports global `:root` variables and a first slice of media/support-scoped
 `:root` variables. A variable declared directly inside a matching `@media` or
 static true `@supports` block can be used by declarations inside that same
@@ -977,9 +1029,38 @@ transition shorthands.
 - framework/theme/user rule counts
 - stylesheet warning count
 - last stylesheet error
-- matched rules per widget
+- public `render_kind` and `css_types` identity per widget
+- matched selectors with origin, source location/order, and specificity
+- winning and overridden declarations per normalized property
+- unmatched eligible user selectors
 - matched rules and computed fields per styled widget part
 - computed layout, visual, text, and widget style fields
+
+For example:
+
+```python
+snapshot = app.debug_snapshot()
+button = snapshot["computed_styles"]["run-button"]
+
+print(button["matched_selectors"])
+print(button["provenance"]["background"]["winner"])
+print(button["provenance"]["background"]["overridden"])
+print(snapshot["stylesheets"]["unmatched_user_selectors"])
+```
+
+### Troubleshooting an unmatched selector
+
+1. Give the target a stable `id` and inspect its `css_types` in the snapshot.
+2. Use the exact, case-sensitive public name (`SearchBox`, not `search_box`,
+   `text_input`, or a native render-kind name).
+3. Check `unmatched_user_selectors`. Selectors hidden behind an inactive
+   media/container query are not eligible until that condition is active.
+4. Check stylesheet warnings for unsupported selector syntax or widget parts.
+5. If the selector matched but the value did not win, inspect the property's
+   `provenance`: `!important`, origin, specificity, and source order determine
+   the winner, with explicit inline styles applied last.
+6. For a composite, target its public outer type for outer geometry and a
+   documented `::part` or descendant class only when styling an internal piece.
 
 Unsupported CSS does not crash the app. The parser records warnings, skips the
 unsupported declaration or selector, and continues applying the rest of the

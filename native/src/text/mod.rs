@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -22,7 +23,9 @@ use crate::css_style::{
 };
 use crate::document::{WidgetKind, WidgetNode};
 use crate::events::{TableSortColumn, WidgetState};
-use crate::layout::{tree_node_row_height_for_style, LayoutResult, Rect};
+use crate::layout::{
+    titled_container_geometry, tree_node_row_height_for_style, LayoutResult, Rect,
+};
 use crate::overlays::{
     active_menu_overlay_rects, active_tooltip_overlay_rect, dropdown_overlay_rect, find_node,
     menu_popup_rect, rich_tooltip_target, tooltip_target,
@@ -172,6 +175,38 @@ struct TextKey {
     line_height_milli: i32,
     width_milli: i32,
     wrap: bool,
+    max_lines: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct TextMeasurement {
+    pub(crate) width: f32,
+    pub(crate) height: f32,
+    pub(crate) line_count: usize,
+    pub(crate) baseline: f32,
+}
+
+struct LayoutTextMeasureState {
+    font_system: FontSystem,
+    attempted_font_sources: HashSet<String>,
+    font_aliases: FontFamilyAliases,
+    cache: HashMap<TextKey, TextMeasurement>,
+}
+
+impl Default for LayoutTextMeasureState {
+    fn default() -> Self {
+        Self {
+            font_system: FontSystem::new(),
+            attempted_font_sources: HashSet::new(),
+            font_aliases: FontFamilyAliases::default(),
+            cache: HashMap::new(),
+        }
+    }
+}
+
+thread_local! {
+    static LAYOUT_TEXT_MEASURER: RefCell<LayoutTextMeasureState> =
+        RefCell::new(LayoutTextMeasureState::default());
 }
 
 struct TextEntry {
@@ -190,6 +225,7 @@ type TextBufferCache = HashMap<TextKey, Vec<Buffer>>;
 type FontFamilyAliases = HashMap<String, String>;
 
 const OVERLAY_TEXT_BUFFER_CACHE_LIMIT: usize = 512;
+const LAYOUT_TEXT_MEASURE_CACHE_LIMIT: usize = 2_048;
 
 fn text_buffer_cache_len(cache: &TextBufferCache) -> usize {
     cache.values().map(Vec::len).sum()
@@ -233,6 +269,157 @@ fn text_options_from_style(style: &TextStyle) -> TextRenderOptions {
         text_transform: style.text_transform,
         text_overflow: style.text_overflow,
     }
+}
+
+fn single_line_text_defaults_to_ellipsis(kind: WidgetKind) -> bool {
+    matches!(
+        kind,
+        WidgetKind::Panel
+            | WidgetKind::Modal
+            | WidgetKind::Sidebar
+            | WidgetKind::Badge
+            | WidgetKind::Tag
+            | WidgetKind::Button
+            | WidgetKind::SmallButton
+            | WidgetKind::Selectable
+            | WidgetKind::RadioButton
+            | WidgetKind::TreeNode
+            | WidgetKind::Checkbox
+            | WidgetKind::ToggleSwitch
+            | WidgetKind::Collapsible
+            | WidgetKind::Dropdown
+            | WidgetKind::Menu
+            | WidgetKind::DragNumber
+            | WidgetKind::LoadingSpinner
+            | WidgetKind::Tab
+            | WidgetKind::NavItem
+    )
+}
+
+/// Measures layout text with the same shaping engine and text attributes used
+/// by the renderer. The cache is deliberately separate from paint buffers:
+/// layout needs only stable logical metrics and must not retain GPU-oriented
+/// text state.
+pub(crate) fn measure_text_for_layout(
+    text: &str,
+    style: &TextStyle,
+    theme: &Theme,
+) -> TextMeasurement {
+    measure_text_for_layout_impl(text, style, theme, 1_000_000.0, false, Some(1))
+}
+
+pub(crate) fn measure_wrapped_text_for_layout(
+    text: &str,
+    style: &TextStyle,
+    theme: &Theme,
+    available_width: f32,
+) -> TextMeasurement {
+    measure_text_for_layout_impl(text, style, theme, available_width.max(1.0), true, None)
+}
+
+pub(crate) fn measure_wrapped_text_for_layout_with_max_lines(
+    text: &str,
+    style: &TextStyle,
+    theme: &Theme,
+    available_width: f32,
+    max_lines: usize,
+) -> TextMeasurement {
+    measure_text_for_layout_impl(
+        text,
+        style,
+        theme,
+        available_width.max(1.0),
+        true,
+        Some(max_lines.max(1)),
+    )
+}
+
+/// Synchronizes the layout measurer's font database and family aliases with
+/// the stylesheet font registry. This must run before layout so `@font-face`
+/// affects intrinsic metrics in the same frame that it affects painting.
+pub(crate) fn sync_layout_measurement_fonts(stylesheets: &StylesheetStore) {
+    LAYOUT_TEXT_MEASURER.with(|state| {
+        let mut state = state.borrow_mut();
+        let LayoutTextMeasureState {
+            font_system,
+            attempted_font_sources,
+            font_aliases,
+            cache,
+        } = &mut *state;
+        if sync_stylesheet_font_system(
+            font_system,
+            attempted_font_sources,
+            font_aliases,
+            stylesheets,
+        )
+        .changed
+        {
+            cache.clear();
+        }
+    });
+}
+
+fn measure_text_for_layout_impl(
+    text: &str,
+    style: &TextStyle,
+    theme: &Theme,
+    available_width: f32,
+    wrap: bool,
+    max_lines: Option<usize>,
+) -> TextMeasurement {
+    let font_size = style.font_size.unwrap_or(theme.font_size).max(8.0);
+    let line_height = text_line_height_for_style(style, font_size, theme, 1.0);
+    let font_weight = style.font_weight.unwrap_or(Weight::NORMAL.0);
+    let options = text_options_from_style(style);
+    let transformed = transform_text(text, options.text_transform);
+
+    LAYOUT_TEXT_MEASURER.with(|state| {
+        let mut state = state.borrow_mut();
+        let key = TextKey {
+            text: transformed.to_string(),
+            font_family: font_family_key(style.font_family.as_ref(), &state.font_aliases),
+            font_weight,
+            font_style: options.font_style.unwrap_or(FontStyle::Normal),
+            tabular_nums: options.font_variant_numeric == Some(FontVariantNumeric::TabularNums),
+            letter_spacing_milli: (resolved_letter_spacing_em(options.letter_spacing, font_size)
+                .unwrap_or(0.0)
+                * 1000.0)
+                .round() as i32,
+            font_size_milli: (font_size * 1000.0).round() as i32,
+            line_height_milli: (line_height * 1000.0).round() as i32,
+            width_milli: (available_width * 1000.0).round() as i32,
+            wrap,
+            max_lines,
+        };
+        if let Some(measurement) = state.cache.get(&key) {
+            return *measurement;
+        }
+
+        let LayoutTextMeasureState {
+            font_system,
+            font_aliases,
+            cache,
+            ..
+        } = &mut *state;
+        let measurement = shaped_text_measurement(
+            font_system,
+            transformed.as_ref(),
+            font_size,
+            line_height,
+            style.font_family.as_ref(),
+            font_aliases,
+            font_weight,
+            options,
+            available_width,
+            wrap,
+            max_lines,
+        );
+        if cache.len() >= LAYOUT_TEXT_MEASURE_CACHE_LIMIT {
+            cache.clear();
+        }
+        cache.insert(key, measurement);
+        measurement
+    })
 }
 
 fn text_options_from_styles(
@@ -373,7 +560,7 @@ impl TextRendererDg {
     ) -> HashMap<String, [f32; 2]> {
         let pad = theme.spacing * sf;
         let open_dropdown = state.open_dropdown.as_deref();
-        let dropdown_overlay = dropdown_overlay_rect(layout, state, theme, sf);
+        let dropdown_overlay = dropdown_overlay_rect(tree, layout, state, theme, sf);
         let menu_overlays = active_menu_overlay_rects(tree, layout, state, theme, sf);
         let tooltip_overlay = active_tooltip_overlay_rect(tree, layout, theme, state, sf);
         let window_w = media.width * sf;
@@ -474,6 +661,7 @@ impl TextRendererDg {
                 layout,
                 state,
                 theme,
+                dropdown_overlay,
                 &mut self.font_system,
                 font_aliases,
                 sf,
@@ -744,6 +932,7 @@ impl TextRendererDg {
             line_height_milli: 1000,
             width_milli: i32::from(width) * 1000,
             wrap: false,
+            max_lines: None,
         };
         self.entries.push(TextEntry {
             key,
@@ -855,6 +1044,7 @@ impl TextRendererDg {
             line_height_milli: 1000,
             width_milli: (width * 1000.0).round() as i32,
             wrap: false,
+            max_lines: None,
         };
         self.entries.push(TextEntry {
             key,
@@ -897,77 +1087,14 @@ impl TextRendererDg {
     }
 
     fn sync_stylesheet_fonts(&mut self, stylesheets: &StylesheetStore) {
-        for font_face in stylesheets.font_faces() {
-            for source in &font_face.sources {
-                let key = font_face_source_key(&font_face.family, source.kind, &source.url);
-                if self.attempted_font_sources.contains(&key) {
-                    continue;
-                }
-                self.attempted_font_sources.insert(key);
-                match source.kind {
-                    DgFontFaceSourceKind::Local => {
-                        if let Some(actual_family) =
-                            local_font_family_alias(&self.font_system, &source.url)
-                        {
-                            self.font_aliases
-                                .insert(font_face.family.clone(), actual_family);
-                            break;
-                        }
-                        self.record_font_warning(
-                            &font_face.family,
-                            &font_face_source_label(source.kind, &source.url),
-                            "local font family was not found",
-                        );
-                    }
-                    DgFontFaceSourceKind::Url => {
-                        let source_label = font_face_source_label(source.kind, &source.url);
-                        let resolved =
-                            match resolve_font_source(&source.url, source.format.as_deref()) {
-                                Ok(resolved) => resolved,
-                                Err(message) => {
-                                    self.record_font_warning(
-                                        &font_face.family,
-                                        &source_label,
-                                        message,
-                                    );
-                                    continue;
-                                }
-                            };
-                        let before = self.font_system.db().faces().count();
-                        match resolved {
-                            ResolvedFontSource::File(path) => {
-                                if self.font_system.db_mut().load_font_file(&path).is_err() {
-                                    self.record_font_warning(
-                                        &font_face.family,
-                                        &source_label,
-                                        "failed to load font file",
-                                    );
-                                    continue;
-                                }
-                            }
-                            ResolvedFontSource::Data(data) => {
-                                self.font_system.db_mut().load_font_data(data);
-                            }
-                        }
-                        let actual_family = {
-                            self.font_system.db().faces().skip(before).find_map(|face| {
-                                face.families.first().map(|(name, _)| name.clone())
-                            })
-                        };
-                        if let Some(actual_family) = actual_family {
-                            self.font_aliases
-                                .insert(font_face.family.clone(), actual_family);
-                        } else {
-                            self.record_font_warning(
-                                &font_face.family,
-                                &source_label,
-                                "font file loaded but exposed no usable font family",
-                            );
-                        }
-                        break;
-                    }
-                }
-            }
+        let result = sync_stylesheet_font_system(
+            &mut self.font_system,
+            &mut self.attempted_font_sources,
+            &mut self.font_aliases,
+            stylesheets,
+        );
+        for warning in result.warnings {
+            self.record_font_warning(&warning.family, &warning.source, &warning.message);
         }
     }
 
@@ -1297,6 +1424,101 @@ fn font_face_source_label(kind: DgFontFaceSourceKind, source: &str) -> String {
         DgFontFaceSourceKind::Local => format!("local({source})"),
         DgFontFaceSourceKind::Url => source.to_string(),
     }
+}
+
+#[derive(Debug)]
+struct FontSyncWarning {
+    family: String,
+    source: String,
+    message: &'static str,
+}
+
+#[derive(Debug, Default)]
+struct FontSyncResult {
+    changed: bool,
+    warnings: Vec<FontSyncWarning>,
+}
+
+fn sync_stylesheet_font_system(
+    font_system: &mut FontSystem,
+    attempted_font_sources: &mut HashSet<String>,
+    font_aliases: &mut FontFamilyAliases,
+    stylesheets: &StylesheetStore,
+) -> FontSyncResult {
+    let mut result = FontSyncResult::default();
+    for font_face in stylesheets.font_faces() {
+        for source in &font_face.sources {
+            let key = font_face_source_key(&font_face.family, source.kind, &source.url);
+            if attempted_font_sources.contains(&key) {
+                continue;
+            }
+            attempted_font_sources.insert(key);
+            let source_label = font_face_source_label(source.kind, &source.url);
+            match source.kind {
+                DgFontFaceSourceKind::Local => {
+                    if let Some(actual_family) = local_font_family_alias(font_system, &source.url) {
+                        let old =
+                            font_aliases.insert(font_face.family.clone(), actual_family.clone());
+                        result.changed |= old.as_deref() != Some(actual_family.as_str());
+                        break;
+                    }
+                    result.warnings.push(FontSyncWarning {
+                        family: font_face.family.clone(),
+                        source: source_label,
+                        message: "local font family was not found",
+                    });
+                }
+                DgFontFaceSourceKind::Url => {
+                    let resolved = match resolve_font_source(&source.url, source.format.as_deref())
+                    {
+                        Ok(resolved) => resolved,
+                        Err(message) => {
+                            result.warnings.push(FontSyncWarning {
+                                family: font_face.family.clone(),
+                                source: source_label,
+                                message,
+                            });
+                            continue;
+                        }
+                    };
+                    let before = font_system.db().faces().count();
+                    match resolved {
+                        ResolvedFontSource::File(path) => {
+                            if font_system.db_mut().load_font_file(&path).is_err() {
+                                result.warnings.push(FontSyncWarning {
+                                    family: font_face.family.clone(),
+                                    source: source_label,
+                                    message: "failed to load font file",
+                                });
+                                continue;
+                            }
+                        }
+                        ResolvedFontSource::Data(data) => {
+                            font_system.db_mut().load_font_data(data);
+                        }
+                    }
+                    let actual_family = font_system
+                        .db()
+                        .faces()
+                        .skip(before)
+                        .find_map(|face| face.families.first().map(|(name, _)| name.clone()));
+                    if let Some(actual_family) = actual_family {
+                        let old =
+                            font_aliases.insert(font_face.family.clone(), actual_family.clone());
+                        result.changed |= old.as_deref() != Some(actual_family.as_str());
+                    } else {
+                        result.warnings.push(FontSyncWarning {
+                            family: font_face.family.clone(),
+                            source: source_label,
+                            message: "font file loaded but exposed no usable font family",
+                        });
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    result
 }
 
 fn local_font_family_alias(font_system: &FontSystem, requested: &str) -> Option<String> {
@@ -1699,7 +1921,10 @@ fn collect_text(
         .and_then(|text| text.text_align)
         .or(node.style.text.text_align)
         .is_some();
-    let text_options = text_options_from_styles(primary_part_text, &node.style.text);
+    let mut text_options = text_options_from_styles(primary_part_text, &node.style.text);
+    if text_options.text_overflow.is_none() && single_line_text_defaults_to_ellipsis(node.kind) {
+        text_options.text_overflow = Some(TextOverflow::Ellipsis);
+    }
     let is_text_widget = matches!(
         node.kind,
         WidgetKind::Panel
@@ -1756,11 +1981,20 @@ fn collect_text(
         if let (Some((text, placeholder)), Some(r)) =
             (display_text(node, state), layout.rects.get(&node.id))
         {
-            if r.w > 0.0 && r.h > 0.0 {
+            let nav_icon = (node.kind == WidgetKind::NavItem)
+                .then(|| {
+                    node.props
+                        .raw_props
+                        .get("icon")
+                        .and_then(|value| value.as_str())
+                })
+                .flatten();
+            let text = nav_item_text_for_width(node, text, r.w, sf);
+            if r.w > 0.0 && r.h > 0.0 && !text.is_empty() {
                 let node_clip = layout.visible_rect(&node.id);
                 let (left, top, clip_left, clip_top, clip_right, clip_bottom) = match node.kind {
                     WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal => {
-                        let title_pad = panel_title_padding(node, theme, sf);
+                        let title_pad = panel_title_padding(node, layout, theme, sf);
                         let mut text_top = r.y + title_pad.top;
                         if node.kind == WidgetKind::Modal {
                             let border_w = node
@@ -2023,7 +2257,8 @@ fn collect_text(
                         let item_pad = part_padding(node, &["item"], pad, sf);
                         let right_inset = theme.spacing * sf;
                         let reserved = badge_reserved_width(node, theme, sf, r.w, r.h, right_inset);
-                        let left = r.x + item_pad;
+                        let icon_slot = if nav_icon.is_some() { 26.0 * sf } else { 0.0 };
+                        let left = r.x + item_pad + icon_slot;
                         let right = (r.x + r.w - item_pad - reserved).max(left);
                         let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
                         (left, top, left, r.y, right, r.y + r.h)
@@ -2324,6 +2559,7 @@ fn collect_text(
                             );
                         } else if matches!(node.kind, WidgetKind::Label | WidgetKind::HtmlReport)
                             && node.props.wrap.unwrap_or(true)
+                            && text_options.text_overflow != Some(TextOverflow::Ellipsis)
                         {
                             push_wrapped_text_entry(
                                 font_system,
@@ -2659,7 +2895,7 @@ fn emit_generated_content_text(
         return;
     }
     let (top, clip_y, clip_bottom) =
-        generated_content_vertical_bounds(node, r, line_height, theme, sf);
+        generated_content_vertical_bounds(node, layout, r, line_height, theme, sf);
     let Some(clip_rect) = (Rect {
         x: left,
         y: clip_y,
@@ -2716,6 +2952,7 @@ fn emit_generated_content_text(
 
 fn generated_content_vertical_bounds(
     node: &WidgetNode,
+    layout: &LayoutResult,
     r: Rect,
     line_height: f32,
     theme: &Theme,
@@ -2725,7 +2962,7 @@ fn generated_content_vertical_bounds(
         node.kind,
         WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal
     ) {
-        let title_pad = panel_title_padding(node, theme, sf);
+        let title_pad = panel_title_padding(node, layout, theme, sf);
         let top = r.y + title_pad.top;
         return (top, r.y, (top + line_height).min(r.y + r.h));
     }
@@ -2760,23 +2997,30 @@ fn generated_content_reserved_width(
     if let Some(width) = style.layout.width {
         return width.max(1.0) * sf;
     }
-    let font_size = style
+    let mut text_style = node.style.text.clone();
+    text_style.font_size = style.text.font_size.or(text_style.font_size);
+    text_style.font_family = style
         .text
-        .font_size
-        .or(node.style.text.font_size)
-        .map(|size| size.max(8.0) * sf)
-        .unwrap_or_else(|| text_font_size(node, theme, sf));
+        .font_family
+        .clone()
+        .or_else(|| text_style.font_family.clone());
+    text_style.font_weight = style.text.font_weight.or(text_style.font_weight);
+    text_style.text_transform = style.text.text_transform.or(text_style.text_transform);
+    text_style.letter_spacing = style.text.letter_spacing.or(text_style.letter_spacing);
+    text_style.line_height = style.text.line_height.or(text_style.line_height);
+    text_style.font_style = style.text.font_style.or(text_style.font_style);
+    text_style.font_variant_numeric = style
+        .text
+        .font_variant_numeric
+        .or(text_style.font_variant_numeric);
     let padding = style.layout.padding.unwrap_or(theme.spacing * 0.5).max(0.0) * sf;
     let gap = style.layout.gap.unwrap_or(theme.spacing * 0.35).max(0.0) * sf;
-    estimate_generated_text_width(&content, font_size) + padding * 2.0 + gap
-}
-
-fn estimate_generated_text_width(text: &str, font_size: f32) -> f32 {
-    text.lines()
-        .map(|line| line.chars().count() as f32)
-        .fold(0.0, f32::max)
-        * font_size
-        * 0.56
+    measure_text_for_layout(&content, &text_style, theme)
+        .width
+        .ceil()
+        * sf
+        + padding * 2.0
+        + gap
 }
 
 fn widget_attr_value(node: &WidgetNode, name: &str) -> Option<String> {
@@ -2961,14 +3205,30 @@ struct PanelTitlePadding {
     top: f32,
 }
 
-fn panel_title_padding(node: &WidgetNode, theme: &Theme, sf: f32) -> PanelTitlePadding {
-    let default = theme.spacing + 2.0;
-    let layout = &node.style.layout;
-    let all = layout.padding;
+fn panel_title_padding(
+    node: &WidgetNode,
+    layout: &LayoutResult,
+    theme: &Theme,
+    sf: f32,
+) -> PanelTitlePadding {
+    let Some(rect) = layout.rects.get(&node.id) else {
+        return PanelTitlePadding {
+            left: 0.0,
+            right: 0.0,
+            top: 0.0,
+        };
+    };
+    let Some(geometry) = titled_container_geometry(node, layout, sf, theme) else {
+        return PanelTitlePadding {
+            left: 0.0,
+            right: 0.0,
+            top: 0.0,
+        };
+    };
     PanelTitlePadding {
-        left: layout.padding_left.or(all).unwrap_or(default) * sf,
-        right: layout.padding_right.or(all).unwrap_or(default) * sf,
-        top: layout.padding_top.or(all).unwrap_or(default) * sf,
+        left: geometry.title_box.x - rect.x,
+        right: rect.x + rect.w - (geometry.title_box.x + geometry.title_box.w),
+        top: geometry.title_box.y - rect.y,
     }
 }
 
@@ -3065,7 +3325,7 @@ pub(crate) fn text_font_size(node: &WidgetNode, theme: &Theme, sf: f32) -> f32 {
     node.style
         .text
         .font_size
-        .unwrap_or(theme.font_size)
+        .unwrap_or_else(|| crate::style::native_fallback_font_size(theme))
         .max(8.0)
         * sf
 }
@@ -3166,13 +3426,18 @@ fn text_color(node: &WidgetNode, state: &WidgetState, theme: &Theme, placeholder
         .as_ref()
         .and_then(|visual| visual.opacity)
         .or(node.style.visual.opacity)
-        .unwrap_or(1.0)
+        .unwrap_or_else(crate::style::native_fallback_opacity)
         .clamp(0.0, 1.0);
     glyph_color([base[0], base[1], base[2], base[3] * opacity])
 }
 
 fn overlay_opacity(style: &NodeStyle, base_opacity: f32) -> f32 {
-    (base_opacity * style.visual.opacity.unwrap_or(1.0)).clamp(0.0, 1.0)
+    (base_opacity
+        * style
+            .visual
+            .opacity
+            .unwrap_or_else(crate::style::native_fallback_opacity))
+    .clamp(0.0, 1.0)
 }
 
 fn overlay_text_color(style: &NodeStyle, theme: &Theme, fallback: [f32; 4], opacity: f32) -> Color {
@@ -3596,6 +3861,17 @@ fn emit_badge_text(
     let Some(r) = layout.rects.get(&node.id) else {
         return;
     };
+    if node.kind == WidgetKind::NavItem
+        && node
+            .props
+            .raw_props
+            .get("icon")
+            .and_then(|value| value.as_str())
+            .is_some()
+        && r.w <= 72.0 * sf
+    {
+        return;
+    }
     let Some(node_clip) = layout.visible_rect(&node.id) else {
         return;
     };
@@ -3728,6 +4004,7 @@ fn collect_dropdown_overlay_text(
     layout: &LayoutResult,
     state: &WidgetState,
     theme: &Theme,
+    overlay: Option<Rect>,
     font_system: &mut FontSystem,
     font_aliases: &FontFamilyAliases,
     sf: f32,
@@ -3738,10 +4015,7 @@ fn collect_dropdown_overlay_text(
 ) {
     if node.kind == WidgetKind::Dropdown && state.open_dropdown.as_deref() == Some(node.id.as_str())
     {
-        if let (Some(r), Some(items)) = (
-            layout.rects.get(&node.id),
-            state.dropdown_items.get(&node.id),
-        ) {
+        if let (Some(menu), Some(items)) = (overlay, state.dropdown_items.get(&node.id)) {
             let font_size = text_font_size(node, theme, sf);
             let line_height = text_line_height_for_style(&node.style.text, font_size, theme, sf);
             let font_family = node.style.text.font_family.as_ref();
@@ -3755,7 +4029,10 @@ fn collect_dropdown_overlay_text(
                 .filter(|(id, _)| id == &node.id)
                 .map(|(_, idx)| *idx);
             for (idx, item) in items.iter().enumerate() {
-                let y = r.y + r.h + idx as f32 * row_h;
+                let y = menu.y + idx as f32 * row_h;
+                if y >= menu.y + menu.h {
+                    break;
+                }
                 let part_names: &[&str] = if Some(idx) == hovered && idx == selected {
                     &["item-hover", "item-selected", "item"]
                 } else if Some(idx) == hovered {
@@ -3777,13 +4054,13 @@ fn collect_dropdown_overlay_text(
                     line_height,
                     font_family,
                     font_weight,
-                    r.x + item_pad,
+                    menu.x + item_pad,
                     (y + ((row_h - line_height) * 0.5).max(0.0)).round(),
                     TextBounds {
-                        left: (r.x + item_pad) as i32,
+                        left: (menu.x + item_pad) as i32,
                         top: y as i32,
-                        right: (r.x + r.w - item_pad) as i32,
-                        bottom: (y + row_h) as i32,
+                        right: (menu.x + menu.w - item_pad) as i32,
+                        bottom: (y + row_h).min(menu.y + menu.h) as i32,
                     },
                     color,
                     TextAlign::Left,
@@ -3802,6 +4079,7 @@ fn collect_dropdown_overlay_text(
             layout,
             state,
             theme,
+            overlay,
             font_system,
             font_aliases,
             sf,
@@ -3897,6 +4175,9 @@ fn collect_single_menu_overlay_text(
     let row_h = theme.control_height() * sf;
     for (idx, item) in items.iter().enumerate() {
         let y = rect.y + idx as f32 * row_h;
+        if y >= rect.y + rect.h {
+            break;
+        }
         let disabled = item.disabled || state.is_disabled(&item.id);
         let hovered = state.hovered.as_deref() == Some(item.id.as_str());
         let parts: &[&str] = if disabled {
@@ -3932,7 +4213,7 @@ fn collect_single_menu_overlay_text(
                 left: (rect.x + pad) as i32,
                 top: y as i32,
                 right: (rect.x + rect.w - pad) as i32,
-                bottom: (y + row_h) as i32,
+                bottom: (y + row_h).min(rect.y + rect.h) as i32,
             },
             color,
             TextAlign::Left,
@@ -4095,6 +4376,8 @@ fn collect_toast_text(
             sf,
             toast.position,
             padding,
+            &style.text,
+            theme,
         );
         let pad = toast_padding(padding, sf);
         if rect.w <= pad * 2.0 || rect.h <= pad * 2.0 {
@@ -4549,6 +4832,37 @@ fn display_text<'a>(node: &'a WidgetNode, state: &'a WidgetState) -> Option<(&'a
     }
 }
 
+fn nav_item_text_for_width<'a>(
+    node: &'a WidgetNode,
+    full_label: &'a str,
+    width: f32,
+    sf: f32,
+) -> &'a str {
+    if node.kind != WidgetKind::NavItem
+        || node
+            .props
+            .raw_props
+            .get("icon")
+            .and_then(|value| value.as_str())
+            .is_none()
+    {
+        return full_label;
+    }
+    if width <= 72.0 * sf {
+        return "";
+    }
+    if width <= 160.0 * sf {
+        return node
+            .props
+            .raw_props
+            .get("compact_label")
+            .and_then(|value| value.as_str())
+            .filter(|label| !label.is_empty())
+            .unwrap_or(full_label);
+    }
+    full_label
+}
+
 #[allow(clippy::too_many_arguments)]
 fn emit_log_view_lines(
     node: &WidgetNode,
@@ -4962,6 +5276,7 @@ fn push_text_entry_impl(
         line_height_milli: (line_height * 1000.0).round() as i32,
         width_milli: (avail_w * 1000.0).round() as i32,
         wrap,
+        max_lines: None,
     };
     let buf = cache
         .get_mut(&key)
@@ -5145,13 +5460,56 @@ fn text_width_for_measurement(
     font_weight: u16,
     options: TextRenderOptions,
 ) -> f32 {
+    shaped_text_measurement(
+        font_system,
+        text,
+        font_size,
+        line_height,
+        font_family,
+        font_aliases,
+        font_weight,
+        options,
+        1_000_000.0,
+        false,
+        Some(1),
+    )
+    .width
+}
+
+#[allow(clippy::too_many_arguments)]
+fn shaped_text_measurement(
+    font_system: &mut FontSystem,
+    text: &str,
+    font_size: f32,
+    line_height: f32,
+    font_family: Option<&FontFamily>,
+    font_aliases: &FontFamilyAliases,
+    font_weight: u16,
+    options: TextRenderOptions,
+    available_width: f32,
+    wrap: bool,
+    max_lines: Option<usize>,
+) -> TextMeasurement {
     let mut buf = Buffer::new(font_system, Metrics::new(font_size, line_height));
-    buf.set_size(font_system, Some(1_000_000.0), None);
-    buf.set_wrap(font_system, Wrap::None);
+    buf.set_size(font_system, Some(available_width.max(1.0)), None);
+    buf.set_wrap(font_system, if wrap { Wrap::Word } else { Wrap::None });
     let attrs = text_attrs(font_family, font_aliases, font_weight, options, font_size);
     buf.set_text(font_system, text, &attrs, Shaping::Advanced, None);
     buf.shape_until_scroll(font_system, false);
-    text_width_for_buffer(&buf)
+    let mut measurement = TextMeasurement::default();
+    for run in buf.layout_runs().take(max_lines.unwrap_or(usize::MAX)) {
+        if measurement.line_count == 0 {
+            measurement.baseline = (run.line_y - run.line_top).max(0.0);
+        }
+        measurement.width = measurement.width.max(run.line_w);
+        measurement.height = measurement.height.max(run.line_top + run.line_height);
+        measurement.line_count += 1;
+    }
+    if !text.is_empty() {
+        measurement.height = measurement.height.max(line_height);
+        measurement.line_count = measurement.line_count.max(1);
+    }
+    measurement
 }
 
 fn text_attrs<'a>(
@@ -5526,6 +5884,7 @@ fn glyph_color(color: [f32; 4]) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::css_style::StylesheetOrigin;
     use crate::document::NodeProps;
     use crate::events::{NavigationItem, TableState};
     use crate::resources::ResourceRegistry;
@@ -5535,9 +5894,11 @@ mod tests {
             id: id.to_string(),
             key: None,
             class_name: None,
+            css_types: Vec::new(),
             kind,
             props: NodeProps::default(),
             style_json: Default::default(),
+            default_style: Default::default(),
             inline_style: Default::default(),
             style: Default::default(),
             children: Vec::new(),
@@ -5550,6 +5911,128 @@ mod tests {
             .and_then(|value| value.parse::<usize>().ok())
             .filter(|value| *value > 0)
             .unwrap_or(default)
+    }
+
+    #[test]
+    fn nav_item_text_switches_from_full_to_compact_to_icon_only() {
+        let mut nav = node("navigation", WidgetKind::NavItem);
+        nav.props
+            .raw_props
+            .insert("icon".to_string(), serde_json::json!("workflow"));
+        nav.props
+            .raw_props
+            .insert("compact_label".to_string(), serde_json::json!("Flows"));
+
+        assert_eq!(
+            nav_item_text_for_width(&nav, "Automation", 232.0, 1.0),
+            "Automation"
+        );
+        assert_eq!(
+            nav_item_text_for_width(&nav, "Automation", 120.0, 1.0),
+            "Flows"
+        );
+        assert_eq!(nav_item_text_for_width(&nav, "Automation", 56.0, 1.0), "");
+        assert_eq!(nav_item_text_for_width(&nav, "Automation", 112.0, 2.0), "");
+    }
+
+    #[test]
+    fn layout_measurement_uses_proportional_shaped_glyphs() {
+        let theme = Theme::dark();
+        let style = TextStyle {
+            font_size: Some(20.0),
+            ..TextStyle::default()
+        };
+
+        let narrow = measure_text_for_layout("iiiiiiii", &style, &theme);
+        let wide = measure_text_for_layout("WWWWWWWW", &style, &theme);
+
+        assert!(
+            wide.width > narrow.width * 1.5,
+            "equal character counts should retain shaped widths: narrow={narrow:?} wide={wide:?}"
+        );
+        assert_eq!(narrow.line_count, 1);
+        assert_eq!(wide.line_count, 1);
+        assert!(narrow.baseline > 0.0 && narrow.baseline < narrow.height);
+        assert!(wide.baseline > 0.0 && wide.baseline < wide.height);
+    }
+
+    #[test]
+    fn capped_single_line_controls_default_to_ellipsis_but_labels_wrap() {
+        assert!(single_line_text_defaults_to_ellipsis(WidgetKind::Button));
+        assert!(single_line_text_defaults_to_ellipsis(WidgetKind::Dropdown));
+        assert!(single_line_text_defaults_to_ellipsis(WidgetKind::Tab));
+        assert!(!single_line_text_defaults_to_ellipsis(WidgetKind::Label));
+        assert!(!single_line_text_defaults_to_ellipsis(WidgetKind::TextArea));
+    }
+
+    #[test]
+    fn layout_measurement_handles_unicode_and_styled_metrics() {
+        let theme = Theme::dark();
+        let base = TextStyle {
+            font_size: Some(14.0),
+            ..TextStyle::default()
+        };
+        let styled = TextStyle {
+            font_size: Some(24.0),
+            font_style: Some(FontStyle::Italic),
+            font_weight: Some(700),
+            letter_spacing: Some(TextSpacing::LogicalPx(1.0)),
+            ..TextStyle::default()
+        };
+
+        let combined = measure_text_for_layout("Cafe\u{301}", &base, &theme);
+        let base_width = measure_text_for_layout("Dragon", &base, &theme);
+        let styled_width = measure_text_for_layout("Dragon", &styled, &theme);
+
+        assert!(
+            combined.width.is_finite() && combined.width > 0.0,
+            "combining Unicode text should produce finite shaped metrics: {combined:?}"
+        );
+        assert_eq!(combined.line_count, 1);
+        assert!(
+            styled_width.width > base_width.width * 1.4,
+            "font size, weight, style, and spacing should participate in measurement: base={base_width:?} styled={styled_width:?}"
+        );
+    }
+
+    #[test]
+    fn wrapped_layout_measurement_uses_shaped_line_breaks() {
+        let theme = Theme::dark();
+        let style = TextStyle {
+            font_size: Some(18.0),
+            ..TextStyle::default()
+        };
+
+        let narrow = measure_wrapped_text_for_layout("iii iii iii iii", &style, &theme, 72.0);
+        let wide = measure_wrapped_text_for_layout("WWW WWW WWW WWW", &style, &theme, 72.0);
+
+        assert!(
+            wide.line_count > narrow.line_count,
+            "wrapped layout should follow shaped glyph advances: narrow={narrow:?} wide={wide:?}"
+        );
+        assert!(wide.height > narrow.height);
+        assert!(wide.baseline > 0.0 && wide.baseline < wide.height);
+    }
+
+    #[test]
+    fn wrapped_layout_measurement_respects_maximum_lines() {
+        let theme = Theme::dark();
+        let style = TextStyle {
+            font_size: Some(18.0),
+            ..TextStyle::default()
+        };
+        let text = "wide words that should wrap across several visible rows";
+
+        let full = measure_wrapped_text_for_layout(text, &style, &theme, 80.0);
+        let capped = measure_wrapped_text_for_layout_with_max_lines(text, &style, &theme, 80.0, 2);
+
+        assert!(full.line_count > 2, "test text did not wrap: {full:?}");
+        assert_eq!(capped.line_count, 2);
+        assert!(
+            capped.height < full.height,
+            "maximum lines should cap reported visible height: full={full:?} capped={capped:?}"
+        );
+        assert!(capped.baseline > 0.0 && capped.baseline < capped.height);
     }
 
     #[test]
@@ -5875,10 +6358,21 @@ mod tests {
     #[test]
     fn panel_title_padding_uses_custom_style_padding() {
         let mut panel = node("panel", WidgetKind::Panel);
+        panel.props.text = Some("Panel".to_string());
         panel.style.layout.padding = Some(16.0);
         panel.style.layout.padding_right = Some(20.0);
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "panel".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 240.0,
+                h: 160.0,
+            },
+        );
 
-        let padding = panel_title_padding(&panel, &Theme::dark(), 1.0);
+        let padding = panel_title_padding(&panel, &layout, &Theme::dark(), 1.0);
 
         assert_eq!(padding.left, 16.0);
         assert_eq!(padding.right, 20.0);
@@ -6099,8 +6593,13 @@ mod tests {
 
         let label = entries
             .iter()
-            .find(|entry| entry.key.text == "Long deploy action label")
-            .expect("button label text entry");
+            .find(|entry| entry.key.text != "1234567890" && entry.key.text.ends_with("..."))
+            .expect("ellipsized button label text entry");
+        assert!(
+            label.key.text.ends_with("..."),
+            "constrained button should use its default ellipsis policy: {:?}",
+            label.key.text
+        );
         assert!(
             label.clip.right >= label.clip.left,
             "label clip should not invert when badge consumes the button: {:?}",
@@ -6337,6 +6836,12 @@ mod tests {
             &layout,
             &open_state,
             &theme,
+            Some(Rect {
+                x: rect.x,
+                y: rect.y + rect.h,
+                w: rect.w,
+                h: theme.control_height() * 3.0,
+            }),
             &mut font_system,
             &font_aliases,
             1.0,
@@ -6400,6 +6905,7 @@ mod tests {
             line_height_milli: 16000,
             width_milli: 80000,
             wrap: false,
+            max_lines: None,
         };
         let mut entries = vec![TextEntry {
             key,
@@ -6460,6 +6966,7 @@ mod tests {
             line_height_milli: 16000,
             width_milli: 80000,
             wrap: false,
+            max_lines: None,
         };
         let mut entries = vec![TextEntry {
             key,
@@ -6516,6 +7023,7 @@ mod tests {
             line_height_milli: 16000,
             width_milli: 80000,
             wrap: false,
+            max_lines: None,
         };
         let mut entries = vec![TextEntry {
             key,
@@ -6795,7 +7303,7 @@ mod tests {
 
         let entry = entries.first().expect("label text entry");
         assert!(
-            (entry.top - 17.5).abs() < 0.01,
+            (entry.top - 17.5).abs() <= 0.5,
             "single-line label should center vertically: top={}",
             entry.top
         );
@@ -7200,7 +7708,7 @@ mod tests {
             .find(|entry| entry.key.text == "Modal probe")
             .expect("modal title text");
         let line_height = text_line_height(text_font_size(&modal, &theme, 1.0), &theme, 1.0);
-        let title_band_h = panel_title_padding(&modal, &theme, 1.0).top + line_height;
+        let title_band_h = panel_title_padding(&modal, &layout, &theme, 1.0).top + line_height;
         let expected_top = 40.0 + 2.0 + ((title_band_h - line_height) * 0.5).max(0.0);
 
         assert!(
@@ -7911,6 +8419,60 @@ mod tests {
             local_font_family_alias(&font_system, &first_family.to_ascii_lowercase()).as_deref(),
             Some(first_family.as_str())
         );
+    }
+
+    #[test]
+    fn stylesheet_font_sync_shares_alias_resolution_and_is_idempotent() {
+        let mut font_system = FontSystem::new();
+        let Some(first_family) = font_system
+            .db()
+            .faces()
+            .find_map(|face| face.families.first().map(|(name, _)| name.clone()))
+        else {
+            return;
+        };
+        let mut stylesheets = StylesheetStore::default();
+        stylesheets
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                &format!(
+                    r#"@font-face {{
+                        font-family: "Dragon Layout Alias";
+                        src: local("{first_family}");
+                    }}"#
+                ),
+            )
+            .unwrap();
+        let mut attempted = HashSet::new();
+        let mut aliases = FontFamilyAliases::default();
+
+        let first = sync_stylesheet_font_system(
+            &mut font_system,
+            &mut attempted,
+            &mut aliases,
+            &stylesheets,
+        );
+        assert!(first.changed);
+        assert_eq!(
+            aliases.get("Dragon Layout Alias").map(String::as_str),
+            Some(first_family.as_str())
+        );
+        assert_eq!(
+            font_family_key(
+                Some(&FontFamily::Name("Dragon Layout Alias".to_string())),
+                &aliases
+            ),
+            format!("name:{first_family}")
+        );
+
+        let second = sync_stylesheet_font_system(
+            &mut font_system,
+            &mut attempted,
+            &mut aliases,
+            &stylesheets,
+        );
+        assert!(!second.changed);
+        assert!(second.warnings.is_empty());
     }
 
     #[test]

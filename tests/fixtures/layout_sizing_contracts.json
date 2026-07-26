@@ -1,0 +1,102 @@
+[
+  {
+    "name": "Panel",
+    "type": "panel",
+    "flex_grow": 0.0,
+    "flex_shrink": 1.0,
+    "min_width": 0.0,
+    "min_height": 0.0
+  },
+  {
+    "name": "StatusBar",
+    "type": "status_bar",
+    "flex_grow": 0.0,
+    "flex_shrink": 0.0,
+    "min_width": 0.0,
+    "min_height": 0.0
+  },
+  {
+    "name": "MenuBar",
+    "type": "menu_bar",
+    "flex_grow": 0.0,
+    "flex_shrink": 0.0,
+    "min_width": 0.0,
+    "min_height": 0.0
+  },
+  {
+    "name": "Toolbar",
+    "type": "h_layout",
+    "css_types": ["Toolbar", "HLayout", "Container", "Widget"],
+    "class": "toolbar toolbar-horizontal",
+    "flex_grow": 0.0,
+    "flex_shrink": 0.0,
+    "min_width": 0.0,
+    "min_height": 30.0
+  },
+  {
+    "name": "ScrollArea",
+    "type": "scroll_area",
+    "flex_grow": 1.0,
+    "flex_shrink": 1.0,
+    "min_width": 0.0,
+    "min_height": 0.0
+  },
+  {
+    "name": "Body",
+    "type": "scroll_area",
+    "css_types": ["Body", "ScrollArea", "Container", "Widget"],
+    "class": "body",
+    "flex_grow": 1.0,
+    "flex_shrink": 1.0,
+    "min_width": 0.0,
+    "min_height": 0.0
+  },
+  {
+    "name": "WorkbenchMain",
+    "type": "scroll_area",
+    "css_types": ["WorkbenchMain", "ScrollArea", "Container", "Widget"],
+    "class": "workbench-main",
+    "flex_grow": 1.0,
+    "flex_shrink": 1.0,
+    "min_width": 0.0,
+    "min_height": 0.0
+  },
+  {
+    "name": "Pages",
+    "type": "pages",
+    "flex_grow": 1.0,
+    "flex_shrink": 1.0,
+    "min_width": 0.0,
+    "min_height": 0.0
+  },
+  {
+    "name": "Page",
+    "type": "page",
+    "flex_grow": 1.0,
+    "flex_shrink": 1.0,
+    "min_width": 0.0,
+    "min_height": 0.0
+  },
+  {
+    "name": "AppShell",
+    "type": "h_layout",
+    "css_types": ["AppShell", "HLayout", "Container", "Widget"],
+    "class": "app-shell",
+    "min_width": 0.0,
+    "min_height": 0.0,
+    "overflow_x": "hidden",
+    "overflow_y": "hidden"
+  },
+  {
+    "name": "WorkbenchLayout",
+    "type": "v_layout",
+    "css_types": ["WorkbenchLayout", "VLayout", "Container", "Widget"],
+    "class": "workbench-layout",
+    "flex_grow": 1.0,
+    "flex_shrink": 1.0,
+    "min_width": 0.0,
+    "min_height": 0.0,
+    "overflow_x": "hidden",
+    "overflow_y": "hidden"
+  }
+]

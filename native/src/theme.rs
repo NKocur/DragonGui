@@ -531,7 +531,7 @@ fn parse_css_hex_color(value: &str) -> Option<Color> {
 }
 
 /// Design-token set for primitive and text drawing.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Theme {
     /// Window / outermost background.
     pub background: Color,
@@ -589,6 +589,31 @@ impl Theme {
     pub fn control_height(&self) -> f32 {
         (self.font_size + self.spacing * 2.0 + 2.0).max(25.0)
     }
+
+    /// Extra-small spacing token.
+    pub fn space_xs(&self) -> f32 {
+        self.spacing * 0.5
+    }
+
+    /// Small spacing token.
+    pub fn space_sm(&self) -> f32 {
+        self.spacing
+    }
+
+    /// Medium spacing token.
+    pub fn space_md(&self) -> f32 {
+        self.spacing * 2.0
+    }
+
+    /// Large spacing token.
+    pub fn space_lg(&self) -> f32 {
+        self.spacing * 3.0
+    }
+
+    /// Extra-large spacing token.
+    pub fn space_xl(&self) -> f32 {
+        self.spacing * 4.0
+    }
 }
 
 #[cfg(test)]
@@ -606,6 +631,11 @@ mod tests {
         assert_eq!(theme.spacing, 5.0);
         assert_eq!(theme.font_size, 13.0);
         assert_eq!(theme.control_height(), 25.0);
+        assert_eq!(theme.space_xs(), 2.5);
+        assert_eq!(theme.space_sm(), 5.0);
+        assert_eq!(theme.space_md(), 10.0);
+        assert_eq!(theme.space_lg(), 15.0);
+        assert_eq!(theme.space_xl(), 20.0);
     }
 
     #[test]

@@ -48,6 +48,7 @@ ROUTES = [
 class DemoState:
     def __init__(self) -> None:
         self.app: dg.App | None = None
+        self.sidebar: dg.Sidebar | None = None
         self.pages: dg.Pages | None = None
         self.tabs: dg.Tabs | None = None
         self.status: dg.Label | None = None
@@ -81,6 +82,11 @@ class DemoState:
 
 
 state = DemoState()
+
+
+def toggle_sidebar() -> None:
+    if state.sidebar is not None:
+        state.sidebar.toggle_collapsed()
 
 
 def frame_from_columns(**columns: Any) -> dict[str, list[Any]]:
@@ -506,7 +512,7 @@ def stop_stream() -> None:
 
 def build_metric_card(label: str, value: str, detail: str, level: str = "info") -> None:
     with dg.Panel(class_="metric-card"):
-        with dg.HLayout(style={"align_items": "center", "gap": 8}):
+        with dg.FlowLayout(gap=8, row_gap=4, style={"align_items": "center"}):
             dg.Badge(level, level=level)
             dg.Label(label, class_="kicker", wrap=False)
         dg.Label(value, class_="metric-value", wrap=False)
@@ -523,10 +529,16 @@ def page_header(route: str, title: str, detail: str) -> None:
             ],
             on_select=lambda item: navigate(item.value),
         )
-        with dg.HLayout(style={"align_items": "center", "gap": 10, "min_width": 0}):
+        with dg.FlowLayout(gap=10, row_gap=4, style={"align_items": "center"}):
             dg.Label(title, class_="page-title", wrap=False)
             dg.Tag("generated data", level="neutral")
         dg.Label(detail, class_="muted")
+
+
+def page_scroll() -> dg.ScrollArea:
+    """Return the scroll owner used by each active workbench page."""
+
+    return dg.ScrollArea(axis="y", gap=10, class_="page-scroll")
 
 
 def build_overview_page() -> None:
@@ -573,7 +585,7 @@ def build_explore_page() -> None:
         dg.IconButton("search", tooltip="Command palette", on_click=show_palette)
         dg.ToolbarSeparator()
         dg.SmallButton("Fit/Reset", on_click=randomize_visuals)
-        dg.SearchBox("asset:cell", placeholder="filter asset or zone", style={"width": 220})
+        dg.SearchBox("asset:cell", placeholder="filter asset or zone", width=220)
     with dg.Splitter(orientation="horizontal", style={"height": 610, "min_height": 360}):
         with dg.Pane(flex=72, min_size=360):
             state.scatter = dg.Scatter3D(
@@ -646,7 +658,12 @@ def build_timeseries_page() -> None:
 def build_data_page() -> None:
     page_header("data", "Data Review", "Virtualized table, property inspector, search, selection, and context menus.")
     with dg.Toolbar():
-        dg.SearchBox("", placeholder="search routes", on_change=lambda q: set_status(f"Search changed: {q}"), style={"width": 260})
+        dg.SearchBox(
+            "",
+            placeholder="search routes",
+            on_change=lambda q: set_status(f"Search changed: {q}"),
+            width=260,
+        )
         dg.ToolbarSeparator()
         dg.SmallButton("All", on_click=lambda: update_table_filter("all"))
         for owner in ["ingest", "model", "quality", "export"]:
@@ -722,7 +739,7 @@ def build_workflow_page() -> None:
             dg.TextInput("plant.north.line-2.cell-07", placeholder="route")
             dg.TextArea("Review p95 drift and attach report bundle.", rows=4)
             dg.RadioGroup(["Monitor", "Escalate", "Suppress"], value="Monitor", orientation="horizontal", on_change=lambda value: set_status(f"Disposition {value}"))
-            with dg.HLayout(style={"gap": 8, "align_items": "center"}):
+            with dg.FlowLayout(gap=8, row_gap=8, style={"align_items": "center"}):
                 dg.DateInput("2026-07-10", on_change=lambda value: set_status(f"Date {value}"))
                 dg.TimeInput("09:30", on_change=lambda value: set_status(f"Time {value}"))
             dg.DateTimeInput("2026-07-10T09:30:00", on_change=lambda value: set_status(f"DateTime {value}"))
@@ -738,7 +755,7 @@ def build_workflow_page() -> None:
                     with dg.DragSource(payload, drag_kind="metric", style={"padding": 8, "border_color": "border", "border_width": 1}):
                         dg.Tag(f"{payload['metric']} / {payload['window']}", level="info")
             dg.DropZone("Drop metric here", accept="metric", on_drop=lambda payload: set_status(f"Dropped metric payload: {payload}"), style={"height": 120})
-        with dg.Panel("Automation Script", style={"height": 320}):
+        with dg.Panel("Automation Script", style={"height": 370}):
             state.code = dg.CodeEditor(
                 "def remediate(route):\n    snapshot = collect(route)\n    if snapshot.p95_latency > 70:\n        escalate(route, owner='model')\n",
                 language="python",
@@ -836,8 +853,15 @@ def build_styling_page() -> None:
 
 def build_shell() -> dg.Window:
     with dg.Window(title="DragonGUI Professional All Features Demo", width=1440, height=900) as win:
-        with dg.AppShell(class_="pro-shell", style={"width": "100%", "height": "100%", "overflow": "hidden"}):
-            with dg.Sidebar(title="DragonOps", width=214, class_="pro-sidebar"):
+        with dg.AppShell(class_="pro-shell"):
+            state.sidebar = dg.Sidebar(
+                title="DragonOps",
+                width=214,
+                collapsed_width=64,
+                class_="pro-sidebar",
+                id="pro-sidebar",
+            )
+            with state.sidebar:
                 dg.Label("North Plant Command Center", class_="sidebar-caption")
                 for route, label, badge in ROUTES:
                     state.nav_items[route] = dg.NavItem(label, page=route, badge=badge)
@@ -845,7 +869,7 @@ def build_shell() -> dg.Window:
                 with dg.FlowLayout(gap=6, row_gap=6):
                     dg.Badge("online", level="success")
                     dg.Tag("v4 widgets", level="info")
-            with dg.WorkbenchLayout(gap=6, padding=8, style={"min_width": 0}):
+            with dg.WorkbenchLayout(gap=6, padding=8):
                 with dg.MenuBar():
                     with dg.Menu("File"):
                         dg.MenuItem("Open data file", on_click=lambda: run_file_dialog("open"))
@@ -862,11 +886,24 @@ def build_shell() -> dg.Window:
                         dg.MenuItem("Show alert", on_click=show_alert_modal)
                         dg.MenuItem("Show toast", on_click=show_toast)
                 with dg.Toolbar(class_="top-toolbar"):
+                    dg.IconButton(
+                        "menu",
+                        tooltip="Toggle navigation",
+                        on_click=toggle_sidebar,
+                        id="pro-sidebar-toggle",
+                    )
+                    dg.ToolbarSeparator()
                     dg.IconButton("play", tooltip="Start background stream", on_click=start_stream)
                     dg.IconButton("pause", tooltip="Stop background stream", on_click=stop_stream)
                     dg.IconButton("terminal", tooltip="Command palette", on_click=show_palette)
                     dg.ToolbarSeparator()
-                    dg.SearchBox("", placeholder="search routes, commands, owners", on_change=lambda q: set_status(f"Global search: {q}"), style={"width": 280})
+                    dg.SearchBox(
+                        "",
+                        placeholder="search routes, commands, owners",
+                        on_change=lambda q: set_status(f"Global search: {q}"),
+                        width=280,
+                        id="pro-search",
+                    )
                     dg.Spacer()
                     dg.SmallButton("Snapshot", on_click=snapshot_summary)
                     dg.SmallButton("Toast", on_click=show_toast)
@@ -875,29 +912,45 @@ def build_shell() -> dg.Window:
                     for route, label, badge in ROUTES:
                         with dg.Tab(label, value=route, badge=badge):
                             pass
-                with dg.Body(scroll="y", gap=10, style={"height": 0, "flex": 1, "min_width": 0}):
+                with dg.Body():
                     state.pages = dg.Pages(value="overview", on_change=lambda route: state.tabs.set_value(route) if state.tabs else None)
                     with state.pages:
                         with dg.Page("overview", title="Overview"):
-                            build_overview_page()
+                            with page_scroll():
+                                build_overview_page()
                         with dg.Page("explore", title="3D Explore"):
-                            build_explore_page()
+                            with page_scroll():
+                                build_explore_page()
                         with dg.Page("timeseries", title="Time Series"):
-                            build_timeseries_page()
+                            with page_scroll():
+                                build_timeseries_page()
                         with dg.Page("data", title="Data"):
-                            build_data_page()
+                            with page_scroll():
+                                build_data_page()
                         with dg.Page("workflow", title="Workflow"):
-                            build_workflow_page()
+                            with page_scroll():
+                                build_workflow_page()
                         with dg.Page("reports", title="Reports"):
-                            build_reports_page()
+                            with page_scroll():
+                                build_reports_page()
                         with dg.Page("runtime", title="Runtime"):
-                            build_runtime_page()
+                            with page_scroll():
+                                build_runtime_page()
                         with dg.Page("styling", title="Styling"):
-                            build_styling_page()
+                            with page_scroll():
+                                build_styling_page()
                 with dg.StatusBar(height=28):
                     state.status_badge = dg.Badge("ready", level="success")
-                    state.status = dg.Label("Ready", wrap=False, style={"flex": 1, "min_width": 0})
-                    dg.Tag("1440x900 default", level="neutral")
+                    state.status = dg.Label(
+                        "Ready",
+                        wrap=False,
+                        style={"flex": 1, "min_width": 0},
+                        tooltip=(
+                            "Status bar receives callback output, stream updates, "
+                            "file dialog results, and debug summaries."
+                        ),
+                    )
+                    dg.Tag("responsive shell", level="neutral")
     return win
 
 
@@ -906,7 +959,7 @@ def build_overlays(win: dg.Window) -> None:
     with state.modal:
         dg.Label("Route review is staged with generated incident context.")
         dg.TextArea("Model owner should verify calibration drift before suppression.", rows=4)
-        with dg.HLayout(style={"justify_content": "flex_end", "gap": 8}):
+        with dg.FlowLayout(gap=8, row_gap=8, style={"justify_content": "flex_end"}):
             dg.Button("Close", on_click=lambda: state.modal.close() if state.modal else None)
             dg.Button("Create Review Task", on_click=lambda: (state.modal.close(), set_status("Review task created", "success")) if state.modal else None)
     state.alert_modal = dg.alert(
@@ -938,35 +991,25 @@ def build_overlays(win: dg.Window) -> None:
         on_run=lambda command: set_status(f"Command ran: {command.id}", "success"),
         parent=win,
     )
-    if state.status is not None:
-        with dg.Tooltip(target=state.status, width=360, parent=win):
-            dg.Label("Status bar receives callback output, stream updates, file dialog results, and debug summaries.")
-
-
 def build_app(output_dir: Path | str = DEFAULT_OUT_DIR) -> tuple[dg.App, dg.Window]:
     ensure_demo_fixtures(output_dir)
     app = dg.App(theme=dg.Theme.dark())
     state.app = app
     app.stylesheet(
         """
-        .pro-shell { background: background; }
-        Sidebar.pro-sidebar { width: 214px; }
+        AppShell.pro-shell { background: background; }
         .sidebar-caption { color: muted_text; font-size: 12px; }
-        .top-toolbar { flex-shrink: 0; }
         .page-header { gap: 4px; padding-bottom: 2px; }
+        ScrollArea.page-scroll { padding-right: 8px; padding-bottom: 10px; }
         .page-title { font-size: 22px; font-weight: 760; }
         .muted { color: muted_text; font-size: 12px; }
         .kicker { color: muted_text; font-size: 11px; text-transform: uppercase; }
         Panel.metric-card { min-height: 112px; }
         .metric-value { font-size: 28px; font-weight: 780; }
-        Panel { min-width: 0; }
         DataFrameTable { min-height: 120px; }
         @media (max-width: 720px) {
-            .pro-shell { flex-direction: column; }
-            Sidebar.pro-sidebar { width: 100%; height: 210px; flex-shrink: 0; }
             .page-title { font-size: 18px; }
             .metric-value { font-size: 22px; }
-            .top-toolbar { flex-wrap: wrap; height: auto; }
         }
         """
     )
