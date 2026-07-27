@@ -271,6 +271,29 @@ fn text_options_from_style(style: &TextStyle) -> TextRenderOptions {
     }
 }
 
+fn scatter_label_options(anchor: &str) -> TextRenderOptions {
+    if anchor == "scalar-bar-title" {
+        TextRenderOptions {
+            text_overflow: Some(TextOverflow::Ellipsis),
+            ..TextRenderOptions::default()
+        }
+    } else {
+        TextRenderOptions::default()
+    }
+}
+
+fn scalar_bar_title_bounds(clip: TextBounds, screen_x: f32, scale: f32) -> TextBounds {
+    intersect_text_bounds(
+        clip,
+        TextBounds {
+            left: clip.left.saturating_add((8.0 * scale).round() as i32),
+            top: clip.top,
+            right: screen_x.floor() as i32,
+            bottom: clip.bottom,
+        },
+    )
+}
+
 fn single_line_text_defaults_to_ellipsis(kind: WidgetKind) -> bool {
     matches!(
         kind,
@@ -787,6 +810,13 @@ impl TextRendererDg {
         let mut label_clip = clip;
         let (text_align, left, top) = match anchor {
             "top-left" => (TextAlign::Left, screen_x, screen_y),
+            "scalar-bar-title" => {
+                // Give the title the full plot width, minus a small inset, and
+                // right-align it over the scalar bar/tick region. This keeps long
+                // data-column names inside the scatter viewport.
+                label_clip = scalar_bar_title_bounds(clip, screen_x, scale);
+                (TextAlign::Right, label_clip.left as f32, screen_y)
+            }
             "plot-toolbar-button" => (
                 TextAlign::Center,
                 label_clip.left as f32,
@@ -868,6 +898,7 @@ impl TextRendererDg {
             400
         };
         let mut caret_positions = HashMap::new();
+        let options = scatter_label_options(anchor);
         push_text_entry(
             &mut self.font_system,
             &self.font_aliases,
@@ -885,7 +916,7 @@ impl TextRendererDg {
             &mut self.scatter_label_cache,
             None,
             &mut caret_positions,
-            TextRenderOptions::default(),
+            options,
         );
     }
 
@@ -5963,6 +5994,24 @@ mod tests {
         assert!(single_line_text_defaults_to_ellipsis(WidgetKind::Tab));
         assert!(!single_line_text_defaults_to_ellipsis(WidgetKind::Label));
         assert!(!single_line_text_defaults_to_ellipsis(WidgetKind::TextArea));
+    }
+
+    #[test]
+    fn scalar_bar_title_uses_bounded_ellipsis_region() {
+        let clip = TextBounds {
+            left: 100,
+            top: 20,
+            right: 500,
+            bottom: 320,
+        };
+        let bounds = scalar_bar_title_bounds(clip, 492.0, 1.0);
+        let options = scatter_label_options("scalar-bar-title");
+
+        assert_eq!(bounds.left, 108);
+        assert_eq!(bounds.right, 492);
+        assert_eq!(bounds.top, clip.top);
+        assert_eq!(bounds.bottom, clip.bottom);
+        assert_eq!(options.text_overflow, Some(TextOverflow::Ellipsis));
     }
 
     #[test]

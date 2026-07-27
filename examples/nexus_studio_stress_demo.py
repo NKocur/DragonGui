@@ -847,7 +847,7 @@ def build_app() -> tuple[dg.App, dg.Window]:
             border: 1px solid var(--nx-line);
             border-radius: 0;
             padding: 16px;
-            gap: 7px;
+            gap: 8px;
         }
 
         WorkbenchLayout.nexus-workbench { min-width: 0; min-height: 0; }

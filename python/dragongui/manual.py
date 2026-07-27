@@ -702,8 +702,8 @@ _PARAMETER_NOTES = {
     ),
     "Panel": (
         "`title` creates the panel header.",
-        "`width`/`height` constrain the panel; prefer `flex_grow` for responsive fill.",
-        "Use `scroll=True` or a nested `ScrollArea` when content can overflow.",
+        "`width` constrains the panel; set height through `style` and prefer `flex_grow` for responsive fill.",
+        "For bounded overflowing content, use `style={\"overflow_y\": \"auto\"}` or a nested `ScrollArea`.",
         "When a `Panel` is the first visible body inside an active `Tab`, its top corners are squared so the tab and panel connect cleanly.",
     ),
     "Tabs": (
@@ -855,7 +855,7 @@ _PARAMETER_NOTES = {
 }
 
 _EXAMPLE_METADATA: dict[str, dict[str, tuple[str, ...]]] = {
-    "Terminal": {"examples": ("examples/terminal_wrapper_demo.py",)},
+    "Terminal": {"examples": ("examples/all_features_v3_demo.py",)},
     "Panel": {
         "probes": (
             "examples/css_feature_probes/layout_panel_bounds_probe.py",
@@ -920,7 +920,7 @@ _EXAMPLE_METADATA: dict[str, dict[str, tuple[str, ...]]] = {
     },
     "LogView": {"probes": ("examples/css_feature_probes/log_view_probe.py",)},
     "LoadingSpinner": {"probes": ("examples/css_feature_probes/loading_spinner_probe.py",)},
-    "ProgressBar": {"examples": ("examples/pytorch_training_dashboard.py",)},
+    "ProgressBar": {"examples": ("examples/nexus_studio_stress_demo.py",)},
     "DataFrameTable": {
         "probes": (
             "examples/css_feature_probes/data_table_upgrades_probe.py",
@@ -1751,7 +1751,8 @@ Live methods such as `set_value`, `set_style`, `set_frame`, `set_points`,
         "Framed titled containers for grouped controls and dashboard cards.",
         """
 Use `Panel(title=None, width=None)` for grouped controls. Panels lay out their
-children vertically and can scroll overflowing content.
+children vertically. For a bounded body that can overflow, set
+`style={"overflow_y": "auto"}` or place a `ScrollArea` inside the panel.
 
 ```python
 with dg.Panel("Hyperparameters", width=300, style={"gap": 10, "padding": 14}):
@@ -1929,7 +1930,8 @@ Important:
 - Use `GridLayout` for dashboards.
 - Give scroll owners a bound (`height`, `flex_grow`, or window body space).
 - Do not use overlays as normal children when you expect them to float.
-- Titled panels reserve their header and clip/scroll children in the body below.
+- Titled panels reserve their header and clip children in the body below; add
+  `overflow_y: "auto"` or a nested `ScrollArea` when that body must scroll.
 - Snapshot issues `below-minimum-viewport` and `unreachable-root-overflow`
   identify responsive-minimum and missing-scroll-owner problems.
 """,
@@ -3188,7 +3190,7 @@ Related probes: `examples/css_feature_probes/custom_composite_widget_probe.py`,
     pytorch_dashboard_recipe = _section(
         "pytorch_dashboard",
         "PyTorch Dashboard Recipe",
-        "Training dashboard structure based on `examples/pytorch_training_dashboard.py`.",
+        "Training dashboard structure based on `examples/older/pytorch_training_dashboard.py`.",
         """
 Use an app-shell layout with:
 - left-side run configuration and hyperparameters,
@@ -3200,7 +3202,7 @@ Keep training work off the UI thread. Push metric updates through
 `app.call_soon_threadsafe(...)`, `LinePlot.append_points(...)`,
 `ProgressBar.set_value(...)`, `LogView.append(...)`, and table/label setters.
 
-Related example: `examples/pytorch_training_dashboard.py`.
+Related example: `examples/older/pytorch_training_dashboard.py`.
 """,
     )
     recipes = _section(
@@ -3524,14 +3526,14 @@ Checks:
   padding hacks when the issue appears in multiple themes.
 
 Relevant probes: `tool_buttons_probe.py`, `data_table_upgrades_probe.py`,
-`pytorch_training_dashboard.py`.
+`older/pytorch_training_dashboard.py`.
 """,
         metadata={
             "probes": [
                 "examples/css_feature_probes/tool_buttons_probe.py",
                 "examples/css_feature_probes/data_table_upgrades_probe.py",
             ],
-            "examples": ["examples/pytorch_training_dashboard.py"],
+            "examples": ["examples/older/pytorch_training_dashboard.py"],
         },
     )
     troubleshooting_plots = _section(

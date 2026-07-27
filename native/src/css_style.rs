@@ -19567,6 +19567,35 @@ mod tests {
     }
 
     #[test]
+    fn framework_nav_item_label_clears_selected_accent_bar() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "nav-a",
+                "type": "nav_item",
+                "props": {"label": "Alpha", "page": "alpha", "active": true}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store.install_framework_defaults(&Theme::dark());
+
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+
+        let nav = &tree.children[0];
+        let item = nav.style.parts.parts.get("item").unwrap();
+        let accent = nav.style.parts.parts.get("accent").unwrap();
+        let item_padding = item.layout.padding.unwrap();
+        let accent_inset = accent.layout.padding.unwrap();
+        let clearance = item_padding - accent_inset - crate::style::PANEL_ACCENT_WIDTH_LP;
+
+        assert_eq!(accent_inset, 4.0);
+        assert_eq!(item_padding, 11.0);
+        assert_eq!(clearance, 4.0);
+    }
+
+    #[test]
     fn framework_exposes_theme_derived_spacing_tokens_to_user_css() {
         let mut tree = crate::document::parse_widget_node(&serde_json::json!({
             "id": "root",

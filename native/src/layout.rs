@@ -21,6 +21,7 @@ const MENU_LABEL_WIDTH_SAFETY_LP: f32 = 6.0;
 const PANEL_BODY_VISUAL_INSET_LP: f32 = 1.0;
 const LOADING_SPINNER_DEFAULT_SIZE_LP: f32 = 18.0;
 const LOADING_SPINNER_GAP_LP: f32 = 8.0;
+const NAV_ITEM_MIN_HEIGHT_LP: f32 = 28.0;
 const SIDEBAR_COMPACT_BREAKPOINT_LP: f32 = 700.0;
 const SIDEBAR_MOBILE_BREAKPOINT_LP: f32 = 480.0;
 
@@ -183,7 +184,6 @@ pub(crate) fn resolved_widget_geometry_fallback(
         | WidgetKind::MenuItem
         | WidgetKind::NumberInput
         | WidgetKind::DragNumber
-        | WidgetKind::NavItem
         | WidgetKind::Tab
         | WidgetKind::Checkbox
         | WidgetKind::ToggleSwitch
@@ -192,6 +192,9 @@ pub(crate) fn resolved_widget_geometry_fallback(
         | WidgetKind::ProgressBar
         | WidgetKind::TextInput => {
             fallback.height = Some(control_height);
+        }
+        WidgetKind::NavItem => {
+            fallback.height = Some(control_height.max(NAV_ITEM_MIN_HEIGHT_LP));
         }
         WidgetKind::Badge | WidgetKind::Tag => {
             fallback.height = Some((font_size + 8.0).max(20.0));
@@ -731,6 +734,7 @@ pub fn compute_layout(
         None,
         None,
         None,
+        None,
         false,
         false,
         false,
@@ -797,6 +801,7 @@ fn build_node(
     parent_size: Option<(f32, f32)>,
     parent_kind: Option<&WidgetKind>,
     parent_flex_direction: Option<FlexDirection>,
+    parent_align_items: Option<AlignItems>,
     parent_splitter_pane_budget: Option<f32>,
     parent_preserves_preferred_main_size: bool,
     parent_allows_intrinsic_leaf_width: bool,
@@ -812,6 +817,7 @@ fn build_node(
         parent_size,
         parent_kind,
         parent_flex_direction,
+        parent_align_items,
         parent_splitter_pane_budget,
         parent_preserves_preferred_main_size,
         parent_allows_intrinsic_leaf_width,
@@ -862,6 +868,7 @@ fn build_node(
                     body_parent_size,
                     Some(&node.kind),
                     Some(body_style.flex_direction),
+                    body_style.align_items,
                     None,
                     preserves_child_preferred_main_size(node, body_style.flex_direction),
                     child_allows_intrinsic_leaf_width,
@@ -888,6 +895,7 @@ fn build_node(
                     child_parent_size,
                     Some(&node.kind),
                     Some(style.flex_direction),
+                    style.align_items,
                     child_splitter_pane_budget,
                     preserves_child_preferred_main_size(node, style.flex_direction),
                     child_allows_intrinsic_leaf_width,
@@ -1102,6 +1110,7 @@ fn style_for(
         parent_size,
         parent_kind,
         parent_flex_direction,
+        None,
         parent_splitter_pane_budget,
         parent_preserves_preferred_main_size,
         parent_allows_intrinsic_leaf_width,
@@ -1118,6 +1127,7 @@ fn style_for_with_viewport(
     parent_size: Option<(f32, f32)>,
     parent_kind: Option<&WidgetKind>,
     parent_flex_direction: Option<FlexDirection>,
+    parent_align_items: Option<AlignItems>,
     parent_splitter_pane_budget: Option<f32>,
     parent_preserves_preferred_main_size: bool,
     parent_allows_intrinsic_leaf_width: bool,
@@ -1838,7 +1848,8 @@ fn style_for_with_viewport(
         sf,
         theme,
     );
-    apply_compact_boolean_leaf_alignment(&mut style, node);
+    apply_compact_boolean_leaf_alignment(&mut style, node, parent_align_items);
+    apply_inline_status_leaf_alignment(&mut style, node, parent_flex_direction);
     apply_scroll_area_child_content_sizing(&mut style, parent_kind);
     reserve_collapsible_header_space(&mut style, node, sf, theme, parent_size, state);
     normalize_tree_node_layout_style(&mut style, node, sf, theme, parent_size, state);
@@ -2850,17 +2861,21 @@ fn apply_flow_layout_alignment(style: &mut Style, node: &WidgetNode) {
     if node.kind != WidgetKind::FlowLayout {
         return;
     }
-    style.justify_content = match node.props.flow_align.as_deref().unwrap_or("start") {
-        "center" => Some(JustifyContent::Center),
-        "end" => Some(JustifyContent::FlexEnd),
-        _ => Some(JustifyContent::FlexStart),
-    };
-    style.align_items = match node.props.flow_cross_align.as_deref().unwrap_or("start") {
-        "center" => Some(AlignItems::Center),
-        "end" => Some(AlignItems::FlexEnd),
-        "stretch" => Some(AlignItems::Stretch),
-        _ => Some(AlignItems::FlexStart),
-    };
+    if let Some(align) = node.props.flow_align.as_deref() {
+        style.justify_content = match align {
+            "center" => Some(JustifyContent::Center),
+            "end" => Some(JustifyContent::FlexEnd),
+            _ => Some(JustifyContent::FlexStart),
+        };
+    }
+    if let Some(cross_align) = node.props.flow_cross_align.as_deref() {
+        style.align_items = match cross_align {
+            "center" => Some(AlignItems::Center),
+            "end" => Some(AlignItems::FlexEnd),
+            "stretch" => Some(AlignItems::Stretch),
+            _ => Some(AlignItems::FlexStart),
+        };
+    }
 }
 
 fn max_dimension_length(value: Dimension, min_px: f32) -> Dimension {
@@ -3150,11 +3165,19 @@ fn apply_intrinsic_leaf_width(
     style.min_size.width = min_dimension_at_least(style.min_size.width, min_width);
 }
 
-fn apply_compact_boolean_leaf_alignment(style: &mut Style, node: &WidgetNode) {
+fn apply_compact_boolean_leaf_alignment(
+    style: &mut Style,
+    node: &WidgetNode,
+    parent_align_items: Option<AlignItems>,
+) {
     if !is_compact_boolean_leaf(node.kind)
         || style.align_self.is_some()
         || node.props.fixed_width.is_some()
         || authored_width_locks_intrinsic_leaf(node)
+        || matches!(
+            parent_align_items,
+            Some(AlignItems::FlexStart | AlignItems::Center | AlignItems::FlexEnd)
+        )
     {
         return;
     }
@@ -3163,6 +3186,23 @@ fn apply_compact_boolean_leaf_alignment(style: &mut Style, node: &WidgetNode) {
 
 fn is_compact_boolean_leaf(kind: WidgetKind) -> bool {
     matches!(kind, WidgetKind::Checkbox | WidgetKind::ToggleSwitch)
+}
+
+fn apply_inline_status_leaf_alignment(
+    style: &mut Style,
+    node: &WidgetNode,
+    parent_flex_direction: Option<FlexDirection>,
+) {
+    if !matches!(node.kind, WidgetKind::Badge | WidgetKind::Tag | WidgetKind::Led)
+        || style.align_self.is_some()
+        || !matches!(
+            parent_flex_direction,
+            Some(FlexDirection::Row | FlexDirection::RowReverse)
+        )
+    {
+        return;
+    }
+    style.align_self = Some(AlignItems::Center);
 }
 
 fn authored_width_locks_intrinsic_leaf(node: &WidgetNode) -> bool {
@@ -3427,7 +3467,12 @@ fn node_font_size_lp(node: &WidgetNode, theme: &Theme) -> f32 {
 
 fn node_control_height_lp(node: &WidgetNode, theme: &Theme) -> f32 {
     let font_size = node_font_size_lp(node, theme);
-    (font_size + theme.spacing * 2.0 + 2.0).max(25.0)
+    let control_height = (font_size + theme.spacing * 2.0 + 2.0).max(25.0);
+    if node.kind == WidgetKind::NavItem {
+        control_height.max(NAV_ITEM_MIN_HEIGHT_LP)
+    } else {
+        control_height
+    }
 }
 
 fn apply_node_style(
@@ -5004,6 +5049,7 @@ fn layout_modal(
         sf,
         theme,
         Some((modal_w, modal_h)),
+        None,
         None,
         None,
         None,
@@ -7981,6 +8027,61 @@ mod tests {
             layout.scroll_max_y.get("body").copied().unwrap_or(0.0) > 0.0,
             "bounded vertical body should own overflow from its fixed sections: body={body:?}"
         );
+    }
+
+    #[test]
+    fn nav_items_keep_equal_physical_height_and_gap_at_125_percent_scale() {
+        let items: Vec<WidgetNode> = (0..5)
+            .map(|index| {
+                node(
+                    &format!("nav-{index}"),
+                    WidgetKind::NavItem,
+                    NodeProps {
+                        text: Some(format!("Section {index}")),
+                        ..NodeProps::default()
+                    },
+                    vec![],
+                )
+            })
+            .collect();
+        let mut sidebar = node(
+            "sidebar",
+            WidgetKind::Sidebar,
+            NodeProps {
+                fixed_width: Some(236.0),
+                ..NodeProps::default()
+            },
+            items,
+        );
+        sidebar.style.layout.padding = Some(16.0);
+        sidebar.style.layout.gap = Some(8.0);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![sidebar],
+        );
+        let mut theme = Theme::dark();
+        theme.spacing = 6.0;
+
+        let layout = compute_layout(&root, 360.0, 500.0, 1.25, &theme, None);
+        let rects: Vec<Rect> = (0..5)
+            .map(|index| layout.rects[&format!("nav-{index}")])
+            .collect();
+
+        for rect in &rects {
+            assert_eq!(
+                rect.h, 35.0,
+                "28 logical pixels should resolve to 35 physical pixels at 125%: {rect:?}"
+            );
+        }
+        for pair in rects.windows(2) {
+            let gap = pair[1].y - (pair[0].y + pair[0].h);
+            assert_eq!(
+                gap, 10.0,
+                "8 logical pixels should resolve to 10 physical pixels at 125%: {pair:?}"
+            );
+        }
     }
 
     #[test]
@@ -11419,6 +11520,164 @@ mod tests {
             third.y >= first.y + first.h + 12.0,
             "third child should wrap with at least row_gap spacing"
         );
+    }
+
+    #[test]
+    fn flow_layout_authored_center_alignment_keeps_search_button_and_toggle_centers_equal() {
+        let search_icon = node(
+            "search-icon",
+            WidgetKind::IconButton,
+            NodeProps {
+                fixed_width: Some(28.0),
+                fixed_height: Some(28.0),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        let search_input = node(
+            "search-input",
+            WidgetKind::TextInput,
+            NodeProps {
+                fixed_height: Some(28.0),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        let mut search = node(
+            "search",
+            WidgetKind::HLayout,
+            NodeProps {
+                fixed_width: Some(260.0),
+                fixed_height: Some(38.0),
+                ..NodeProps::default()
+            },
+            vec![search_icon, search_input],
+        );
+        search.style.layout.align_items = Some(AlignItemsStyle::Center);
+
+        let button = node(
+            "button",
+            WidgetKind::Button,
+            NodeProps {
+                fixed_width: Some(96.0),
+                fixed_height: Some(28.0),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        let toggle = node(
+            "toggle",
+            WidgetKind::ToggleSwitch,
+            NodeProps {
+                text: Some("Anomalies only".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        let mut flow = node(
+            "controls",
+            WidgetKind::FlowLayout,
+            NodeProps::default(),
+            vec![search, button, toggle],
+        );
+        flow.style.layout.align_items = Some(AlignItemsStyle::Center);
+        flow.style.layout.gap = Some(9.0);
+
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![flow],
+        );
+        let layout = compute_layout(&root, 700.0, 120.0, 1.0, &Theme::dark(), None);
+        let input = layout.rects["search-input"];
+        let button = layout.rects["button"];
+        let toggle = layout.rects["toggle"];
+        let input_center = input.y + input.h * 0.5;
+        let button_center = button.y + button.h * 0.5;
+        let toggle_center = toggle.y + toggle.h * 0.5;
+
+        assert!(
+            (input_center - button_center).abs() <= 0.5,
+            "mixed-height search and button surfaces should share a vertical center: input={input:?} button={button:?}"
+        );
+        assert!(
+            (input_center - toggle_center).abs() <= 0.5,
+            "compact toggles should inherit the row's vertical center: controls={:?} search={:?} input={input:?} button={button:?} toggle={toggle:?}",
+            layout.rects["controls"],
+            layout.rects["search"],
+        );
+    }
+
+    #[test]
+    fn horizontal_flow_centers_badges_tags_and_leds_with_normal_controls_at_125_percent_scale() {
+        let led = node(
+            "led",
+            WidgetKind::Led,
+            NodeProps {
+                led_size: Some(14.0),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        let mut badge = node(
+            "badge",
+            WidgetKind::Badge,
+            NodeProps {
+                text: Some("online".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        badge.style.text.font_size = Some(13.0);
+        let mut tag = node(
+            "tag",
+            WidgetKind::Tag,
+            NodeProps {
+                text: Some("beta".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        tag.style.text.font_size = Some(13.0);
+        let button = node(
+            "button",
+            WidgetKind::Button,
+            NodeProps {
+                text: Some("Launch".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        let mut flow = node(
+            "status-row",
+            WidgetKind::FlowLayout,
+            NodeProps::default(),
+            vec![led, badge, tag, button],
+        );
+        flow.style.layout.gap = Some(8.0);
+
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![flow],
+        );
+        let layout = compute_layout(&root, 700.0, 120.0, 1.25, &Theme::dark(), None);
+        let center = |id: &str| {
+            let rect = layout.rects[id];
+            rect.y + rect.h * 0.5
+        };
+        let button_center = center("button");
+
+        for id in ["led", "badge", "tag"] {
+            assert!(
+                (center(id) - button_center).abs() <= 0.5,
+                "{id} should share the normal control's physical vertical center at 125%: status={:?} button={:?}",
+                layout.rects[id],
+                layout.rects["button"],
+            );
+        }
     }
 
     #[test]

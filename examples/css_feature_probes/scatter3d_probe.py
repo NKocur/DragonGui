@@ -668,6 +668,11 @@ with dg.VLayout(class_="root"):
                     colormap="plasma",
                     grid=True,
                     orientation_axes=True,
+                    scalar_bar=True,
+                    scalar_bar_vmin=0.0,
+                    scalar_bar_vmax=9.0,
+                    scalar_bar_colormap="plasma",
+                    scalar_bar_title="Time-averaged particle energy density (normalized)",
                     class_="scalar-v1",
                 )
 

@@ -356,11 +356,11 @@ Sidebar[state="drawer"] {
 }
 
 NavItem::accent {
-    padding: 2px;
+    padding: 4px;
 }
 
 NavItem::item {
-    padding: 5px;
+    padding: 11px;
 }
 
 Tab::tab {

@@ -973,14 +973,26 @@ fn overlay_to_ndc(w: f32, h: f32, px: f32, py: f32) -> [f32; 2] {
     [nx, ny]
 }
 
+const SCALAR_BAR_WIDTH_PX: f32 = 16.0;
+const SCALAR_BAR_TICK_GAP_PX: f32 = 6.0;
+const SCALAR_BAR_RIGHT_PADDING_PX: f32 = 12.0;
+const SCALAR_BAR_TICK_LABEL_WIDTH_PX: f32 = 58.0;
+const SCALAR_BAR_RIGHT_GUTTER_PX: f32 =
+    SCALAR_BAR_TICK_GAP_PX + SCALAR_BAR_TICK_LABEL_WIDTH_PX + SCALAR_BAR_RIGHT_PADDING_PX;
+const SCALAR_BAR_TOP_PX: f32 = 40.0;
+const SCALAR_BAR_TITLE_TOP_PX: f32 = 10.0;
+const SCALAR_BAR_TITLE_RIGHT_INSET_PX: f32 = 8.0;
+
+fn scalar_bar_geometry(w: f32, h: f32) -> (f32, f32, f32, f32) {
+    let bar_h = (h * 0.45).min(220.0).max(60.0);
+    let bar_x1 = w - SCALAR_BAR_RIGHT_GUTTER_PX - SCALAR_BAR_WIDTH_PX;
+    let bar_x2 = w - SCALAR_BAR_RIGHT_GUTTER_PX;
+    (bar_x1, bar_x2, SCALAR_BAR_TOP_PX, bar_h)
+}
+
 fn push_scalar_bar_vertices(w: f32, h: f32, colormap: &str, verts: &mut Vec<OverlayVertex>) {
-    let bar_w: f32 = 16.0;
-    let bar_h: f32 = (h * 0.45).min(220.0).max(60.0);
-    let margin_r: f32 = 52.0;
-    let bar_top: f32 = 32.0;
+    let (bar_x1, bar_x2, bar_top, bar_h) = scalar_bar_geometry(w, h);
     let bar_bottom: f32 = bar_top + bar_h;
-    let bar_x1: f32 = w - margin_r - bar_w;
-    let bar_x2: f32 = w - margin_r;
     let n_strips: usize = 64;
     let cmap = colormap::resolve(colormap);
     for i in 0..n_strips {
@@ -3050,8 +3062,8 @@ impl ScatterWidget {
             let (legend_x, legend_y) = match self.chrome.legend.position {
                 LegendPosition::TopRight => {
                     let y = if has_scalar {
-                        let bar_h = (h * 0.45).min(220.0).max(60.0);
-                        32.0 + bar_h + 10.0
+                        let (_, _, bar_top, bar_h) = scalar_bar_geometry(w, h);
+                        bar_top + bar_h + 10.0
                     } else {
                         margin
                     };
@@ -3118,12 +3130,7 @@ impl ScatterWidget {
 
         // ── Scalar bar ───────────────────────────────────────────────────────
         if has_scalar {
-            let bar_w: f32 = 16.0;
-            let bar_h: f32 = (h * 0.45).min(220.0).max(60.0);
-            let margin_r: f32 = 52.0;
-            let bar_top: f32 = 32.0;
-            let bar_x1: f32 = w - margin_r - bar_w;
-            let bar_x2: f32 = w - margin_r;
+            let (_bar_x1, bar_x2, bar_top, bar_h) = scalar_bar_geometry(w, h);
             let scalar_cache_matches =
                 self.scalar_bar_vertex_cache_key
                     .as_ref()
@@ -3155,7 +3162,7 @@ impl ScatterWidget {
                 2
             };
             let tick_vals = scalar_bar_tick_values(sb.vmin, sb.vmax, sb.log_scale, max_ticks);
-            let label_x = self.offset[0] + bar_x2 + 4.0;
+            let label_x = self.offset[0] + bar_x2 + SCALAR_BAR_TICK_GAP_PX;
             for (i, &val) in tick_vals.iter().enumerate() {
                 let t = if tick_vals.len() == 1 {
                     0.5 // single tick (constant-value bar): center on the bar
@@ -3176,13 +3183,15 @@ impl ScatterWidget {
             }
             if let Some(title) = &sb.title {
                 self.pending_labels.push(ProjectedLabel {
-                    screen_x: self.offset[0] + bar_x1,
-                    screen_y: self.offset[1] + bar_top - 16.0,
+                    // The text renderer bounds this region to the scatter viewport,
+                    // right-aligns it over the bar/tick area, and ellipsizes overflow.
+                    screen_x: self.offset[0] + w - SCALAR_BAR_TITLE_RIGHT_INSET_PX,
+                    screen_y: self.offset[1] + SCALAR_BAR_TITLE_TOP_PX,
                     text: title.clone(),
                     is_title: true,
                     color: None,
                     font_size: None,
-                    anchor: "top-left".into(),
+                    anchor: "scalar-bar-title".into(),
                 });
             }
         }
@@ -4753,6 +4762,31 @@ mod tests {
         assert_eq!(format_scalar_bar_tick(0.0, false), "0.000");
         assert_eq!(format_scalar_bar_tick(-3.14159, false), "-3.142");
         assert_eq!(format_scalar_bar_tick(1234.5, false), "1234.500");
+    }
+
+    #[test]
+    fn scalar_bar_geometry_reserves_title_gap_and_tick_gutter() {
+        let width = 640.0;
+        let (_x1, x2, top, height) = scalar_bar_geometry(width, 480.0);
+        let title_line_bottom = SCALAR_BAR_TITLE_TOP_PX + 13.0 * 1.3;
+
+        assert!(
+            top - title_line_bottom >= 8.0,
+            "scalar-bar title should have a visible gap before the bar"
+        );
+        assert_eq!(width - x2, SCALAR_BAR_RIGHT_GUTTER_PX);
+        assert!(
+            SCALAR_BAR_TICK_LABEL_WIDTH_PX >= 56.0,
+            "scalar-bar ticks need room for formatted values before the right inset"
+        );
+        assert!(
+            SCALAR_BAR_RIGHT_GUTTER_PX
+                - SCALAR_BAR_TICK_GAP_PX
+                - SCALAR_BAR_TICK_LABEL_WIDTH_PX
+                >= SCALAR_BAR_RIGHT_PADDING_PX,
+            "scalar-bar tick labels should retain explicit right-edge padding"
+        );
+        assert!((60.0..=220.0).contains(&height));
     }
 
     #[test]

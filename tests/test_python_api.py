@@ -149,7 +149,7 @@ def test_builtin_help_manual_exposes_nested_sections() -> None:
     assert "Thread-Safe Updates" in dg.help.live_updates.threads()
     assert dg.help.search("thread safe updates")[0]["path"] == "live_updates.threads"
     assert "Dashboard Recipe" in dg.help.recipes.dashboard()
-    assert "examples/pytorch_training_dashboard.py" in dg.help.recipes.pytorch_dashboard()
+    assert "examples/older/pytorch_training_dashboard.py" in dg.help.recipes.pytorch_dashboard()
     assert "LinePlot.append_points" in dg.help.recipes.streaming_line_plot()
     assert dg.help("styling.parts").startswith("# CSS Parts")
     assert "DragSource" in dg.help.drag_drop()
@@ -181,12 +181,37 @@ def test_builtin_help_manual_exposes_nested_sections() -> None:
     grid_metadata = data["children"]["reference"]["children"]["widgets"]["children"]["grid_layout"]["metadata"]
     assert "examples/css_feature_probes/layout_grid_masonry_probe.py" in grid_metadata["probes"]
     progress_metadata = data["children"]["reference"]["children"]["widgets"]["children"]["progress_bar"]["metadata"]
-    assert progress_metadata["examples"] == ["examples/pytorch_training_dashboard.py"]
+    assert progress_metadata["examples"] == ["examples/nexus_studio_stress_demo.py"]
 
 
 def test_builtin_help_manual_reference_covers_public_exports() -> None:
     symbol_paths = _help_symbol_paths(dg.help.to_dict())
     missing = [name for name in dg.__all__ if name not in symbol_paths]
+    assert missing == []
+
+
+def test_builtin_help_manual_example_and_probe_paths_exist() -> None:
+    """Keep the manual's executable example links valid as examples move."""
+
+    def walk(node: dict[str, object]) -> list[dict[str, object]]:
+        children = node.get("children", {})
+        assert isinstance(children, dict)
+        nodes = [node]
+        for child in children.values():
+            assert isinstance(child, dict)
+            nodes.extend(walk(child))
+        return nodes
+
+    project_root = Path(__file__).resolve().parents[1]
+    missing: list[str] = []
+    for node in walk(dg.help.to_dict()):
+        metadata = node.get("metadata", {})
+        assert isinstance(metadata, dict)
+        for key in ("examples", "probes"):
+            paths = metadata.get(key, [])
+            assert isinstance(paths, list)
+            missing.extend(str(path) for path in paths if not (project_root / str(path)).is_file())
+
     assert missing == []
 
 
