@@ -436,7 +436,7 @@ The native renderer also resolves derived tokens such as accent mix and accent
 dark variants.
 
 Python `Theme` color fields accept literal CSS-style color strings: hex forms
-including alpha, `transparent`, common named colors, `rgb()/rgba()`, and
+including alpha, `transparent`, standard CSS named colors, `rgb()/rgba()`, and
 `hsl()/hsla()`, and `hwb()`, plus `lab()`, `lch()`, `oklab()`, `oklch()`,
 `color(srgb ...)`, and `color(srgb-linear ...)`.
 

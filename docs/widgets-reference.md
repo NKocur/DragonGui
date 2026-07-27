@@ -189,7 +189,7 @@ Supported color values:
 - `#RGBA`
 - `#RRGGBB`
 - `#RRGGBBAA`
-- `transparent`, common named colors, `rgb(...)`, `rgba(...)`, `hsl(...)`,
+- `transparent`, standard CSS named colors, `rgb(...)`, `rgba(...)`, `hsl(...)`,
   `hsla(...)`, and `hwb(...)`.
 - Global `:root` variables through `var(--name)` and
   `var(--name, fallback)`, including inside larger parseable property values.
@@ -325,7 +325,7 @@ CSS:
 
 - Theme fields are available as CSS tokens.
 - Color fields accept the same literal color strings as CSS and inline styles:
-  hex colors, `transparent`, common named colors, `rgb()/rgba()`,
+  hex colors, `transparent`, standard CSS named colors, `rgb()/rgba()`,
   `hsl()/hsla()`, and `hwb()`, plus `lab()`, `lch()`, `oklab()`, `oklch()`,
   `color(srgb ...)`, and `color(srgb-linear ...)`. Theme fields do not resolve
   other theme tokens or `var(...)`.

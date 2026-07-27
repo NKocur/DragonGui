@@ -9,7 +9,7 @@ class Theme:
     """Design-token set for DragonGUI's native renderer.
 
     Color values are CSS-style strings accepted by the native color parser,
-    including hex, ``transparent``, common named colors, ``rgb()/rgba()``,
+    including hex, ``transparent``, standard CSS named colors, ``rgb()/rgba()``,
     ``hsl()/hsla()``, ``hwb()``, ``lab()``, ``lch()``, ``oklab()``, ``oklch()``,
     ``color(srgb ...)``, and ``color(srgb-linear ...)``.
     Numeric values are logical (device-independent) pixels.

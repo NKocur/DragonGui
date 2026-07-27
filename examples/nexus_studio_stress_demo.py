@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import math
 import random
 import sys
@@ -13,7 +14,1024 @@ import dragongui as dg
 
 
 NEXUS_THEME = dg.Theme.dark(accent="#8b7cff", radius=10, spacing=6)
+WINDOWS_311_THEME = dg.Theme.light(
+    background="#c0c0c0",
+    surface="#c0c0c0",
+    surface_alt="#ffffff",
+    text="#000000",
+    muted_text="#404040",
+    accent="#000080",
+    border="#808080",
+    danger="#800000",
+    warning="#808000",
+    success="#008000",
+    focus="#000080",
+    disabled="#808080",
+    radius=0,
+    spacing=6,
+    font_size=12,
+)
+MAC_OS_90S_THEME = dg.Theme.light(
+    background="#d9d9d9",
+    surface="#dedede",
+    surface_alt="#ffffff",
+    text="#000000",
+    muted_text="#505050",
+    accent="#333366",
+    border="#606060",
+    danger="#770000",
+    warning="#777000",
+    success="#247024",
+    focus="#000000",
+    disabled="#888888",
+    radius=3,
+    spacing=6,
+    font_size=12,
+)
 SPACE_MD = NEXUS_THEME.space_md
+
+WINDOWS_311_CSS = """
+    :root {
+        --win-face: #c0c0c0;
+        --win-light: #ffffff;
+        --win-highlight: #dfdfdf;
+        --win-shadow: #808080;
+        --win-dark: #000000;
+        --win-title: #000080;
+        --win-selection: #000080;
+        --win-text: #000000;
+        --win-selected-text: #ffffff;
+        --win-disabled: #808080;
+        --win-field: #ffffff;
+        --win-desktop: #008080;
+    }
+
+    Window {
+        background: var(--win-face);
+        color: var(--win-text);
+        font-family: "Microsoft Sans Serif";
+        font-size: 12px;
+    }
+
+    AppShell.nexus-shell,
+    WorkbenchLayout.nexus-workbench,
+    Body,
+    Pages,
+    Page {
+        background: var(--win-face);
+        color: var(--win-text);
+    }
+
+    Sidebar.nexus-sidebar {
+        background: var(--win-face);
+        border: 2px solid var(--win-shadow);
+        border-radius: 0;
+        padding: 8px;
+        gap: 6px;
+        box-shadow:
+            inset 1px 1px 0 var(--win-light),
+            inset -1px -1px 0 var(--win-dark);
+    }
+
+    .sidebar-subtitle,
+    .muted,
+    .page-description {
+        color: #404040;
+    }
+
+    .sidebar-subtitle { font-size: 11px; }
+
+    .sidebar-section,
+    .kicker {
+        color: var(--win-title);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0;
+        text-transform: none;
+    }
+
+    NavItem::item {
+        background: var(--win-face);
+        border: 1px solid transparent;
+        border-radius: 0;
+        color: var(--win-text);
+    }
+
+    NavItem:hover::item {
+        border-color: var(--win-shadow);
+    }
+
+    NavItem:selected::item {
+        background: var(--win-selection);
+        border-color: var(--win-selection);
+        color: var(--win-selected-text);
+    }
+
+    NavItem::accent {
+        width: 0;
+        background: transparent;
+    }
+
+    NavItem::badge,
+    Tab::badge {
+        background: var(--win-face);
+        border: 1px solid var(--win-dark);
+        border-radius: 0;
+        color: var(--win-text);
+        box-shadow: inset 1px 1px 0 var(--win-light);
+    }
+
+    NavItem:selected::badge,
+    Tab:selected::badge {
+        background: var(--win-light);
+        color: var(--win-text);
+    }
+
+    MenuBar {
+        background: var(--win-face);
+        border-color: var(--win-shadow);
+        border-radius: 0;
+        color: var(--win-text);
+        padding: 2px 4px;
+    }
+
+    Menu,
+    MenuItem {
+        background: var(--win-face);
+        border-radius: 0;
+        color: var(--win-text);
+    }
+
+    Menu:hover,
+    MenuItem:hover {
+        background: var(--win-selection);
+        color: var(--win-selected-text);
+    }
+
+    Toolbar.nexus-toolbar {
+        background: var(--win-face);
+        border: 2px solid var(--win-shadow);
+        border-radius: 0;
+        padding: 4px 5px;
+        gap: 5px;
+        box-shadow:
+            inset 1px 1px 0 var(--win-light),
+            inset -1px -1px 0 var(--win-dark);
+    }
+
+    ToolbarSeparator {
+        background: var(--win-shadow);
+        border-color: var(--win-light);
+    }
+
+    Tabs {
+        background: var(--win-face);
+        border-color: var(--win-shadow);
+        border-radius: 0;
+    }
+
+    Tab::tab {
+        background: var(--win-face);
+        border: 2px solid var(--win-shadow);
+        border-radius: 0;
+        color: var(--win-text);
+        box-shadow:
+            inset 1px 1px 0 var(--win-light),
+            inset -1px -1px 0 var(--win-dark);
+    }
+
+    Tab:selected::tab {
+        background: var(--win-face);
+        color: var(--win-text);
+        box-shadow:
+            inset 2px 2px 0 var(--win-light),
+            inset -1px -1px 0 var(--win-shadow);
+    }
+
+    Tab::accent {
+        height: 0;
+        background: transparent;
+    }
+
+    StatusBar.nexus-status {
+        background: var(--win-face);
+        border: 2px solid var(--win-shadow);
+        border-radius: 0;
+        color: var(--win-text);
+        box-shadow:
+            inset 1px 1px 0 var(--win-shadow),
+            inset -1px -1px 0 var(--win-light);
+    }
+
+    SearchBox.global-search { width: 300px; }
+
+    ScrollArea.nexus-page-scroll {
+        background: var(--win-face);
+        padding: 6px 10px 22px 4px;
+        gap: 12px;
+    }
+
+    ScrollArea#diagnostics-scroll { gap: var(--dg-space-md); }
+
+    DataFrameTable::scrollbar-track {
+        background: var(--win-highlight);
+        border: 1px solid var(--win-shadow);
+        border-radius: 0;
+    }
+
+    DataFrameTable::scrollbar-thumb {
+        background: var(--win-face);
+        border: 1px solid var(--win-dark);
+        border-radius: 0;
+        box-shadow: inset 1px 1px 0 var(--win-light);
+    }
+
+    Splitter.diagnostic-splitter::gutter {
+        width: 4px;
+        background: var(--win-face);
+        border: 1px solid var(--win-shadow);
+    }
+
+    Panel {
+        background: var(--win-face);
+        border: 2px solid var(--win-shadow);
+        border-radius: 0;
+        color: var(--win-text);
+        box-shadow:
+            inset 1px 1px 0 var(--win-light),
+            inset -1px -1px 0 var(--win-dark);
+    }
+
+    Panel.sidebar-card,
+    Panel.hero-card {
+        background: var(--win-face);
+        border-color: var(--win-shadow);
+        border-radius: 0;
+        padding: 10px;
+        box-shadow:
+            inset 1px 1px 0 var(--win-light),
+            inset -1px -1px 0 var(--win-dark);
+    }
+
+    Panel Panel {
+        box-shadow:
+            inset 1px 1px 0 var(--win-light),
+            inset -1px -1px 0 var(--win-dark);
+    }
+
+    Button,
+    SmallButton,
+    IconButton,
+    Dropdown,
+    NumberInput,
+    DateInput,
+    TimeInput,
+    DateTimeInput {
+        background: var(--win-face);
+        border: 2px solid var(--win-shadow);
+        border-radius: 0;
+        color: var(--win-text);
+        box-shadow:
+            inset 1px 1px 0 var(--win-light),
+            inset -1px -1px 0 var(--win-dark);
+    }
+
+    Button:hover,
+    SmallButton:hover,
+    IconButton:hover,
+    Dropdown:hover {
+        background: var(--win-highlight);
+        border-color: var(--win-shadow);
+    }
+
+    Button:active,
+    SmallButton:active,
+    IconButton:active {
+        background: var(--win-face);
+        box-shadow:
+            inset 1px 1px 0 var(--win-dark),
+            inset -1px -1px 0 var(--win-light);
+    }
+
+    Button:focus,
+    SmallButton:focus,
+    IconButton:focus,
+    Dropdown:focus,
+    TextInput:focus,
+    TextArea:focus,
+    NumberInput:focus {
+        outline: 1px solid var(--win-dark);
+        outline-offset: -4px;
+    }
+
+    Button.primary {
+        background: var(--win-face);
+        border-color: var(--win-shadow);
+        color: var(--win-text);
+        font-weight: 700;
+        box-shadow:
+            0 0 0 1px var(--win-dark),
+            inset 1px 1px 0 var(--win-light),
+            inset -1px -1px 0 var(--win-dark);
+    }
+
+    Button.primary:hover {
+        background: var(--win-highlight);
+        box-shadow:
+            0 0 0 1px var(--win-dark),
+            inset 1px 1px 0 var(--win-light),
+            inset -1px -1px 0 var(--win-dark);
+    }
+
+    Button.primary:active {
+        box-shadow:
+            0 0 0 1px var(--win-dark),
+            inset 1px 1px 0 var(--win-dark),
+            inset -1px -1px 0 var(--win-light);
+    }
+
+    TextInput,
+    TextArea,
+    SearchBox,
+    CodeEditor,
+    LogView {
+        background: var(--win-field);
+        border: 2px solid var(--win-shadow);
+        border-radius: 0;
+        color: var(--win-text);
+        box-shadow:
+            inset 1px 1px 0 var(--win-dark),
+            inset -1px -1px 0 var(--win-light);
+    }
+
+    Dropdown::field {
+        background: var(--win-field);
+        border-radius: 0;
+        color: var(--win-text);
+    }
+
+    Dropdown::menu {
+        background: var(--win-face);
+        border: 2px solid var(--win-dark);
+        border-radius: 0;
+        color: var(--win-text);
+        box-shadow: inset 1px 1px 0 var(--win-light);
+    }
+
+    Dropdown::item-hover,
+    Dropdown::item-selected {
+        background: var(--win-selection);
+        color: var(--win-selected-text);
+    }
+
+    Badge,
+    Tag {
+        background: var(--win-face);
+        border: 1px solid var(--win-dark);
+        border-radius: 0;
+        color: var(--win-text);
+        box-shadow: inset 1px 1px 0 var(--win-light);
+    }
+
+    Badge.success,
+    Badge.info,
+    Badge.warning {
+        background: var(--win-face);
+        border-color: var(--win-dark);
+        color: var(--win-text);
+    }
+
+    ProgressBar {
+        background: var(--win-field);
+        border: 2px solid var(--win-shadow);
+        border-radius: 0;
+        color: var(--win-selected-text);
+        box-shadow:
+            inset 1px 1px 0 var(--win-dark),
+            inset -1px -1px 0 var(--win-light);
+    }
+
+    ProgressBar::track {
+        background: var(--win-field);
+        border-radius: 0;
+    }
+
+    ProgressBar::fill {
+        background: var(--win-selection);
+        border-radius: 0;
+    }
+
+    Checkbox::box,
+    RadioButton {
+        background: var(--win-field);
+        border: 2px solid var(--win-shadow);
+        border-radius: 0;
+        box-shadow:
+            inset 1px 1px 0 var(--win-dark),
+            inset -1px -1px 0 var(--win-light);
+    }
+
+    ToggleSwitch::track,
+    Slider::track,
+    RangeSlider::track {
+        background: var(--win-field);
+        border: 1px solid var(--win-shadow);
+        border-radius: 0;
+    }
+
+    ToggleSwitch::thumb,
+    Slider::thumb,
+    RangeSlider::thumb-min,
+    RangeSlider::thumb-max {
+        background: var(--win-face);
+        border: 1px solid var(--win-dark);
+        border-radius: 0;
+        box-shadow: inset 1px 1px 0 var(--win-light);
+    }
+
+    DataFrameTable {
+        background: var(--win-field);
+        border: 2px solid var(--win-shadow);
+        border-radius: 0;
+        color: var(--win-text);
+        table-row-height: 22px;
+        table-header-height: 24px;
+        box-shadow:
+            inset 1px 1px 0 var(--win-dark),
+            inset -1px -1px 0 var(--win-light);
+    }
+
+    DataFrameTable::header {
+        background: var(--win-face);
+        color: var(--win-text);
+        font-weight: 700;
+    }
+
+    DataFrameTable::row { background: var(--win-field); }
+
+    DataFrameTable::row-selected {
+        background: var(--win-selection);
+        color: var(--win-selected-text);
+    }
+
+    DataFrameTable::grid-line { background: var(--win-shadow); }
+
+    Modal,
+    CommandPalette,
+    Tooltip,
+    ContextMenu {
+        background: var(--win-face);
+        border: 2px solid var(--win-dark);
+        border-radius: 0;
+        color: var(--win-text);
+        box-shadow:
+            inset 1px 1px 0 var(--win-light),
+            inset -1px -1px 0 var(--win-shadow);
+    }
+
+    .page-heading { gap: 4px; padding-bottom: 2px; }
+    .page-title { color: var(--win-title); font-size: 20px; font-weight: 700; }
+    .hero-copy { flex: 1; min-width: 250px; gap: 4px; }
+    .hero-title { color: var(--win-title); font-size: 18px; font-weight: 700; }
+    .sidebar-card-title { font-weight: 700; }
+
+    .metric-label {
+        color: #404040;
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+    }
+
+    .metric-value {
+        color: var(--win-title);
+        font-size: 24px;
+        font-weight: 700;
+    }
+
+    .mono {
+        color: var(--win-text);
+        font-family: "Courier New";
+    }
+
+    Panel.metric-card { min-height: 142px; }
+    .metric-header { min-height: 20px; }
+    .metric-progress { height: 8px; }
+    .capacity-row { gap: 4px; }
+    .capacity-heading { min-height: 28px; gap: 7px; }
+    Panel.chart-card,
+    Panel.capacity-card { min-height: 365px; }
+    Panel.small-chart-card { min-height: 315px; }
+    Panel.table-card { min-height: 400px; }
+    Panel.filter-card { padding: 12px; }
+    Panel.analysis-card { min-height: 365px; }
+    Panel.workflow-card { min-height: 390px; }
+    Panel.workflow-code-card { min-height: 470px; }
+    Panel.control-card { min-height: 330px; }
+    Panel.diagnostic-card { min-height: 300px; }
+    DataFrameTable { min-height: 180px; }
+    .check-row { gap: 9px; min-height: 42px; }
+    .check-copy { flex: 1; min-width: 0; gap: 2px; }
+
+    @media (max-width: 760px) {
+        Toolbar.nexus-toolbar { padding: 3px; }
+        SearchBox.global-search { width: 100%; flex-basis: 100%; }
+        .page-heading Tag { display: none; }
+        StatusBar.nexus-status Tag { display: none; }
+        ScrollArea.nexus-page-scroll { padding: 5px 8px 18px 2px; gap: 10px; }
+        .page-title { font-size: 17px; }
+        .hero-title { font-size: 15px; }
+        .hero-copy { min-width: 0; }
+        Panel.metric-card,
+        Panel.chart-card,
+        Panel.capacity-card,
+        Panel.small-chart-card,
+        Panel.table-card,
+        Panel.analysis-card,
+        Panel.workflow-card,
+        Panel.workflow-code-card,
+        Panel.control-card,
+        Panel.diagnostic-card {
+            min-height: auto;
+        }
+    }
+"""
+
+MAC_OS_90S_CSS = WINDOWS_311_CSS + """
+    /*
+     * Classic Macintosh "Platinum" experiment.
+     *
+     * The Windows 3.11 sheet supplies the shared retro box-model reset. This
+     * later layer deliberately restyles that geometry into a System 7 / early
+     * Mac OS 8 vocabulary, exercising DragonGui's cascade as well as its
+     * widget-part styling.
+     */
+    :root {
+        --win-face: #dedede;
+        --win-light: #ffffff;
+        --win-highlight: #eeeeee;
+        --win-shadow: #888888;
+        --win-dark: #000000;
+        --win-title: #000000;
+        --win-selection: #333366;
+        --win-text: #000000;
+        --win-selected-text: #ffffff;
+        --win-disabled: #888888;
+        --win-field: #ffffff;
+        --mac-platinum: #dedede;
+        --mac-platinum-light: #eeeeee;
+        --mac-stripe: #b8b8b8;
+        --mac-selection: #333366;
+        --mac-ink: #000000;
+    }
+
+    Window {
+        background: var(--mac-platinum);
+        color: var(--mac-ink);
+        font-family: "Arial";
+        font-size: 12px;
+    }
+
+    AppShell.nexus-shell,
+    WorkbenchLayout.nexus-workbench,
+    Body,
+    Pages,
+    Page,
+    ScrollArea.nexus-page-scroll {
+        background: var(--mac-platinum);
+    }
+
+    Sidebar.nexus-sidebar {
+        background:
+            repeating-linear-gradient(
+                0deg,
+                #eeeeee 0%,
+                #eeeeee 3%,
+                #c4c4c4 3%,
+                #c4c4c4 6%
+            );
+        border: 1px solid var(--mac-ink);
+        border-radius: 0;
+        padding: 9px;
+        box-shadow:
+            inset 1px 1px 0 #ffffff,
+            inset -1px -1px 0 #888888;
+    }
+
+    .sidebar-section,
+    .kicker {
+        color: var(--mac-ink);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.6px;
+        text-transform: uppercase;
+    }
+
+    .sidebar-subtitle,
+    .muted,
+    .page-description {
+        color: #505050;
+    }
+
+    NavItem::item {
+        background: rgba(222, 222, 222, 0.86);
+        border: 1px solid transparent;
+        border-radius: 2px;
+        color: var(--mac-ink);
+    }
+
+    NavItem:hover::item {
+        background: #eeeeee;
+        border-color: #888888;
+    }
+
+    NavItem:selected::item {
+        background: var(--mac-selection);
+        border-color: var(--mac-ink);
+        color: #ffffff;
+    }
+
+    NavItem::badge,
+    Tab::badge,
+    Badge,
+    Tag {
+        background: #ffffff;
+        border: 1px solid var(--mac-ink);
+        border-radius: 7px;
+        color: var(--mac-ink);
+        box-shadow: none;
+    }
+
+    NavItem:selected::badge,
+    Tab:selected::badge {
+        background: #ffffff;
+        color: var(--mac-ink);
+    }
+
+    MenuBar {
+        background: #ffffff;
+        border: 1px solid var(--mac-ink);
+        border-radius: 0;
+        color: var(--mac-ink);
+        padding: 2px 7px;
+        font-weight: 700;
+        box-shadow: none;
+    }
+
+    Menu,
+    MenuItem {
+        background: #ffffff;
+        border-radius: 0;
+        color: var(--mac-ink);
+    }
+
+    Menu:hover,
+    MenuItem:hover {
+        background: var(--mac-selection);
+        color: #ffffff;
+    }
+
+    Toolbar.nexus-toolbar {
+        background:
+            linear-gradient(180deg, #eeeeee, #d2d2d2);
+        border: 1px solid #777777;
+        border-radius: 0;
+        padding: 5px 6px;
+        gap: 6px;
+        box-shadow:
+            inset 1px 1px 0 #ffffff,
+            inset -1px -1px 0 #aaaaaa;
+    }
+
+    ToolbarSeparator {
+        background: #777777;
+        border-color: #ffffff;
+    }
+
+    Tabs {
+        background: var(--mac-platinum);
+        border-color: #777777;
+        border-radius: 0;
+    }
+
+    Tab::tab {
+        background: linear-gradient(180deg, #ffffff, #d0d0d0);
+        border: 1px solid var(--mac-ink);
+        border-radius: 4px;
+        color: var(--mac-ink);
+        box-shadow: 1px 1px 0 #888888;
+    }
+
+    Tab:hover::tab {
+        background: #ffffff;
+    }
+
+    Tab:selected::tab {
+        background: #ffffff;
+        border: 2px solid var(--mac-ink);
+        color: var(--mac-ink);
+        font-weight: 700;
+        box-shadow: none;
+    }
+
+    StatusBar.nexus-status {
+        background: #dedede;
+        border: 1px solid #777777;
+        border-radius: 0;
+        color: var(--mac-ink);
+        box-shadow:
+            inset 1px 1px 0 #888888,
+            inset -1px -1px 0 #ffffff;
+    }
+
+    Panel {
+        background: #dedede;
+        border: 1px solid var(--mac-ink);
+        border-radius: 2px;
+        color: var(--mac-ink);
+        box-shadow:
+            1px 1px 0 #777777,
+            inset 1px 1px 0 #ffffff;
+    }
+
+    Panel Panel {
+        box-shadow:
+            inset 1px 1px 0 #ffffff,
+            inset -1px -1px 0 #999999;
+    }
+
+    Panel.sidebar-card {
+        background: rgba(255, 255, 255, 0.68);
+        border: 1px solid var(--mac-ink);
+        border-radius: 2px;
+        box-shadow: inset 1px 1px 0 #ffffff;
+    }
+
+    Panel.hero-card {
+        background:
+            repeating-linear-gradient(
+                0deg,
+                #eeeeee 0%,
+                #eeeeee 3%,
+                #c7c7c7 3%,
+                #c7c7c7 6%
+            );
+        border: 2px solid var(--mac-ink);
+        border-radius: 0;
+        box-shadow:
+            inset 2px 2px 0 #ffffff,
+            inset -2px -2px 0 #777777;
+    }
+
+    Button,
+    SmallButton,
+    IconButton,
+    Dropdown,
+    NumberInput,
+    DateInput,
+    TimeInput,
+    DateTimeInput {
+        background: linear-gradient(180deg, #ffffff, #d2d2d2);
+        border: 1px solid var(--mac-ink);
+        border-radius: 4px;
+        color: var(--mac-ink);
+        box-shadow:
+            1px 1px 0 #777777,
+            inset 1px 1px 0 #ffffff;
+    }
+
+    Button:hover,
+    SmallButton:hover,
+    IconButton:hover,
+    Dropdown:hover {
+        background: #ffffff;
+        border-color: var(--mac-ink);
+    }
+
+    Button:active,
+    SmallButton:active,
+    IconButton:active {
+        background: #888888;
+        color: #ffffff;
+        box-shadow: inset 1px 1px 0 var(--mac-ink);
+    }
+
+    Button.primary {
+        background: linear-gradient(180deg, #ffffff, #cccccc);
+        border: 2px solid var(--mac-ink);
+        border-radius: 6px;
+        color: var(--mac-ink);
+        font-weight: 700;
+        box-shadow:
+            0 0 0 1px #ffffff,
+            0 0 0 2px var(--mac-ink),
+            inset 1px 1px 0 #ffffff;
+    }
+
+    Button.primary:hover {
+        background: #ffffff;
+        box-shadow:
+            0 0 0 1px #ffffff,
+            0 0 0 2px var(--mac-ink),
+            inset 1px 1px 0 #ffffff;
+    }
+
+    Button.primary:active {
+        background: var(--mac-selection);
+        color: #ffffff;
+        box-shadow:
+            0 0 0 1px #ffffff,
+            0 0 0 2px var(--mac-ink),
+            inset 1px 1px 0 var(--mac-ink);
+    }
+
+    Button:focus,
+    SmallButton:focus,
+    IconButton:focus,
+    Dropdown:focus,
+    TextInput:focus,
+    TextArea:focus,
+    NumberInput:focus {
+        outline: 1px solid var(--mac-ink);
+        outline-offset: -3px;
+    }
+
+    TextInput,
+    TextArea,
+    SearchBox,
+    CodeEditor,
+    LogView {
+        background: #ffffff;
+        border: 1px solid var(--mac-ink);
+        border-radius: 0;
+        color: var(--mac-ink);
+        box-shadow:
+            inset 1px 1px 0 #777777,
+            inset -1px -1px 0 #ffffff;
+    }
+
+    SearchBox {
+        padding: 3px;
+        gap: 5px;
+    }
+
+    SearchBox TextInput {
+        border: 1px solid #777777;
+        box-shadow: inset 1px 1px 0 #aaaaaa;
+    }
+
+    SearchBox IconButton {
+        background: #dedede;
+        border: 1px solid #777777;
+        border-radius: 2px;
+        box-shadow: 1px 1px 0 #ffffff;
+    }
+
+    Dropdown::field {
+        background: #ffffff;
+        border-radius: 2px;
+        color: var(--mac-ink);
+    }
+
+    Dropdown::menu {
+        background: #ffffff;
+        border: 1px solid var(--mac-ink);
+        border-radius: 0;
+        color: var(--mac-ink);
+        box-shadow: 2px 2px 0 #777777;
+    }
+
+    Dropdown::item-hover,
+    Dropdown::item-selected {
+        background: var(--mac-selection);
+        color: #ffffff;
+    }
+
+    Badge.success,
+    Badge.info,
+    Badge.warning {
+        background: #ffffff;
+        border-color: var(--mac-ink);
+        color: var(--mac-ink);
+    }
+
+    ProgressBar {
+        background: #ffffff;
+        border: 1px solid var(--mac-ink);
+        border-radius: 0;
+        color: #ffffff;
+        box-shadow: inset 1px 1px 0 #777777;
+    }
+
+    ProgressBar::track {
+        background: #ffffff;
+        border-radius: 0;
+    }
+
+    ProgressBar::fill {
+        background:
+            repeating-linear-gradient(
+                90deg,
+                #333366 0%,
+                #333366 8%,
+                #ffffff 8%,
+                #ffffff 10%
+            );
+        border-radius: 0;
+    }
+
+    Checkbox::box,
+    RadioButton {
+        background: #ffffff;
+        border: 1px solid var(--mac-ink);
+        border-radius: 0;
+        box-shadow: inset 1px 1px 0 #777777;
+    }
+
+    ToggleSwitch::track,
+    Slider::track,
+    RangeSlider::track {
+        background: #ffffff;
+        border: 1px solid var(--mac-ink);
+        border-radius: 0;
+    }
+
+    ToggleSwitch::thumb,
+    Slider::thumb,
+    RangeSlider::thumb-min,
+    RangeSlider::thumb-max {
+        background: linear-gradient(180deg, #ffffff, #cccccc);
+        border: 1px solid var(--mac-ink);
+        border-radius: 2px;
+        box-shadow: 1px 1px 0 #777777;
+    }
+
+    DataFrameTable {
+        background: #ffffff;
+        border: 1px solid var(--mac-ink);
+        border-radius: 0;
+        color: var(--mac-ink);
+        box-shadow: inset 1px 1px 0 #777777;
+    }
+
+    DataFrameTable::header {
+        background:
+            repeating-linear-gradient(
+                0deg,
+                #eeeeee 0%,
+                #eeeeee 3%,
+                #c7c7c7 3%,
+                #c7c7c7 6%
+            );
+        color: var(--mac-ink);
+        font-weight: 700;
+    }
+
+    DataFrameTable::row { background: #ffffff; }
+
+    DataFrameTable::row-selected {
+        background: var(--mac-selection);
+        color: #ffffff;
+    }
+
+    DataFrameTable::grid-line { background: #999999; }
+
+    Modal,
+    CommandPalette,
+    Tooltip,
+    ContextMenu {
+        background: #dedede;
+        border: 2px solid var(--mac-ink);
+        border-radius: 2px;
+        color: var(--mac-ink);
+        box-shadow:
+            2px 2px 0 #777777,
+            inset 1px 1px 0 #ffffff;
+    }
+
+    .page-title,
+    .hero-title,
+    .metric-value {
+        color: var(--mac-ink);
+        font-family: "Arial";
+        font-weight: 700;
+    }
+
+    .page-title { font-size: 20px; }
+    .hero-title { font-size: 17px; }
+    .metric-value { font-size: 24px; }
+
+    .metric-label {
+        color: #404040;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+    }
+
+    .mono {
+        color: var(--mac-ink);
+        font-family: "Courier New";
+    }
+"""
 
 
 class ColumnFrame:
@@ -811,9 +1829,25 @@ def build_window() -> dg.Window:
     return window
 
 
-def build_app() -> tuple[dg.App, dg.Window]:
-    app = dg.App(theme=NEXUS_THEME)
+def build_app(style: str = "nexus") -> tuple[dg.App, dg.Window]:
+    themes = {
+        "nexus": NEXUS_THEME,
+        "windows-3.11": WINDOWS_311_THEME,
+        "mac-os-90s": MAC_OS_90S_THEME,
+    }
+    if style not in themes:
+        raise ValueError("style must be 'nexus', 'windows-3.11', or 'mac-os-90s'")
+
+    app = dg.App(theme=themes[style])
     state.app = app
+    retro_stylesheets = {
+        "windows-3.11": WINDOWS_311_CSS,
+        "mac-os-90s": MAC_OS_90S_CSS,
+    }
+    if style in retro_stylesheets:
+        app.stylesheet(retro_stylesheets[style])
+        return app, build_window()
+
     app.stylesheet(
         """
         :root {
@@ -1042,8 +2076,20 @@ def build_app() -> tuple[dg.App, dg.Window]:
     return app, build_window()
 
 
-def main() -> int:
-    app, window = build_app()
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run the Nexus Studio DragonGui stress demo.")
+    parser.add_argument(
+        "--style",
+        choices=("nexus", "windows-3.11", "mac-os-90s"),
+        default="nexus",
+        help="Visual style to apply (default: nexus).",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    app, window = build_app(args.style)
     print(app.run(window))
     return 0
 

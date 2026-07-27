@@ -932,8 +932,8 @@ and Python `Theme` color fields:
 - `#RRGGBB`
 - `#RRGGBBAA`
 - `transparent`
-- Common named colors: `black`, `white`, `red`, `green`, `blue`, `gray`,
-  `grey`.
+- All standard CSS named colors, including `silver`, `navy`,
+  `rebeccapurple`, and the `gray` / `grey` aliases.
 - `rgb(...)`
 - `rgba(...)`
 - `hsl(...)`
@@ -976,14 +976,14 @@ Unsupported color syntax:
 - `color(...)` spaces other than `srgb` and `srgb-linear`, including
   `display-p3`, `a98-rgb`, `prophoto-rgb`, `rec2020`, and `xyz`.
 - Other CSS Color 4 function variants outside the listed supported subset.
-- Full browser named color inventory beyond the common names listed above.
 - Wide-gamut color spaces remain unsupported in declarations; supported color
   functions are converted or clipped into DragonGUI's current sRGB renderer
   path.
 
-Identifier-like color values are treated as DragonGUI theme tokens. An unknown
-token logs a warning to stderr at render time and falls back to the theme
-`danger` color.
+Standard CSS named colors are lowered to literal RGBA values. Other
+identifier-like color values remain extensible DragonGUI theme tokens. An
+unresolved token logs one warning per token per process at render time and
+falls back to the theme `danger` color.
 
 ## CSS Variables
 

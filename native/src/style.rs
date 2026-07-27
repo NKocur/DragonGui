@@ -1,4 +1,5 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Mutex, OnceLock};
 
 pub(crate) const FOCUS_RING_LP: f32 = 2.0;
 pub(crate) const PANEL_ACCENT_WIDTH_LP: f32 = 3.0;
@@ -1288,11 +1289,24 @@ impl ColorRef {
         match self {
             ColorRef::Rgba(color) => *color,
             ColorRef::Token(token) => resolve_token(token, theme).unwrap_or_else(|| {
-                eprintln!("DragonGUI: unknown color token {token:?}; using danger fallback");
+                warn_unknown_color_token_once(token);
                 theme.danger
             }),
         }
     }
+}
+
+fn warn_unknown_color_token_once(token: &str) -> bool {
+    static WARNED_TOKENS: OnceLock<Mutex<BTreeSet<String>>> = OnceLock::new();
+    let should_warn = WARNED_TOKENS
+        .get_or_init(|| Mutex::new(BTreeSet::new()))
+        .lock()
+        .map(|mut warned| warned.insert(token.to_string()))
+        .unwrap_or(true);
+    if should_warn {
+        eprintln!("DragonGUI: unknown color token {token:?}; using danger fallback");
+    }
+    should_warn
 }
 
 fn parse_layout(map: &serde_json::Map<String, Value>, out: &mut LayoutStyle) {
@@ -2660,6 +2674,13 @@ fn mix(a: Color, b: Color, t: f32) -> Color {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn unknown_color_token_warning_is_emitted_once_per_token() {
+        let token = "__dragongui_unknown_color_warning_regression__";
+        assert!(warn_unknown_color_token_once(token));
+        assert!(!warn_unknown_color_token_once(token));
+    }
 
     #[test]
     fn parses_layout_visual_and_pseudo_style() {

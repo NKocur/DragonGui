@@ -801,6 +801,7 @@ dependencies = [
  "ab_glyph",
  "base64",
  "bytemuck",
+ "cssparser",
  "flate2",
  "glam",
  "glyphon",

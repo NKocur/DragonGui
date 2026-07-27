@@ -424,8 +424,8 @@ replace defaults such as a composite's direction or preferred width. Only
 values supplied through the public `style={...}` argument receive inline
 precedence.
 
-Inline color values accept theme tokens, hex colors, `transparent`, the common
-named colors, and practical `rgb()`, `rgba()`, `hsl()`, `hsla()`, `hwb()`,
+Inline color values accept theme tokens, hex colors, `transparent`, all
+standard CSS named colors, and practical `rgb()`, `rgba()`, `hsl()`, `hsla()`, `hwb()`,
 `lab()`, `lch()`, `oklab()`, `oklch()`, `color(srgb ...)`, and
 `color(srgb-linear ...)` strings.
 Python `Theme` color fields accept the same literal color strings, without
@@ -738,7 +738,7 @@ Supported color forms:
 - `#RRGGBB`
 - `#RRGGBBAA`
 - `transparent`
-- Common named colors.
+- All standard CSS named colors.
 - `rgb(...)` / `rgba(...)`
 - `hsl(...)` / `hsla(...)`
 - `hwb(...)`

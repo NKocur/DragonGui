@@ -253,7 +253,7 @@ The most common user-facing properties are:
 Text properties inherit down the widget tree. Layout and visual properties do
 not inherit.
 
-Colors can use theme tokens, derived tokens, hex values, common named colors,
+Colors can use theme tokens, derived tokens, hex values, standard CSS named colors,
 and practical CSS color functions:
 
 ```css

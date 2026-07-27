@@ -3607,6 +3607,20 @@ fn apply_node_style(
     if let Some(shrink) = layout.flex_shrink {
         style.flex_shrink = shrink.max(0.0);
     }
+    // Borders are painted inside the widget's border box, so layout must
+    // reserve the same inset before positioning children. Previously the
+    // visual border width never reached Taffy: bordered flex composites such
+    // as SearchBox consequently placed their first and last children against
+    // the outer edge, underneath the painted border.
+    if let Some(width) = node.style.visual.border_width {
+        let edge = LengthPercentage::Length(width.max(0.0) * sf);
+        style.border = taffy::geometry::Rect {
+            left: edge,
+            right: edge,
+            top: edge,
+            bottom: edge,
+        };
+    }
     if let Some(basis) = layout_dimension(
         layout.flex_basis_value,
         layout.flex_basis,
@@ -9326,6 +9340,7 @@ mod tests {
             search.style.layout.gap = Some(6.0);
             search.style.layout.flex_grow = Some(if grow { 1.0 } else { 0.0 });
             search.style.layout.flex_shrink = Some(1.0);
+            search.style.visual.border_width = Some(2.0);
             search
         }
 
@@ -9347,6 +9362,19 @@ mod tests {
 
         let standalone = layout_search(520.0, false, true);
         assert_eq!(standalone.rects["search"].w, 340.0);
+        let search = standalone.rects["search"];
+        let icon = standalone.rects["search-icon"];
+        let clear = standalone.rects["search-clear"];
+        assert_eq!(icon.x, search.x + 2.0);
+        assert_eq!(clear.x + clear.w, search.x + search.w - 2.0);
+        assert!(
+            icon.y >= search.y + 2.0 && icon.y + icon.h <= search.y + search.h - 2.0,
+            "search icon must remain inside the bordered content box: search={search:?} icon={icon:?}"
+        );
+        assert!(
+            clear.y >= search.y + 2.0 && clear.y + clear.h <= search.y + search.h - 2.0,
+            "clear button must remain inside the bordered content box: search={search:?} clear={clear:?}"
+        );
 
         let compact = layout_search(240.0, false, true);
         assert_eq!(compact.rects["search"].w, 240.0);

@@ -16705,6 +16705,124 @@ mod tests {
     }
 
     #[test]
+    fn canonical_css_named_colors_remain_literal_rgba_values() {
+        let parsed = parse_stylesheet(
+            "Panel { background: #c0c0c0; border-color: navy; color: accent; }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+        let declarations = &parsed.rules[0].declarations;
+
+        assert!(declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Visual(DgVisualDeclaration::Background(DgCssColor::Rgba(color)))
+                    if (color[0] - (192.0 / 255.0)).abs() < 0.001
+                        && (color[1] - (192.0 / 255.0)).abs() < 0.001
+                        && (color[2] - (192.0 / 255.0)).abs() < 0.001
+                        && (color[3] - 1.0).abs() < 0.001
+            )
+        }));
+        assert!(declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Visual(DgVisualDeclaration::BorderColor(DgCssColor::Rgba(color)))
+                    if color == [0.0, 0.0, 128.0 / 255.0, 1.0]
+            )
+        }));
+        assert!(declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Text(DgTextDeclaration::Color(DgCssColor::Token(ref token)))
+                    if token == "accent"
+            )
+        }));
+    }
+
+    #[test]
+    fn named_colors_lower_to_rgba_in_variables_gradients_shadows_and_parts() {
+        let parsed = parse_stylesheet(
+            r#"
+            :root {
+                --classic-face: silver;
+                --classic-shadow: navy;
+            }
+            Panel {
+                background: linear-gradient(
+                    180deg,
+                    var(--classic-face),
+                    var(--missing-stop, teal)
+                );
+                border-color: var(--classic-shadow);
+                outline-color: olive;
+                box-shadow: 0 2px 4px purple;
+            }
+            Button::label { color: maroon; }
+            "#,
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        let panel = &parsed.rules[0].declarations;
+        let gradient = panel
+            .iter()
+            .find_map(|declaration| match &declaration.property {
+                DgStyleProperty::Visual(DgVisualDeclaration::BackgroundPaint(
+                    DgBackgroundPaint::LinearGradient(gradient),
+                )) => Some(gradient),
+                _ => None,
+            })
+            .expect("named-color gradient");
+        assert!(gradient
+            .stops
+            .iter()
+            .all(|stop| matches!(stop.color, DgCssColor::Rgba(_))));
+        assert!(panel.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Visual(DgVisualDeclaration::BorderColor(DgCssColor::Rgba(_)))
+            )
+        }));
+        assert!(panel.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Visual(DgVisualDeclaration::OutlineColor(DgCssColor::Rgba(_)))
+            )
+        }));
+        assert!(panel.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Visual(DgVisualDeclaration::BoxShadow(ref shadows))
+                    if matches!(shadows[0].color, DgCssColor::Rgba(_))
+            )
+        }));
+        assert!(parsed.rules[1].declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Text(DgTextDeclaration::Color(DgCssColor::Rgba(_)))
+            )
+        }));
+    }
+
+    #[test]
+    fn unknown_color_identifier_remains_an_extensible_semantic_token() {
+        let parsed = parse_stylesheet(
+            "Panel { background: definitely-not-a-color; }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        assert!(matches!(
+            parsed.rules[0].declarations[0].property,
+            DgStyleProperty::Visual(DgVisualDeclaration::Background(DgCssColor::Token(
+                ref token
+            ))) if token == "definitely-not-a-color"
+        ));
+    }
+
+    #[test]
     fn web_color_syntax_parses_to_rgba() {
         let parsed = parse_stylesheet(
             r#"

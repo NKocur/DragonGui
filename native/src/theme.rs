@@ -28,16 +28,14 @@ pub(crate) fn parse_web_color(value: &str) -> Option<Color> {
 }
 
 fn parse_named_color(value: &str) -> Option<Color> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "transparent" => Some([0.0, 0.0, 0.0, 0.0]),
-        "black" => Some([0.0, 0.0, 0.0, 1.0]),
-        "white" => Some([1.0, 1.0, 1.0, 1.0]),
-        "red" => Some([1.0, 0.0, 0.0, 1.0]),
-        "green" => Some([0.0, 0.5019608, 0.0, 1.0]),
-        "blue" => Some([0.0, 0.0, 1.0, 1.0]),
-        "gray" | "grey" => Some([0.5019608, 0.5019608, 0.5019608, 1.0]),
-        _ => None,
+    let ident = value.trim().to_ascii_lowercase();
+    if ident == "transparent" {
+        return Some([0.0, 0.0, 0.0, 0.0]);
     }
+
+    cssparser::color::parse_named_color(&ident)
+        .ok()
+        .map(|(r, g, b)| rgb(r, g, b))
 }
 
 fn parse_functional_color(value: &str) -> Option<Color> {
@@ -619,6 +617,45 @@ impl Theme {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn web_color_parser_accepts_the_complete_css_named_color_set() {
+        for (name, (r, g, b)) in cssparser::color::all_named_colors() {
+            assert_color_close(
+                parse_web_color(name).unwrap_or_else(|| panic!("{name} should be supported")),
+                rgb(r, g, b),
+            );
+        }
+        assert_color_close(
+            parse_web_color("silver").expect("silver"),
+            rgb(192, 192, 192),
+        );
+        assert_color_close(parse_web_color("navy").expect("navy"), rgb(0, 0, 128));
+        assert_color_close(
+            parse_web_color("rebeccapurple").expect("rebeccapurple"),
+            rgb(102, 51, 153),
+        );
+        assert_color_close(
+            parse_web_color("LightGoldenRodYellow").expect("case-insensitive named color"),
+            rgb(250, 250, 210),
+        );
+        assert_color_close(
+            parse_web_color("#c0c0c0").expect("silver hex"),
+            parse_web_color("rgb(192, 192, 192)").expect("silver rgb"),
+        );
+        assert_color_close(
+            parse_web_color("silver").expect("silver name"),
+            parse_web_color("#c0c0c0").expect("silver hex"),
+        );
+        assert_color_close(
+            parse_web_color("#000080").expect("navy hex"),
+            parse_web_color("rgb(0, 0, 128)").expect("navy rgb"),
+        );
+        assert_color_close(
+            parse_web_color("navy").expect("navy name"),
+            parse_web_color("#000080").expect("navy hex"),
+        );
+    }
 
     #[test]
     fn dark_theme_defaults_are_compact_and_neutral() {
