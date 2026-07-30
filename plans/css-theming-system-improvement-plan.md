@@ -1401,6 +1401,37 @@ Window::resize-border
   - Demo/audit Python compilation, manifest JSON parsing, and focused
     whitespace validation: **passed**.
 
+### 2026-07-30 — Phase 8.14 constrained client-title regression
+
+- THEME FORGE exposed a retained-chrome defect at narrow window widths: a
+  long `Window::title` kept its intrinsic text width and pushed the fixed
+  minimize/maximize/close controls outside the titlebar.
+- Hardened the library-owned title node with a zero flex basis,
+  `flex-shrink: 1`, `min-width: 0`, hidden overflow, no wrapping, and ellipsis.
+  Retained window controls now explicitly opt out of flex shrinking.
+- Added native geometry coverage at 320, 390, and 640 logical pixels under
+  100%, 150%, and 200% scaling. It verifies constrained title shrinkage,
+  ordered controls, titlebar containment, and nonzero control clips.
+- Added a headless THEME FORGE smoke test that builds all twelve workspaces,
+  verifies named stylesheet order, and checks the retained title/control
+  serialization contract.
+- Extended visual-audit targets with explicit script arguments, then
+  registered:
+  - `theme-forge`, covering all twelve routes with deterministic live updates
+    disabled.
+  - `theme-forge-long-title`, covering the three narrow viewports at all three
+    DPI scales with `--long-title`.
+- Removed a redundant debug snapshot from no-resize audit captures and scaled
+  the remaining snapshot timeout for high-DPI stress documents.
+- Validation:
+  - Focused Python/API/audit suite: **37 passed, 0 failed**.
+  - Native title geometry regression: **1 passed at nine size/DPI
+    combinations**.
+  - Live twelve-workspace `theme-forge` baseline: **12/12 captures passed**,
+    with no layout diagnostics.
+  - Live `theme-forge-long-title` visual matrix: **9/9 captures passed**, with
+    no layout diagnostics.
+
 ### Winit 0.30.13 platform findings
 
 | Capability | Winit support relevant to Phase 8 |

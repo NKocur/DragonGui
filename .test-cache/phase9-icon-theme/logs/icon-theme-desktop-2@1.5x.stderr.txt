@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "C:\Users\nkocur\AppData\Local\Temp\1\dz3me1w7_dragongui_visual_audit.py", line 326, in <module>
+    runpy.run_path('C:\\Users\\nkocur\\Desktop\\Projects\\Python\\Full Dragon\\DragonGui\\examples\\icon_theme_demo.py', run_name="__main__")
+  File "<frozen runpy>", line 287, in run_path
+  File "<frozen runpy>", line 98, in _run_module_code
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\nkocur\Desktop\Projects\Python\Full Dragon\DragonGui\examples\icon_theme_demo.py", line 40, in <module>
+    with dg.VLayout(parent=window, padding=20, gap=14):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: Container.__init__() got an unexpected keyword argument 'padding'

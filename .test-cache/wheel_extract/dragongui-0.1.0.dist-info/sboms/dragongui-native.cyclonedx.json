@@ -2,9 +2,9 @@
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
   "version": 1,
-  "serialNumber": "urn:uuid:a0affde1-5b98-4d5e-8f30-b5cbd6091ae5",
+  "serialNumber": "urn:uuid:9a58136e-81c8-4ddd-9326-fa10df5b7e1d",
   "metadata": {
-    "timestamp": "2026-07-25T21:42:25.350833800Z",
+    "timestamp": "2026-07-30T19:22:31.631312500Z",
     "tools": [
       {
         "vendor": "CycloneDX",
@@ -13573,6 +13573,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#ab_glyph@0.2.32",
         "registry+https://github.com/rust-lang/crates.io-index#base64@0.22.1",
         "registry+https://github.com/rust-lang/crates.io-index#bytemuck@1.25.0",
+        "registry+https://github.com/rust-lang/crates.io-index#cssparser@0.33.0",
         "registry+https://github.com/rust-lang/crates.io-index#flate2@1.1.9",
         "registry+https://github.com/rust-lang/crates.io-index#glam@0.28.0",
         "registry+https://github.com/rust-lang/crates.io-index#glyphon@0.11.0",
@@ -13583,6 +13584,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#rfd@0.15.4",
         "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.228",
         "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.149",
+        "registry+https://github.com/rust-lang/crates.io-index#smallvec@1.15.1",
         "registry+https://github.com/rust-lang/crates.io-index#taffy@0.5.2",
         "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.18",
         "registry+https://github.com/rust-lang/crates.io-index#webview2-com@0.38.2",

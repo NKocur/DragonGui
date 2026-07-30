@@ -11,14 +11,18 @@ use crate::style::{
     tabs_header_height_for_style, AlignItemsStyle, DisplayStyle, FlexDirectionStyle, FlexWrapStyle,
     GridAutoFlowStyle, GridLineStyle, GridPlacementStyle, GridTemplateAreas,
     GridTrackFitContentSize, GridTrackMaxSize, GridTrackMinSize, GridTrackRepeatKind,
-    GridTrackSize, LayoutLength, LineHeight, NodeStyle, OverflowStyle, PositionStyle, TextOverflow,
-    BADGE_GAP_LP, BADGE_MIN_HEIGHT_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP,
-    TOGGLE_SWITCH_TRACK_WIDTH_LP,
+    GridTrackSize, JustifyContentStyle, LayoutLength, LineHeight, NodeStyle, OverflowStyle,
+    PositionStyle, TextOverflow, BADGE_GAP_LP, BADGE_MIN_HEIGHT_LP, CHECKBOX_BOX_LP,
+    CHECKBOX_LEFT_PAD_LP, TOGGLE_SWITCH_TRACK_WIDTH_LP,
 };
 use crate::text::{measure_text_for_layout, measure_wrapped_text_for_layout};
 use crate::theme::Theme;
 
 const MENU_LABEL_WIDTH_SAFETY_LP: f32 = 6.0;
+// Plain labels render into an integer-scissored text box after shaping. Keep a
+// small amount of width beyond the measured advance so fractional glyph
+// overhang and rasterization do not clip the final character at an exact fit.
+const LABEL_TEXT_WIDTH_SAFETY_LP: f32 = 2.0;
 const PANEL_BODY_VISUAL_INSET_LP: f32 = 1.0;
 const LOADING_SPINNER_DEFAULT_SIZE_LP: f32 = 18.0;
 const LOADING_SPINNER_GAP_LP: f32 = 8.0;
@@ -249,7 +253,12 @@ pub(crate) fn resolved_widget_geometry_fallback(
                 .iter()
                 .any(|child| child.kind == WidgetKind::Tab && !child.children.is_empty());
             if !has_tab_content {
-                fallback.height = Some(control_height);
+                // Empty-content Tabs act as a standalone strip. Its owning
+                // layout box must track a CSS-authored ::header height because
+                // layout_tabs() assigns that same height to every Tab child.
+                // Otherwise the children paint past the Tabs box and overlap
+                // the following Body/Pages sibling.
+                fallback.height = Some(tabs_header_height_for_style(computed_style, theme, 1.0));
             }
         }
         _ => {}
@@ -1466,7 +1475,16 @@ fn style_for_with_viewport(
                 },
                 min_size: Size {
                     width: Dimension::Length(0.0),
-                    height: Dimension::Length(0.0),
+                    height: if node.kind == WidgetKind::Panel
+                        && matches!(parent_kind, Some(WidgetKind::GridLayout))
+                    {
+                        // Preserve the content contribution of auto-height
+                        // framed grid items. An authored min-height: 0 still
+                        // overrides this when deliberate shrinking is wanted.
+                        Dimension::Auto
+                    } else {
+                        Dimension::Length(0.0)
+                    },
                 },
                 padding: taffy::geometry::Rect {
                     left: LengthPercentage::Length(panel_pad),
@@ -2101,7 +2119,7 @@ fn apply_grid_auto_row_positions_node(
         let adjusted = if node.props.grid_masonry {
             pack_grid_masonry_columns(node, result, sf, stretched_height_floors)
         } else {
-            false
+            grow_and_repack_ordinary_grid_rows(node, result, sf, stretched_height_floors)
         };
         if adjusted {
             changed.insert(node.id.clone());
@@ -2110,6 +2128,166 @@ fn apply_grid_auto_row_positions_node(
     for child in &node.children {
         apply_grid_auto_row_positions_node(child, result, sf, stretched_height_floors, changed);
     }
+}
+
+fn grow_and_repack_ordinary_grid_rows(
+    grid: &WidgetNode,
+    result: &mut LayoutResult,
+    sf: f32,
+    stretched_height_floors: &HashMap<String, f32>,
+) -> bool {
+    if grid.style.layout.grid_template_rows.is_some()
+        || grid.props.grid_template_rows.is_some()
+        || matches!(
+            grid.style.layout.grid_auto_flow,
+            Some(GridAutoFlowStyle::Column | GridAutoFlowStyle::ColumnDense)
+        )
+        || grid.children.iter().any(|child| {
+            child.style.layout.grid_row.is_some() || child.style.layout.grid_column.is_some()
+        })
+    {
+        return false;
+    }
+
+    let mut grew_child = false;
+    for child in &grid.children {
+        if !auto_height_container_can_grow_to_overflowing_content(child, result) {
+            continue;
+        }
+        let old_height = result
+            .rects
+            .get(&child.id)
+            .map(|rect| rect.h)
+            .unwrap_or(0.0);
+        if resize_auto_height_container_to_children(child, result, sf, Some(old_height)) {
+            grew_child = true;
+        }
+    }
+    if !grew_child {
+        return false;
+    }
+
+    let Some(grid_rect) = result.rects.get(&grid.id).copied() else {
+        return false;
+    };
+    let mut entries: Vec<(usize, Rect)> = grid
+        .children
+        .iter()
+        .enumerate()
+        .filter(|(_, child)| is_reflowable_normal_child(child))
+        .filter_map(|(index, child)| {
+            result
+                .rects
+                .get(&child.id)
+                .copied()
+                .map(|rect| (index, rect))
+        })
+        .collect();
+    entries.sort_by(|left, right| {
+        left.1
+            .y
+            .partial_cmp(&right.1.y)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                left.1
+                    .x
+                    .partial_cmp(&right.1.x)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+    });
+    let Some(first) = entries.first().copied() else {
+        return false;
+    };
+
+    let mut rows: Vec<Vec<(usize, Rect)>> = Vec::new();
+    for entry in entries {
+        if rows.last().is_some_and(|row| {
+            row.first()
+                .is_some_and(|(_, first_rect)| (entry.1.y - first_rect.y).abs() <= 0.5)
+        }) {
+            rows.last_mut().unwrap().push(entry);
+        } else {
+            rows.push(vec![entry]);
+        }
+    }
+
+    let row_gap = grid_row_gap_px(grid, sf, Some(grid_rect.h));
+    let padding_bottom = result
+        .resolved_box(&grid.id)
+        .map(|resolved| resolved.padding.bottom)
+        .unwrap_or(0.0);
+    let mut cursor_y = first.1.y;
+    let mut changed = false;
+    for row in rows {
+        let row_height = row
+            .iter()
+            .filter_map(|(index, _)| result.rects.get(&grid.children[*index].id))
+            .map(|rect| rect.h)
+            .fold(0.0, f32::max);
+        for (index, old_rect) in row {
+            let dy = cursor_y - old_rect.y;
+            if dy.abs() > 0.5 {
+                translate_subtree(&grid.children[index], result, 0.0, dy);
+                changed = true;
+            }
+        }
+        cursor_y += row_height + row_gap;
+    }
+    let content_bottom = cursor_y - row_gap.max(0.0);
+    let new_height = (content_bottom + padding_bottom - grid_rect.y)
+        .max(
+            stretched_height_floors
+                .get(&grid.id)
+                .copied()
+                .unwrap_or(0.0),
+        )
+        .max(0.0);
+    if let Some(rect) = result.rects.get_mut(&grid.id) {
+        if (rect.h - new_height).abs() > 0.5 {
+            rect.h = new_height;
+            changed = true;
+        }
+    }
+    grew_child || changed
+}
+
+fn auto_height_container_can_grow_to_overflowing_content(
+    node: &WidgetNode,
+    result: &LayoutResult,
+) -> bool {
+    if !matches!(
+        node.kind,
+        WidgetKind::Panel
+            | WidgetKind::Sidebar
+            | WidgetKind::Modal
+            | WidgetKind::VLayout
+            | WidgetKind::FlowLayout
+            | WidgetKind::Collapsible
+            | WidgetKind::Page
+    ) || node.props.fixed_height.is_some()
+        || node.style.layout.height.is_some()
+        || !matches!(
+            node.style.layout.height_value,
+            None | Some(LayoutLength::Auto)
+        )
+    {
+        return false;
+    }
+    let Some(rect) = result.rects.get(&node.id) else {
+        return false;
+    };
+    let content_bottom = node
+        .children
+        .iter()
+        .filter(|child| is_reflowable_normal_child(child))
+        .filter_map(|child| result.rects.get(&child.id))
+        .map(|child| child.y + child.h)
+        .fold(rect.y, f32::max);
+    let padding_bottom = result
+        .resolved_box(&node.id)
+        .map(|resolved| resolved.padding.bottom)
+        .unwrap_or(0.0);
+    content_bottom + padding_bottom > rect.y + rect.h + 0.5
 }
 
 fn pack_grid_masonry_columns(
@@ -3413,7 +3591,10 @@ fn intrinsic_leaf_width(node: &WidgetNode, theme: &Theme) -> Option<f32> {
                 Some((track_w + CHECKBOX_LEFT_PAD_LP * 2.0).max(1.0))
             }
         }
-        WidgetKind::Label | WidgetKind::NavItem | WidgetKind::Tab => {
+        WidgetKind::Label => Some(
+            (text_w.unwrap_or(0.0) + pad + badge_w + LABEL_TEXT_WIDTH_SAFETY_LP).clamp(32.0, 320.0),
+        ),
+        WidgetKind::NavItem | WidgetKind::Tab => {
             Some((text_w.unwrap_or(0.0) + pad + badge_w).clamp(32.0, 320.0))
         }
         WidgetKind::Slider | WidgetKind::RangeSlider => Some(140.0),
@@ -3629,6 +3810,16 @@ fn apply_node_style(
             AlignItemsStyle::Center => AlignItems::Center,
             AlignItemsStyle::End => AlignItems::FlexEnd,
             AlignItemsStyle::Stretch => AlignItems::Stretch,
+        });
+    }
+    if let Some(justify_content) = layout.justify_content {
+        style.justify_content = Some(match justify_content {
+            JustifyContentStyle::Start => JustifyContent::FlexStart,
+            JustifyContentStyle::Center => JustifyContent::Center,
+            JustifyContentStyle::End => JustifyContent::FlexEnd,
+            JustifyContentStyle::SpaceBetween => JustifyContent::SpaceBetween,
+            JustifyContentStyle::SpaceAround => JustifyContent::SpaceAround,
+            JustifyContentStyle::SpaceEvenly => JustifyContent::SpaceEvenly,
         });
     }
     if let Some(width) = layout_dimension(
@@ -4521,7 +4712,7 @@ fn compute_node_clips(
     let Some(rect) = result.rects.get(&node.id).copied() else {
         return;
     };
-    let parent_clip = if is_fixed_positioned_node(node) {
+    let parent_clip = if is_fixed_positioned_node(node) || is_viewport_overlay_node(node) {
         root_clip
     } else {
         parent_clip
@@ -4939,6 +5130,14 @@ fn is_fixed_positioned_node(node: &WidgetNode) -> bool {
     node.style.layout.position == Some(PositionStyle::Fixed)
 }
 
+fn is_viewport_overlay_node(node: &WidgetNode) -> bool {
+    // Rich tooltips remain children of their target's retained widget subtree,
+    // but apply_tooltip_layout() promotes their geometry into window space.
+    // Their paint and descendant clips must follow that promoted geometry rather
+    // than an overflow clip inherited from the target's panel.
+    node.kind == WidgetKind::Tooltip
+}
+
 fn apply_titled_container_absolute_offsets(
     node: &WidgetNode,
     result: &mut LayoutResult,
@@ -5222,15 +5421,33 @@ fn layout_tabs(
     }
 
     let header_h = tabs_header_height_for_style(&node.style, theme, sf);
-    let tab_w = (r.w / tabs.len() as f32).max(1.0);
+    let tab_area = result
+        .resolved_box(&node.id)
+        .map(|resolved| resolved.content_box)
+        .unwrap_or(r);
+    let gap = layout_length_percentage(
+        node.style
+            .layout
+            .column_gap_value
+            .or(node.style.layout.gap_value),
+        node.style.layout.column_gap.or(node.style.layout.gap),
+        sf,
+        Some(tab_area.w),
+    )
+    .map(lp_value)
+    .unwrap_or(0.0)
+    .max(0.0);
+    let total_gap = gap * tabs.len().saturating_sub(1) as f32;
+    let tab_w = ((tab_area.w - total_gap).max(0.0) / tabs.len() as f32).max(1.0);
+    let tab_h = header_h.min(tab_area.h.max(1.0));
     for (idx, tab) in tabs.iter().enumerate() {
         result.rects.insert(
             tab.id.clone(),
             Rect {
-                x: r.x + idx as f32 * tab_w,
-                y: r.y,
+                x: tab_area.x + idx as f32 * (tab_w + gap),
+                y: tab_area.y,
                 w: tab_w,
-                h: header_h,
+                h: tab_h,
             },
         );
     }
@@ -5548,6 +5765,117 @@ mod tests {
             assert_eq!(style.flex_wrap, wrap, "{kind:?} wrap");
             assert_eq!(style.flex_grow, grow, "{kind:?} grow");
             assert_eq!(style.flex_shrink, shrink, "{kind:?} shrink");
+        }
+    }
+
+    #[test]
+    fn long_client_window_title_shrinks_before_fixed_controls_at_all_dpi_scales() {
+        let mut title = node(
+            "window--dg-window-title",
+            WidgetKind::Label,
+            NodeProps {
+                text: Some("THEME FORGE - DragonGUI theming and CSS stress console".to_string()),
+                wrap: Some(false),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        title.style.layout.width = Some(0.0);
+        title.style.layout.flex_grow = Some(1.0);
+        title.style.layout.flex_shrink = Some(1.0);
+        title.style.layout.min_width = Some(0.0);
+        title.style.layout.height = Some(34.0);
+        title.style.layout.padding_left = Some(12.0);
+        title.style.layout.padding_right = Some(8.0);
+        title.style.layout.overflow = Some(OverflowStyle::Hidden);
+        title.style.text.text_overflow = Some(TextOverflow::Ellipsis);
+
+        let controls = [
+            ("window--dg-window-minimize", "—"),
+            ("window--dg-window-maximize", "□"),
+            ("window--dg-window-close", "×"),
+        ]
+        .into_iter()
+        .map(|(id, glyph)| {
+            let mut control = node(
+                id,
+                WidgetKind::Button,
+                NodeProps {
+                    text: Some(glyph.to_string()),
+                    ..NodeProps::default()
+                },
+                vec![],
+            );
+            control.style.layout.width = Some(46.0);
+            control.style.layout.height = Some(34.0);
+            control.style.layout.min_width = Some(0.0);
+            control.style.layout.flex_shrink = Some(0.0);
+            control
+        })
+        .collect::<Vec<_>>();
+
+        let mut titlebar_children = vec![title];
+        titlebar_children.extend(controls);
+        let mut titlebar = node(
+            "window--dg-window-titlebar",
+            WidgetKind::HLayout,
+            NodeProps::default(),
+            titlebar_children,
+        );
+        titlebar.style.layout.height = Some(34.0);
+        titlebar.style.layout.min_height = Some(34.0);
+        titlebar.style.layout.flex_shrink = Some(0.0);
+        titlebar.style.layout.gap = Some(0.0);
+        titlebar.style.layout.align_items = Some(AlignItemsStyle::Center);
+        titlebar.style.layout.overflow = Some(OverflowStyle::Hidden);
+
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![titlebar],
+        );
+
+        for scale_factor in [1.0, 1.5, 2.0] {
+            for logical_width in [320.0, 390.0, 640.0] {
+                let layout = compute_layout(
+                    &root,
+                    logical_width * scale_factor,
+                    120.0 * scale_factor,
+                    scale_factor,
+                    &Theme::dark(),
+                    None,
+                );
+                let titlebar = layout.rects["window--dg-window-titlebar"];
+                let title = layout.rects["window--dg-window-title"];
+                let minimize = layout.rects["window--dg-window-minimize"];
+                let maximize = layout.rects["window--dg-window-maximize"];
+                let close = layout.rects["window--dg-window-close"];
+
+                if logical_width <= 390.0 {
+                    assert!(
+                        title.w < 458.0 * scale_factor,
+                        "long title did not shrink at {logical_width} logical px / {scale_factor}x"
+                    );
+                }
+                assert!(title.x + title.w <= minimize.x + 0.01);
+                assert!(minimize.x + minimize.w <= maximize.x + 0.01);
+                assert!(maximize.x + maximize.w <= close.x + 0.01);
+                assert!(
+                    close.x + close.w <= titlebar.x + titlebar.w + 0.01,
+                    "close control escaped at {logical_width} logical px / {scale_factor}x: "
+                );
+                for id in [
+                    "window--dg-window-minimize",
+                    "window--dg-window-maximize",
+                    "window--dg-window-close",
+                ] {
+                    let rect = layout.rects[id];
+                    let clip = layout.clips[id];
+                    assert!(rect.w > 0.0 && rect.h > 0.0, "{id} has empty layout");
+                    assert!(clip.w > 0.0 && clip.h > 0.0, "{id} is fully clipped");
+                }
+            }
         }
     }
 
@@ -7168,6 +7496,98 @@ mod tests {
     }
 
     #[test]
+    fn empty_tabs_strip_owns_its_css_header_height_without_overlapping_body() {
+        let mut tabs = node(
+            "tabs",
+            WidgetKind::Tabs,
+            NodeProps {
+                route_value: Some("overview".to_string()),
+                ..NodeProps::default()
+            },
+            vec![
+                node(
+                    "overview-tab",
+                    WidgetKind::Tab,
+                    NodeProps {
+                        text: Some("Overview".to_string()),
+                        route_value: Some("overview".to_string()),
+                        ..NodeProps::default()
+                    },
+                    vec![],
+                ),
+                node(
+                    "data-tab",
+                    WidgetKind::Tab,
+                    NodeProps {
+                        text: Some("Data".to_string()),
+                        route_value: Some("data".to_string()),
+                        ..NodeProps::default()
+                    },
+                    vec![],
+                ),
+            ],
+        );
+        tabs.style
+            .parts
+            .parts
+            .entry("header".to_string())
+            .or_default()
+            .layout
+            .height = Some(34.0);
+        tabs.style.layout.padding_left = Some(8.0);
+        tabs.style.layout.padding_right = Some(8.0);
+        tabs.style.layout.column_gap = Some(4.0);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "workbench",
+                WidgetKind::VLayout,
+                NodeProps::default(),
+                vec![
+                    tabs,
+                    node(
+                        "body",
+                        WidgetKind::HLayout,
+                        NodeProps::default(),
+                        vec![node(
+                            "body-panel",
+                            WidgetKind::Panel,
+                            NodeProps::default(),
+                            vec![],
+                        )],
+                    ),
+                ],
+            )],
+        );
+
+        let layout = compute_layout(&root, 1000.0, 700.0, 1.0, &Theme::dark(), None);
+        let tabs = layout.rects["tabs"];
+        let overview = layout.rects["overview-tab"];
+        let data = layout.rects["data-tab"];
+        let body = layout.rects["body"];
+
+        assert!((tabs.h - 34.0).abs() <= 0.5, "styled tab strip={tabs:?}");
+        assert!(
+            overview.y + overview.h <= tabs.y + tabs.h + 0.5,
+            "tab child must remain inside its styled strip: tabs={tabs:?} tab={overview:?}"
+        );
+        assert!(
+            body.y + 0.5 >= tabs.y + tabs.h,
+            "body must start below styled tab strip: tabs={tabs:?} body={body:?}"
+        );
+        assert!(
+            overview.x >= tabs.x + 7.5 && data.x + data.w <= tabs.x + tabs.w - 7.5,
+            "tabs must respect strip horizontal padding: tabs={tabs:?} first={overview:?} last={data:?}"
+        );
+        assert!(
+            data.x >= overview.x + overview.w + 3.5,
+            "tabs must respect strip column gap: first={overview:?} second={data:?}"
+        );
+    }
+
+    #[test]
     fn inactive_page_content_is_removed_from_layout() {
         let root = node(
             "window",
@@ -7703,6 +8123,88 @@ mod tests {
         assert!(label.h > 0.0);
         assert!(label.x >= tip.x);
         assert!(label.y >= tip.y);
+    }
+
+    #[test]
+    fn rich_tooltip_and_its_text_escape_an_overflow_hidden_parent_clip() {
+        let tooltip = node(
+            "tip",
+            WidgetKind::Tooltip,
+            NodeProps {
+                target: Some("button".to_string()),
+                fixed_width: Some(220.0),
+                fixed_height: Some(80.0),
+                ..NodeProps::default()
+            },
+            vec![node(
+                "tip-label",
+                WidgetKind::Label,
+                NodeProps {
+                    text: Some(
+                        "Tooltip text remains visible beyond the parent panel boundary."
+                            .to_string(),
+                    ),
+                    ..NodeProps::default()
+                },
+                vec![],
+            )],
+        );
+        let mut panel = node(
+            "panel",
+            WidgetKind::Panel,
+            NodeProps::default(),
+            vec![
+                node("button", WidgetKind::Button, NodeProps::default(), vec![]),
+                tooltip,
+            ],
+        );
+        panel.style.layout.width = Some(160.0);
+        panel.style.layout.height = Some(60.0);
+        panel.style.layout.flex_grow = Some(0.0);
+        panel.style.layout.flex_shrink = Some(0.0);
+        panel.style.layout.overflow = Some(OverflowStyle::Hidden);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![panel],
+        );
+        let mut state = WidgetState::default();
+        state.hovered = Some("button".to_string());
+
+        let layout = compute_layout(&root, 480.0, 320.0, 1.0, &Theme::dark(), Some(&state));
+        let root_rect = layout.rects.get("window").unwrap();
+        let panel_rect = layout.rects.get("panel").unwrap();
+        let tip_rect = layout.rects.get("tip").unwrap();
+        let tip_clip = layout.clips.get("tip").unwrap();
+        let tip_paint_clip = layout.paint_clips.get("tip").unwrap();
+        let label_rect = layout.rects.get("tip-label").unwrap();
+        let label_clip = layout.clips.get("tip-label").unwrap();
+
+        assert!(
+            tip_rect.y + tip_rect.h > panel_rect.y + panel_rect.h,
+            "test tooltip must cross the parent panel boundary: panel={panel_rect:?} tip={tip_rect:?}"
+        );
+        assert!(
+            (tip_paint_clip.x - root_rect.x).abs() <= 0.01
+                && (tip_paint_clip.y - root_rect.y).abs() <= 0.01
+                && (tip_paint_clip.w - root_rect.w).abs() <= 0.01
+                && (tip_paint_clip.h - root_rect.h).abs() <= 0.01,
+            "promoted tooltip paint should be clipped by the window: root={root_rect:?} paint_clip={tip_paint_clip:?}"
+        );
+        assert!(
+            (tip_clip.x - tip_rect.x).abs() <= 0.01
+                && (tip_clip.y - tip_rect.y).abs() <= 0.01
+                && (tip_clip.w - tip_rect.w).abs() <= 0.01
+                && (tip_clip.h - tip_rect.h).abs() <= 0.01,
+            "tooltip surface should remain fully visible outside its retained parent: rect={tip_rect:?} clip={tip_clip:?}"
+        );
+        assert!(
+            label_clip.w > 0.0
+                && label_clip.h > 0.0
+                && label_clip.y + label_clip.h > panel_rect.y + panel_rect.h,
+            "tooltip child text should inherit the tooltip clip, not the panel clip: panel={panel_rect:?} label={label_rect:?} clip={label_clip:?}"
+        );
     }
 
     #[test]
@@ -11821,6 +12323,123 @@ mod tests {
         assert_eq!(
             layout.reconciliation_iterations, 0,
             "ordinary auto-row grids should not enter post-layout reconciliation"
+        );
+    }
+
+    #[test]
+    fn auto_height_panel_in_grid_preserves_bottom_padding_after_multiline_editor() {
+        let mut code = node(
+            "code",
+            WidgetKind::CodeEditor,
+            NodeProps {
+                rows: Some(4),
+                text: Some("Panel.card {\n  padding: 12px;\n}".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        code.style.layout.flex_shrink = Some(0.0);
+
+        let mut panel = node(
+            "panel",
+            WidgetKind::Panel,
+            NodeProps {
+                text: Some("Text entry".to_string()),
+                ..NodeProps::default()
+            },
+            vec![
+                node("first", WidgetKind::TextInput, NodeProps::default(), vec![]),
+                node(
+                    "area",
+                    WidgetKind::TextArea,
+                    NodeProps {
+                        rows: Some(3),
+                        ..NodeProps::default()
+                    },
+                    vec![],
+                ),
+                code,
+            ],
+        );
+        panel.style.layout.padding = Some(15.0);
+        panel.style.layout.gap = Some(10.0);
+
+        let grid = node(
+            "grid",
+            WidgetKind::GridLayout,
+            NodeProps {
+                grid_columns: Some(2),
+                grid_min_column_width: Some(420.0),
+                ..NodeProps::default()
+            },
+            vec![panel],
+        );
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![grid],
+        );
+
+        let layout = compute_layout(&root, 750.0, 700.0, 1.0, &Theme::dark(), None);
+        let panel = layout.rects.get("panel").unwrap();
+        let code = layout.rects.get("code").unwrap();
+        let bottom_gap = panel.y + panel.h - (code.y + code.h);
+
+        assert!(
+            bottom_gap >= 14.5,
+            "auto-height grid panel must include its authored bottom padding: panel={panel:?} code={code:?} gap={bottom_gap}"
+        );
+    }
+
+    #[test]
+    fn drop_target_justify_content_centers_its_label_on_the_main_axis() {
+        let label = node(
+            "label",
+            WidgetKind::Label,
+            NodeProps {
+                text: Some("Drop a sheet name here".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        let mut drop_target = node(
+            "drop",
+            WidgetKind::DropTarget,
+            NodeProps::default(),
+            vec![label],
+        );
+        drop_target.style.layout.width = Some(280.0);
+        drop_target.style.layout.height = Some(96.0);
+        drop_target.style.layout.align_items = Some(AlignItemsStyle::Center);
+        drop_target.style.layout.justify_content = Some(JustifyContentStyle::Center);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![drop_target],
+        );
+
+        let layout = compute_layout(&root, 320.0, 180.0, 1.0, &Theme::dark(), None);
+        let drop_target = layout.rects.get("drop").unwrap();
+        let label = layout.rects.get("label").unwrap();
+        let drop_center = drop_target.y + drop_target.h * 0.5;
+        let label_center = label.y + label.h * 0.5;
+
+        assert!(
+            (drop_center - label_center).abs() <= 0.5,
+            "DropZone label should be vertically centered: drop={drop_target:?} label={label:?}"
+        );
+        let text_width = measure_text_for_layout(
+            "Drop a sheet name here",
+            &crate::style::TextStyle::default(),
+            &Theme::dark(),
+        )
+        .width;
+        let available_text_width = label.w - Theme::dark().spacing * 2.0;
+        assert!(
+            available_text_width >= text_width + LABEL_TEXT_WIDTH_SAFETY_LP - 0.5,
+            "DropZone label must leave rasterization safety beyond the shaped text: label={label:?} available={available_text_width} shaped={text_width}"
         );
     }
 

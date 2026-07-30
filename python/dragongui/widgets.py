@@ -2202,12 +2202,15 @@ class Window(Container):
             css_type: str,
             *,
             text: str | None = None,
+            icon: str | None = None,
             tooltip: str | None = None,
             accessible_name: str | None = None,
             accessibility_role: str | None = None,
             default_style: Mapping[str, object] | None = None,
         ) -> dict[str, Any]:
             props: dict[str, object] = {} if text is None else {"text": text}
+            if icon is not None:
+                props["icon"] = icon
             if tooltip is not None:
                 props["tooltip"] = tooltip
             if accessible_name is not None:
@@ -2230,19 +2233,24 @@ class Window(Container):
             "WindowTitle",
             text=self.title,
             default_style={
+                "width": 0,
                 "flex_grow": 1,
+                "flex_shrink": 1,
                 "min_width": 0,
                 "height": 34,
                 "padding_left": 12,
                 "padding_right": 8,
+                "overflow": "hidden",
+                "text_overflow": "ellipsis",
             },
         )
+        title["props"]["wrap"] = False
         controls = [
             chrome_node(
                 action,
-                "button",
+                "icon_button",
                 css_type,
-                text=glyph,
+                icon=icon,
                 tooltip=tooltip,
                 accessible_name=tooltip,
                 accessibility_role="button",
@@ -2250,14 +2258,15 @@ class Window(Container):
                     "width": 46,
                     "height": 34,
                     "min_width": 0,
+                    "flex_shrink": 0,
                     "padding": 0,
                     "border_radius": 0,
                 },
             )
-            for action, css_type, glyph, tooltip in (
-                ("minimize", "WindowMinimize", "—", "Minimize window"),
-                ("maximize", "WindowMaximize", "□", "Maximize window"),
-                ("close", "WindowClose", "×", "Close window"),
+            for action, css_type, icon, tooltip in (
+                ("minimize", "WindowMinimize", "minus", "Minimize window"),
+                ("maximize", "WindowMaximize", "stop", "Maximize window"),
+                ("close", "WindowClose", "close", "Close window"),
             )
         ]
         return {
@@ -6966,6 +6975,10 @@ class SearchBox(HLayout):
         self.clear_button: IconButton | None = None
         default_style = {
             "align_items": "center",
+            # flex-shrink is needed when SearchBox is used in a horizontal
+            # toolbar, but it also acts on height inside a vertical flex
+            # parent. Keep the composite from collapsing beneath its children.
+            "min_height": 38,
             **sizing_style,
         }
         super().__init__(

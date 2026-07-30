@@ -379,6 +379,7 @@ Run any example from the source tree without installing (see
 | `responsive_app_template.py` | Small modern starter using `AppShell`, responsive `Sidebar`, routed pages, adaptive grids, and explicit scrolling |
 | `aurora_command_center_demo.py` | Sleek responsive command center used to stress layout, styling, diagnostics, and visual-audit states |
 | `nexus_studio_stress_demo.py` | Five-workspace flagship stress demo with dense dashboards, plots, tables, workflows, controls, diagnostics, overlays, and responsive audit states |
+| `cathode_ops_stress_demo.py` | Six-workspace vintage-CRT stress demo: scanline/phosphor CSS with three palettes, custom `PaintWidget` scope and core map, a load-bank page, and live worker-thread updates |
 | `all_features_professional_demo.py` | Broad professional application demonstrating the current public widget and layout contracts |
 | `all_features_v3_demo.py` | Full app: scatter, tables, charts, streaming, overlays, chrome, theming, and CSS |
 | `node_graph_editor_probe.py` | Node-graph editor widget |

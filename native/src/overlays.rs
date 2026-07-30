@@ -1,8 +1,11 @@
+use crate::css_style::{
+    computed_style_for_virtual_element_with_media, DgMediaEnvironment, StylesheetStore,
+};
 use crate::document::{WidgetKind, WidgetNode};
 use crate::events::{NavigationItem, WidgetState};
 use crate::layout::{LayoutResult, Rect};
 use crate::style::TextStyle;
-use crate::text::measure_text_for_layout;
+use crate::text::{measure_text_for_layout, measure_wrapped_text_for_layout};
 use crate::theme::Theme;
 
 pub(crate) fn dropdown_overlay_rect(
@@ -65,6 +68,7 @@ fn clamp_rect_to_root(rect: Rect, root: Rect, margin: f32) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::css_style::StylesheetOrigin;
     use crate::document::NodeProps;
 
     fn node(id: &str, kind: WidgetKind, children: Vec<WidgetNode>) -> WidgetNode {
@@ -147,6 +151,96 @@ mod tests {
             [rect.x, rect.y, rect.w, rect.h],
             [root.x, root.y, root.w, root.h]
         );
+    }
+
+    #[test]
+    fn static_tooltip_geometry_uses_authored_font_and_padding() {
+        let mut target = node("target", WidgetKind::Button, vec![]);
+        target.props.tooltip = Some(
+            "A deliberately long client chrome tooltip label that must wrap across more than four complete lines without clipping any ordinary words."
+                .to_string(),
+        );
+        let root = node("window", WidgetKind::Window, vec![target]);
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "window".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 180.0,
+                h: 500.0,
+            },
+        );
+        layout.rects.insert(
+            "target".to_string(),
+            Rect {
+                x: 140.0,
+                y: 0.0,
+                w: 40.0,
+                h: 34.0,
+            },
+        );
+        let state = WidgetState {
+            hovered: Some("target".to_string()),
+            ..Default::default()
+        };
+        let theme = Theme::dark();
+        let media = DgMediaEnvironment::new(180.0, 500.0);
+        let baseline = tooltip_target(
+            &root,
+            &layout,
+            &theme,
+            &state,
+            1.0,
+            &StylesheetStore::default(),
+            media,
+        )
+        .expect("baseline tooltip")
+        .1;
+
+        let mut stylesheets = StylesheetStore::default();
+        stylesheets
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                "Tooltip.static { font-size: 22px; line-height: 1.5; padding: 14px; }",
+            )
+            .expect("tooltip stylesheet");
+        let styled = tooltip_target(&root, &layout, &theme, &state, 1.0, &stylesheets, media)
+            .expect("styled tooltip")
+            .1;
+
+        assert!(
+            styled.h > baseline.h,
+            "styled tooltip must reserve its larger wrapped text: baseline={baseline:?} styled={styled:?}"
+        );
+        let tooltip_style = computed_style_for_virtual_element_with_media(
+            WidgetKind::Tooltip,
+            "__dg_static_tooltip",
+            &["static"],
+            &stylesheets,
+            Some(media),
+        );
+        let measured = measure_wrapped_text_for_layout(
+            root.children[0]
+                .props
+                .tooltip
+                .as_deref()
+                .expect("tooltip text"),
+            &tooltip_style.text,
+            &theme,
+            styled.w - 28.0,
+        );
+        assert!(
+            measured.line_count > 4,
+            "regression must exercise more than four wrapped lines: {measured:?}"
+        );
+        assert!(
+            (styled.h - (measured.height + 30.0)).abs() <= 1.0,
+            "tooltip surface must use the shaped wrapped height: styled={styled:?} measured={measured:?}"
+        );
+        assert!(styled.x >= 0.0 && styled.y >= 0.0);
+        assert!(styled.x + styled.w <= 180.0);
+        assert!(styled.y + styled.h <= 500.0);
     }
 }
 
@@ -235,6 +329,8 @@ pub(crate) fn tooltip_target<'a>(
     theme: &Theme,
     state: &WidgetState,
     sf: f32,
+    stylesheets: &StylesheetStore,
+    media: DgMediaEnvironment,
 ) -> Option<(&'a WidgetNode, Rect)> {
     let hovered = state.hovered.as_deref()?;
     let node = find_node(tree, hovered)?;
@@ -249,17 +345,56 @@ pub(crate) fn tooltip_target<'a>(
         w: target.x + target.w,
         h: target.y + target.h,
     });
+    let style = computed_style_for_virtual_element_with_media(
+        WidgetKind::Tooltip,
+        "__dg_static_tooltip",
+        &["static"],
+        stylesheets,
+        Some(media),
+    );
+    let fallback_pad = theme.spacing * 1.25;
+    let pad_left = style
+        .layout
+        .padding_left
+        .or(style.layout.padding)
+        .unwrap_or(fallback_pad)
+        .max(0.0)
+        * sf;
+    let pad_right = style
+        .layout
+        .padding_right
+        .or(style.layout.padding)
+        .unwrap_or(fallback_pad)
+        .max(0.0)
+        * sf;
+    let pad_top = style
+        .layout
+        .padding_top
+        .or(style.layout.padding)
+        .unwrap_or(fallback_pad)
+        .max(0.0)
+        * sf;
+    let pad_bottom = style
+        .layout
+        .padding_bottom
+        .or(style.layout.padding)
+        .unwrap_or(fallback_pad)
+        .max(0.0)
+        * sf;
+    // Shaping produces fractional metrics while the final scissor bounds use
+    // integral pixels. Reserve a little space so rounding cannot clip the last
+    // glyph column or the descenders on the final wrapped line.
+    let text_slop = 2.0 * sf;
     let margin = theme.spacing * sf;
-    let pad = theme.spacing * sf * 1.25;
-    let text_width = measure_text_for_layout(text, &TextStyle::default(), theme).width * sf;
-    let natural_width = text_width + pad * 2.0;
+    let text_width = measure_text_for_layout(text, &style.text, theme).width * sf;
+    let natural_width = text_width + pad_left + pad_right + text_slop;
     let max_width = (root.w - margin * 2.0).max(48.0 * sf).min(420.0 * sf);
     let min_width = (96.0 * sf).min(max_width);
     let width = natural_width.max(min_width).min(max_width);
-    let line_height = (theme.font_size * sf + 5.0 * sf).max((theme.font_size + 3.0) * sf);
-    let content_width = (width - pad * 2.0).max(1.0);
-    let lines = (text_width / content_width).ceil().clamp(1.0, 4.0);
-    let height = (line_height * lines + pad * 2.0).max(28.0 * sf);
+    let content_width = (width - pad_left - pad_right).max(1.0);
+    let wrapped =
+        measure_wrapped_text_for_layout(text, &style.text, theme, content_width / sf.max(0.001));
+    let height = (wrapped.height * sf + pad_top + pad_bottom + text_slop).max(28.0 * sf);
     let mut obstacles = Vec::new();
     collect_tooltip_obstacles(tree, layout, &node.id, &mut obstacles);
     let rect = choose_tooltip_rect(*target, root, width, height, margin, &obstacles);
@@ -283,10 +418,14 @@ pub(crate) fn active_tooltip_overlay_rect(
     theme: &Theme,
     state: &WidgetState,
     sf: f32,
+    stylesheets: &StylesheetStore,
+    media: DgMediaEnvironment,
 ) -> Option<Rect> {
     rich_tooltip_target(tree, layout, state)
         .map(|(_, rect)| rect)
-        .or_else(|| tooltip_target(tree, layout, theme, state, sf).map(|(_, rect)| rect))
+        .or_else(|| {
+            tooltip_target(tree, layout, theme, state, sf, stylesheets, media).map(|(_, rect)| rect)
+        })
 }
 
 fn active_rich_tooltip<'a>(node: &'a WidgetNode, hovered: &str) -> Option<&'a WidgetNode> {

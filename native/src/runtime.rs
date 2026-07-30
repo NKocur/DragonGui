@@ -41,10 +41,11 @@ use crate::css_style::{
     apply_stylesheets_to_tree_for_diagnostics, apply_stylesheets_to_tree_for_media_and_containers,
     matched_part_rule_labels_for_tree_with_media, matched_rule_diagnostics_for_tree_with_media,
     matched_rule_labels_for_tree_with_media, materialize_native_fallback_provenance,
-    refresh_live_pane_fallback_provenance, user_selector_diagnostics_for_tree_with_media,
-    user_selector_match_counts_for_tree_with_media, DgContainerQueryContext, DgKeyframes,
-    DgMatchedRuleDiagnostic, DgMediaColorGamut, DgMediaColorScheme, DgMediaEnvironment,
-    DgMediaHover, DgMediaPointer, StylesheetOrigin, StylesheetStore,
+    merge_node_style, refresh_live_pane_fallback_provenance,
+    user_selector_diagnostics_for_tree_with_media, user_selector_match_counts_for_tree_with_media,
+    DgContainerQueryContext, DgKeyframes, DgMatchedRuleDiagnostic, DgMediaColorGamut,
+    DgMediaColorScheme, DgMediaEnvironment, DgMediaHover, DgMediaPointer, StylesheetOrigin,
+    StylesheetStore,
 };
 use crate::document::{
     self, BarChartHoverProp, HeatmapHoverProp, LinePlotHoverProp, LoadingScreenSpec, NodeProps,
@@ -84,10 +85,10 @@ use crate::style::{
     AnimationIterationCount, AnimationPlayState, AnimationStyle, BackgroundPaint, BoxShadow,
     ColorRef, DisplayStyle, FlexDirectionStyle, FontFamily, FontStyle, FontVariantNumeric,
     GeneratedContent, GridAutoFlowStyle, GridLineStyle, GridPlacementStyle, GridTrackSize,
-    LayoutLength, LayoutStyle, LineHeight, NodeStyle, OverflowStyle, PartLayoutStyle, PartStyle,
-    PositionStyle, StepPosition, TextAlign, TextOverflow, TextSpacing, TextStyle, TextTransform,
-    TransitionProperty, TransitionStyle, TransitionTimingFunction, VisualStyle, WidgetStyle,
-    BORDER_WIDTH_LP,
+    JustifyContentStyle, LayoutLength, LayoutStyle, LineHeight, NodeStyle, OverflowStyle,
+    PartLayoutStyle, PartStyle, PositionStyle, StepPosition, TextAlign, TextOverflow, TextSpacing,
+    TextStyle, TextTransform, TransitionProperty, TransitionStyle, TransitionTimingFunction,
+    VisualStyle, WidgetStyle, BORDER_WIDTH_LP,
 };
 use crate::table::{self, TableHit};
 use crate::text::{measure_wrapped_text_for_layout, TextRendererDg};
@@ -256,9 +257,14 @@ fn coalesce_runtime_command_batch(commands: &mut Vec<Command>) {
         .collect();
     let mut seen_extension_display_lists = HashSet::new();
     let mut seen_icon_theme = false;
+    let mut seen_theme = false;
+    let mut seen_stylesheet_mutations = HashSet::new();
+    let mut seen_stylesheet_clears = HashSet::new();
+    let mut seen_props = HashSet::new();
     let mut filtered = Vec::with_capacity(commands.len());
     while let Some(command) = commands.pop() {
         let keep = match &command {
+            Command::SetProp { id, prop, .. } => seen_props.insert((id.clone(), prop.clone())),
             Command::SetScatterPointsPacked {
                 id,
                 fit,
@@ -327,6 +333,20 @@ fn coalesce_runtime_command_batch(commands: &mut Vec<Command>) {
                 seen_icon_theme = true;
                 keep
             }
+            Command::SetTheme { .. } => {
+                let keep = !seen_theme;
+                seen_theme = true;
+                keep
+            }
+            Command::SetStylesheet { origin, id, .. } => {
+                !seen_stylesheet_clears.contains(origin)
+                    && seen_stylesheet_mutations.insert((*origin, id.clone()))
+            }
+            Command::RemoveStylesheet { origin, id } => {
+                !seen_stylesheet_clears.contains(origin)
+                    && seen_stylesheet_mutations.insert((*origin, Some(id.clone())))
+            }
+            Command::ClearStylesheets { origin } => seen_stylesheet_clears.insert(*origin),
             _ => true,
         };
         if keep {
@@ -2705,6 +2725,17 @@ fn align_items_name(align_items: AlignItemsStyle) -> &'static str {
     }
 }
 
+fn justify_content_name(value: JustifyContentStyle) -> &'static str {
+    match value {
+        JustifyContentStyle::Start => "start",
+        JustifyContentStyle::Center => "center",
+        JustifyContentStyle::End => "end",
+        JustifyContentStyle::SpaceBetween => "space_between",
+        JustifyContentStyle::SpaceAround => "space_around",
+        JustifyContentStyle::SpaceEvenly => "space_evenly",
+    }
+}
+
 fn overflow_style_name(value: OverflowStyle) -> &'static str {
     match value {
         OverflowStyle::Visible => "visible",
@@ -2947,6 +2978,12 @@ fn layout_style_snapshot(style: &LayoutStyle) -> Value {
     }
     if let Some(value) = style.align_self {
         map.insert("align_self".to_string(), json!(align_items_name(value)));
+    }
+    if let Some(value) = style.justify_content {
+        map.insert(
+            "justify_content".to_string(),
+            json!(justify_content_name(value)),
+        );
     }
     insert_layout_length(&mut map, "width", style.width_value, style.width);
     insert_layout_length(&mut map, "height", style.height_value, style.height);
@@ -5592,6 +5629,80 @@ fn reparse_inline_style(node: &mut WidgetNode) {
     );
 }
 
+fn style_patch_can_merge_directly(patch: &Map<String, Value>) -> bool {
+    !patch.is_empty()
+        && patch.iter().all(|(key, value)| {
+            matches!(
+                key.as_str(),
+                "width"
+                    | "height"
+                    | "min_width"
+                    | "min-width"
+                    | "min_height"
+                    | "min-height"
+                    | "max_width"
+                    | "max-width"
+                    | "max_height"
+                    | "max-height"
+            ) && direct_dimension_value(value).is_some()
+        })
+}
+
+fn direct_dimension_value(value: &Value) -> Option<LayoutLength> {
+    if let Some(value) = value.as_f64() {
+        return value
+            .is_finite()
+            .then_some(LayoutLength::LogicalPx(value as f32));
+    }
+    let text = value.as_str()?.trim();
+    if text.eq_ignore_ascii_case("auto") {
+        return Some(LayoutLength::Auto);
+    }
+    if let Some(percent) = text.strip_suffix('%') {
+        return percent
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .filter(|value| value.is_finite())
+            .map(LayoutLength::Percent);
+    }
+    if let Some(px) = text.strip_suffix("px") {
+        return px
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .filter(|value| value.is_finite())
+            .map(LayoutLength::LogicalPx);
+    }
+    None
+}
+
+fn merge_direct_style_patch(node: &mut WidgetNode, patch: &Map<String, Value>) {
+    let patch_value = Value::Object(patch.clone());
+    let mut computed_patch = NodeStyle::from_json(Some(&patch_value));
+    crate::css_style::record_serialized_style_provenance(
+        &mut computed_patch,
+        patch,
+        StylesheetOrigin::Inline,
+        None,
+    );
+    for (key, value) in patch {
+        let Some(value) = direct_dimension_value(value) else {
+            continue;
+        };
+        match key.as_str() {
+            "width" => computed_patch.layout.width_value = Some(value),
+            "height" => computed_patch.layout.height_value = Some(value),
+            "min_width" | "min-width" => computed_patch.layout.min_width_value = Some(value),
+            "min_height" | "min-height" => computed_patch.layout.min_height_value = Some(value),
+            "max_width" | "max-width" => computed_patch.layout.max_width_value = Some(value),
+            "max_height" | "max-height" => computed_patch.layout.max_height_value = Some(value),
+            _ => {}
+        }
+    }
+    merge_node_style(&mut node.style, &computed_patch);
+}
+
 fn style_patch_dirty(patch: &Map<String, Value>) -> Dirty {
     let mut dirty = Dirty::Visual;
     for (key, value) in patch {
@@ -5617,6 +5728,8 @@ fn is_layout_style_key(key: &str) -> bool {
             | "align-items"
             | "align_self"
             | "align-self"
+            | "justify_content"
+            | "justify-content"
             | "flex"
             | "flex_grow"
             | "flex_shrink"
@@ -5751,7 +5864,7 @@ mod style_patch_tests {
     }
 
     #[test]
-    fn client_chrome_maximized_state_updates_attribute_glyph_and_tooltip() {
+    fn client_chrome_maximized_state_updates_attribute_icon_and_tooltip() {
         let mut tree = crate::document::parse_widget_node(&json!({
             "id": "window",
             "type": "window",
@@ -5763,9 +5876,9 @@ mod style_patch_tests {
                 "css_types": ["WindowTitlebar", "Container", "Widget"],
                 "children": [{
                     "id": "window--dg-window-maximize",
-                    "type": "button",
+                    "type": "icon_button",
                     "css_types": ["WindowMaximize", "Widget"],
-                    "props": {"text": "□", "tooltip": "Maximize window"}
+                    "props": {"icon": "stop", "tooltip": "Maximize window"}
                 }]
             }]
         }))
@@ -5774,20 +5887,19 @@ mod style_patch_tests {
         assert!(sync_client_chrome_maximized_state(&mut tree, true));
         assert_eq!(tree.props.raw_props["window_state"], json!("maximized"));
         let maximize = find_widget_with_css_type_mut(&mut tree, "WindowMaximize").unwrap();
-        assert_eq!(maximize.props.text.as_deref(), Some("❐"));
+        assert_eq!(maximize.props.raw_props["icon"], json!("copy"));
         assert_eq!(maximize.props.tooltip.as_deref(), Some("Restore window"));
         assert_eq!(
             maximize.props.raw_props["accessible_name"],
             json!("Restore window")
         );
-        assert_eq!(maximize.props.raw_props["text"], json!("❐"));
         assert_eq!(maximize.props.raw_props["tooltip"], json!("Restore window"));
 
         assert!(!sync_client_chrome_maximized_state(&mut tree, true));
         assert!(sync_client_chrome_maximized_state(&mut tree, false));
         assert_eq!(tree.props.raw_props["window_state"], json!("normal"));
         let maximize = find_widget_with_css_type_mut(&mut tree, "WindowMaximize").unwrap();
-        assert_eq!(maximize.props.text.as_deref(), Some("□"));
+        assert_eq!(maximize.props.raw_props["icon"], json!("stop"));
         assert_eq!(maximize.props.tooltip.as_deref(), Some("Maximize window"));
         assert_eq!(
             maximize.props.raw_props["accessible_name"],
@@ -5940,6 +6052,124 @@ mod style_patch_tests {
         assert!(is_client_chrome_drag_target("main--dg-window-title"));
         assert!(!is_client_chrome_drag_target("main--dg-window-minimize"));
         assert!(!is_client_chrome_drag_target("main--dg-window-close"));
+    }
+
+    #[test]
+    fn client_chrome_geometry_hit_test_owns_title_and_background_but_not_controls() {
+        let tree = crate::document::parse_widget_node(&json!({
+            "id": "window",
+            "type": "window",
+            "css_types": ["Window", "Container", "Widget"],
+            "children": [{
+                "id": "window--dg-window-titlebar",
+                "type": "h_layout",
+                "css_types": ["WindowTitlebar", "Container", "Widget"],
+                "children": [
+                    {
+                        "id": "window--dg-window-title",
+                        "type": "label",
+                        "css_types": ["WindowTitle", "Widget"]
+                    },
+                    {
+                        "id": "window--dg-window-minimize",
+                        "type": "icon_button",
+                        "css_types": ["WindowMinimize", "Widget"]
+                    },
+                    {
+                        "id": "window--dg-window-maximize",
+                        "type": "icon_button",
+                        "css_types": ["WindowMaximize", "Widget"]
+                    },
+                    {
+                        "id": "window--dg-window-close",
+                        "type": "icon_button",
+                        "css_types": ["WindowClose", "Widget"]
+                    }
+                ]
+            }]
+        }))
+        .expect("client chrome tree");
+        let mut layout = LayoutResult::default();
+        for (id, rect) in [
+            (
+                "window",
+                Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 800.0,
+                    h: 600.0,
+                },
+            ),
+            (
+                "window--dg-window-titlebar",
+                Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 800.0,
+                    h: 34.0,
+                },
+            ),
+            (
+                "window--dg-window-title",
+                Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 650.0,
+                    h: 34.0,
+                },
+            ),
+            (
+                "window--dg-window-minimize",
+                Rect {
+                    x: 662.0,
+                    y: 0.0,
+                    w: 46.0,
+                    h: 34.0,
+                },
+            ),
+            (
+                "window--dg-window-maximize",
+                Rect {
+                    x: 708.0,
+                    y: 0.0,
+                    w: 46.0,
+                    h: 34.0,
+                },
+            ),
+            (
+                "window--dg-window-close",
+                Rect {
+                    x: 754.0,
+                    y: 0.0,
+                    w: 46.0,
+                    h: 34.0,
+                },
+            ),
+        ] {
+            layout.rects.insert(id.to_string(), rect);
+        }
+
+        assert_eq!(
+            client_chrome_drag_target_at(&tree, &layout, [240.0, 17.0]).as_deref(),
+            Some("window--dg-window-title")
+        );
+        assert_eq!(
+            client_chrome_drag_target_at(&tree, &layout, [656.0, 17.0]).as_deref(),
+            Some("window--dg-window-titlebar")
+        );
+        assert_eq!(
+            client_chrome_drag_target_at(&tree, &layout, [680.0, 17.0]),
+            None
+        );
+        assert_eq!(
+            client_chrome_drag_target_at(&tree, &layout, [240.0, 40.0]),
+            None
+        );
+        assert_eq!(
+            hit_test(&tree, &layout, [240.0, 17.0]),
+            None,
+            "the generic interactive hit test intentionally ignores title labels"
+        );
     }
 
     #[test]
@@ -6126,31 +6356,6 @@ mod style_patch_tests {
             now,
             PhysicalPosition::new(127.0, 18.0),
             default_client_double_click_thresholds(2.0),
-        ));
-    }
-
-    #[test]
-    fn client_titlebar_drag_waits_for_dpi_scaled_pointer_movement() {
-        let start = PhysicalPosition::new(120.0, 18.0);
-        assert!(!should_start_client_titlebar_drag(
-            start,
-            PhysicalPosition::new(121.9, 19.9),
-            1.0,
-        ));
-        assert!(should_start_client_titlebar_drag(
-            start,
-            PhysicalPosition::new(122.0, 18.0),
-            1.0,
-        ));
-        assert!(!should_start_client_titlebar_drag(
-            start,
-            PhysicalPosition::new(123.9, 21.9),
-            2.0,
-        ));
-        assert!(should_start_client_titlebar_drag(
-            start,
-            PhysicalPosition::new(120.0, 22.0),
-            2.0,
         ));
     }
 
@@ -7297,6 +7502,80 @@ mod style_patch_tests {
     }
 
     #[test]
+    fn command_batch_keeps_only_latest_theme_and_named_stylesheet_mutations() {
+        let mut first_theme = Theme::dark();
+        first_theme.spacing = 4.0;
+        let mut final_theme = Theme::dark();
+        final_theme.spacing = 9.0;
+        let mut commands = vec![
+            Command::SetTheme { theme: first_theme },
+            Command::SetStylesheet {
+                origin: StylesheetOrigin::User,
+                id: Some("appearance".to_string()),
+                css: "Button { color: red; }".to_string(),
+            },
+            Command::SetProp {
+                id: "status".to_string(),
+                prop: "text".to_string(),
+                value: CommandValue::Text("updated".to_string()),
+            },
+            Command::SetTheme { theme: final_theme },
+            Command::SetStylesheet {
+                origin: StylesheetOrigin::User,
+                id: Some("appearance".to_string()),
+                css: "Button { color: blue; }".to_string(),
+            },
+        ];
+
+        coalesce_runtime_command_batch(&mut commands);
+
+        assert_eq!(commands.len(), 3);
+        assert!(matches!(&commands[0], Command::SetProp { id, .. } if id == "status"));
+        assert!(matches!(
+            &commands[1],
+            Command::SetTheme { theme } if theme.spacing == 9.0
+        ));
+        assert!(matches!(
+            &commands[2],
+            Command::SetStylesheet { id, css, .. }
+                if id.as_deref() == Some("appearance") && css.contains("blue")
+        ));
+    }
+
+    #[test]
+    fn command_batch_drops_stylesheet_mutations_overridden_by_a_later_clear() {
+        let mut commands = vec![
+            Command::SetStylesheet {
+                origin: StylesheetOrigin::User,
+                id: Some("appearance".to_string()),
+                css: "Button { color: red; }".to_string(),
+            },
+            Command::ClearStylesheets {
+                origin: StylesheetOrigin::User,
+            },
+            Command::SetStylesheet {
+                origin: StylesheetOrigin::User,
+                id: Some("variables".to_string()),
+                css: ":root { --accent: blue; }".to_string(),
+            },
+        ];
+
+        coalesce_runtime_command_batch(&mut commands);
+
+        assert_eq!(commands.len(), 2);
+        assert!(matches!(
+            &commands[0],
+            Command::ClearStylesheets {
+                origin: StylesheetOrigin::User
+            }
+        ));
+        assert!(matches!(
+            &commands[1],
+            Command::SetStylesheet { id, .. } if id.as_deref() == Some("variables")
+        ));
+    }
+
+    #[test]
     fn command_batch_does_not_coalesce_display_lists_across_structural_replacement() {
         let mut commands = vec![
             Command::UpdateExtensionDisplayList {
@@ -7528,6 +7807,44 @@ mod style_patch_tests {
                     .unwrap()
             ),
             Dirty::Visual
+        );
+    }
+
+    #[test]
+    fn dimension_only_style_patches_can_skip_global_cascade_reapplication() {
+        assert!(style_patch_can_merge_directly(
+            json!({"width": "54.0%"}).as_object().unwrap()
+        ));
+        assert!(style_patch_can_merge_directly(
+            json!({"width": 240, "min-height": 32}).as_object().unwrap()
+        ));
+        assert!(!style_patch_can_merge_directly(
+            json!({"width": null}).as_object().unwrap()
+        ));
+        assert!(!style_patch_can_merge_directly(
+            json!({"width": 240, "color": "accent"})
+                .as_object()
+                .unwrap()
+        ));
+
+        let mut node = crate::document::parse_widget_node(&json!({
+            "id": "live-panel",
+            "type": "panel",
+            "style": {"width": "42%"}
+        }))
+        .unwrap();
+        node.style.layout.width_value = Some(LayoutLength::Percent(42.0));
+        let patch = json!({"width": "73.5%"});
+        merge_direct_style_patch(&mut node, patch.as_object().unwrap());
+        assert_eq!(
+            node.style.layout.width_value,
+            Some(LayoutLength::Percent(73.5))
+        );
+        assert_eq!(
+            node.style.provenance["width"]
+                .last()
+                .and_then(|candidate| candidate.value.as_ref()),
+            Some(&json!("73.5%"))
         );
     }
 
@@ -12004,6 +12321,7 @@ impl WgpuState {
             return true;
         }
         let total_t0 = Instant::now();
+        let media = self.media_environment();
         let WgpuState {
             widget_tree,
             current_layout,
@@ -12043,6 +12361,7 @@ impl WgpuState {
                 state,
                 resources,
                 stylesheets,
+                media,
                 widget_id,
                 table_only,
             ) else {
@@ -13324,6 +13643,14 @@ impl WgpuState {
             .filter(|(id, _)| !state.is_disabled(id))
     }
 
+    fn client_chrome_drag_target_at(&self, pos: [f32; 2]) -> Option<String> {
+        client_chrome_drag_target_at(
+            self.widget_tree.as_ref()?,
+            self.current_layout.as_ref()?,
+            pos,
+        )
+    }
+
     fn hit_test_hover(&self, pos: [f32; 2]) -> Option<(String, WidgetKind)> {
         if let Some(id) = self.menu_item_at(pos) {
             return Some((id, WidgetKind::MenuItem));
@@ -14340,7 +14667,14 @@ impl WgpuState {
         merge_style_patch(&mut node.style_json, patch);
         reparse_inline_style(node);
         let dirty = style_patch_dirty(patch);
-        self.reapply_stylesheets();
+        if style_patch_can_merge_directly(patch) {
+            merge_direct_style_patch(node, patch);
+        } else {
+            // A command drain may contain many inline-style mutations.
+            // Reapplying the complete cascade here makes every SetStyle
+            // O(tree), so defer one cascade to the merged rebuild boundary.
+            self.mark_styles_dirty();
+        }
         Ok(Some(dirty))
     }
 
@@ -16882,6 +17216,9 @@ impl WgpuState {
         if matches!(dirty, Dirty::Layout | Dirty::Full) {
             self.cancel_hover_transitions();
         }
+        if self.styles_dirty && !matches!(dirty, Dirty::Layout | Dirty::Full) {
+            self.reapply_stylesheets();
+        }
         match dirty {
             Dirty::Layout | Dirty::Full => self.apply_layout(),
             Dirty::Text => self.rebuild_visuals(),
@@ -16910,8 +17247,8 @@ impl WgpuState {
             None => self.stylesheets.set_stylesheet(origin, css),
         }
         .map_err(|error| error.to_string())?;
-        self.reapply_stylesheets();
-        self.apply_layout();
+        self.mark_styles_dirty();
+        self.rebuild_for_dirty(Dirty::Full);
         Ok(())
     }
 
@@ -16919,8 +17256,8 @@ impl WgpuState {
         if !self.stylesheets.remove_stylesheet(origin, id) {
             return false;
         }
-        self.reapply_stylesheets();
-        self.apply_layout();
+        self.mark_styles_dirty();
+        self.rebuild_for_dirty(Dirty::Full);
         true
     }
 
@@ -16928,12 +17265,8 @@ impl WgpuState {
         let dirty = theme_change_dirty(&self.theme, &theme).unwrap_or(Dirty::Visual);
         self.theme = theme;
         self.stylesheets.install_framework_defaults(&self.theme);
-        self.reapply_stylesheets();
-        if dirty == Dirty::Layout {
-            self.apply_layout();
-        } else {
-            self.rebuild_visuals();
-        }
+        self.mark_styles_dirty();
+        self.rebuild_for_dirty(dirty);
         dirty
     }
 
@@ -16953,8 +17286,8 @@ impl WgpuState {
 
     fn clear_stylesheets(&mut self, origin: StylesheetOrigin) {
         self.stylesheets.clear(origin);
-        self.reapply_stylesheets();
-        self.apply_layout();
+        self.mark_styles_dirty();
+        self.rebuild_for_dirty(Dirty::Full);
     }
 
     fn show_toast(
@@ -19676,7 +20009,6 @@ struct DragonApp {
     pending_window_screenshot_requests: Vec<u64>,
     synthetic_input_profile: Option<SyntheticInputProfile>,
     client_resize_direction: Option<ResizeDirection>,
-    client_titlebar_drag_pending: Option<PhysicalPosition<f64>>,
     last_client_titlebar_click: Option<(Instant, PhysicalPosition<f64>)>,
 }
 
@@ -19730,12 +20062,12 @@ fn sync_client_chrome_maximized_state(tree: &mut WidgetNode, maximized: bool) ->
     let Some(control) = find_widget_with_css_type_mut(window, "WindowMaximize") else {
         return changed;
     };
-    let (glyph, tooltip) = if maximized {
-        ("❐", "Restore window")
+    let (icon, tooltip) = if maximized {
+        ("copy", "Restore window")
     } else {
-        ("□", "Maximize window")
+        ("stop", "Maximize window")
     };
-    changed |= control.props.text.as_deref() != Some(glyph)
+    changed |= control.props.raw_props.get("icon").and_then(Value::as_str) != Some(icon)
         || control.props.tooltip.as_deref() != Some(tooltip)
         || control
             .props
@@ -19743,12 +20075,11 @@ fn sync_client_chrome_maximized_state(tree: &mut WidgetNode, maximized: bool) ->
             .get("accessible_name")
             .and_then(Value::as_str)
             != Some(tooltip);
-    control.props.text = Some(glyph.to_string());
     control.props.tooltip = Some(tooltip.to_string());
     control
         .props
         .raw_props
-        .insert("text".to_string(), Value::String(glyph.to_string()));
+        .insert("icon".to_string(), Value::String(icon.to_string()));
     control
         .props
         .raw_props
@@ -19810,8 +20141,58 @@ fn is_client_system_menu_shortcut(
     alt && !control && !super_key && matches!(logical_key, Key::Named(NamedKey::Space))
 }
 
+#[cfg(test)]
 fn is_client_chrome_drag_target(widget_id: &str) -> bool {
     widget_id.ends_with("--dg-window-titlebar") || widget_id.ends_with("--dg-window-title")
+}
+
+fn find_widget_with_css_type<'a>(node: &'a WidgetNode, css_type: &str) -> Option<&'a WidgetNode> {
+    if node.css_types.iter().any(|name| name == css_type) {
+        return Some(node);
+    }
+    node.children
+        .iter()
+        .find_map(|child| find_widget_with_css_type(child, css_type))
+}
+
+fn rect_contains_point(rect: Rect, pos: [f32; 2]) -> bool {
+    pos[0] >= rect.x && pos[0] < rect.x + rect.w && pos[1] >= rect.y && pos[1] < rect.y + rect.h
+}
+
+fn client_chrome_drag_target_at(
+    tree: &WidgetNode,
+    layout: &LayoutResult,
+    pos: [f32; 2],
+) -> Option<String> {
+    let titlebar = find_widget_with_css_type(tree, "WindowTitlebar")?;
+    let titlebar_rect = layout.visible_rect(&titlebar.id)?;
+    if !rect_contains_point(titlebar_rect, pos) {
+        return None;
+    }
+
+    // The titlebar owns its background and title label, but never steals
+    // pointer input from the three retained window controls.
+    for css_type in ["WindowMinimize", "WindowMaximize", "WindowClose"] {
+        let Some(control) = find_widget_with_css_type(titlebar, css_type) else {
+            continue;
+        };
+        if layout
+            .visible_rect(&control.id)
+            .is_some_and(|rect| rect_contains_point(rect, pos))
+        {
+            return None;
+        }
+    }
+
+    if let Some(title) = find_widget_with_css_type(titlebar, "WindowTitle") {
+        if layout
+            .visible_rect(&title.id)
+            .is_some_and(|rect| rect_contains_point(rect, pos))
+        {
+            return Some(title.id.clone());
+        }
+    }
+    Some(titlebar.id.clone())
 }
 
 const CLIENT_RESIZE_BORDER_LP: f64 = 6.0;
@@ -19926,15 +20307,6 @@ fn is_client_titlebar_double_click(
     }
     (position.x - previous_position.x).abs() <= thresholds.max_delta_x
         && (position.y - previous_position.y).abs() <= thresholds.max_delta_y
-}
-
-fn should_start_client_titlebar_drag(
-    start: PhysicalPosition<f64>,
-    current: PhysicalPosition<f64>,
-    scale_factor: f64,
-) -> bool {
-    let threshold = 2.0 * scale_factor.max(0.1);
-    (current.x - start.x).abs() >= threshold || (current.y - start.y).abs() >= threshold
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20098,7 +20470,6 @@ impl DragonApp {
             pending_window_screenshot_requests: Vec::new(),
             synthetic_input_profile: SyntheticInputProfile::from_env(),
             client_resize_direction: None,
-            client_titlebar_drag_pending: None,
             last_client_titlebar_click: None,
         }
     }
@@ -26001,7 +26372,6 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
             }
 
             WindowEvent::Focused(false) => {
-                self.client_titlebar_drag_pending = None;
                 if self.cancel_scatter_interaction() {
                     self.request_redraw();
                 }
@@ -26014,7 +26384,6 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                     MouseButton::Left => {
                         if !pressed {
                             // ── release ───────────────────────────────────────
-                            self.client_titlebar_drag_pending = None;
                             let was_orbiting = self.orbit_active;
                             let was_rect_select = self.rect_select_active;
                             let scatter_press = self.scatter_press_pos.take();
@@ -26318,9 +26687,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                 let chrome_drag_target = self
                                     .gpu
                                     .as_ref()
-                                    .and_then(|g| g.hit_test_ui(pos))
-                                    .map(|(id, _)| id)
-                                    .filter(|id| is_client_chrome_drag_target(id));
+                                    .and_then(|g| g.client_chrome_drag_target_at(pos));
                                 if chrome_drag_target.is_some() {
                                     self.set_focus(None);
                                     let position =
@@ -26340,7 +26707,6 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                     self.last_client_titlebar_click =
                                         (!double_click).then_some((now, position));
                                     if double_click {
-                                        self.client_titlebar_drag_pending = None;
                                         let next = self.window.as_ref().map(|window| {
                                             let next = !window.is_maximized();
                                             window.set_maximized(next);
@@ -26350,7 +26716,16 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                             self.sync_client_chrome_maximized(maximized);
                                         }
                                     } else {
-                                        self.client_titlebar_drag_pending = Some(position);
+                                        // Winit requires drag_window() immediately
+                                        // after the press. Waiting for CursorMoved
+                                        // loses the native Windows drag gesture.
+                                        if let Some(window) = &self.window {
+                                            if let Err(error) = window.drag_window() {
+                                                eprintln!(
+                                                    "DragonGUI: could not start client titlebar drag: {error}"
+                                                );
+                                            }
+                                        }
                                     }
                                     return;
                                 }
@@ -26737,9 +27112,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                 let chrome_target = self
                                     .gpu
                                     .as_ref()
-                                    .and_then(|g| g.hit_test_ui(pos))
-                                    .map(|(id, _)| id)
-                                    .filter(|id| is_client_chrome_drag_target(id));
+                                    .and_then(|g| g.client_chrome_drag_target_at(pos));
                                 if chrome_target.is_some() {
                                     if let Some(window) = &self.window {
                                         window.show_window_menu(PhysicalPosition::new(
@@ -26782,7 +27155,6 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                 }
                 self.last_mouse_pos = None;
                 self.client_resize_direction = None;
-                self.client_titlebar_drag_pending = None;
                 if self.client_decorations {
                     if let Some(window) = &self.window {
                         window.set_cursor(CursorIcon::Default);
@@ -26852,21 +27224,6 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
             WindowEvent::CursorMoved { position, .. } => {
                 self.update_client_resize_cursor(position);
                 let new_pos = [position.x as f32, position.y as f32];
-                if let Some(start) = self.client_titlebar_drag_pending {
-                    let scale_factor = self
-                        .window
-                        .as_ref()
-                        .map(|window| window.scale_factor())
-                        .unwrap_or(1.0);
-                    if should_start_client_titlebar_drag(start, position, scale_factor) {
-                        self.client_titlebar_drag_pending = None;
-                        self.last_mouse_pos = Some(new_pos);
-                        if let Some(window) = &self.window {
-                            let _ = window.drag_window();
-                        }
-                        return;
-                    }
-                }
 
                 // Drag interactions take priority.
                 if self.scrollbar_drag.is_some() {

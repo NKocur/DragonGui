@@ -129,6 +129,33 @@ def test_window_client_decorations_serialize_retained_titlebar() -> None:
         "main-window--dg-window-maximize",
         "main-window--dg-window-close",
     ]
+    title = titlebar["children"][0]
+    assert title["props"]["wrap"] is False
+    assert title["default_style"] == {
+        "width": 0,
+        "flex_grow": 1,
+        "flex_shrink": 1,
+        "min_width": 0,
+        "height": 34,
+        "padding_left": 12,
+        "padding_right": 8,
+        "overflow": "hidden",
+        "text_overflow": "ellipsis",
+    }
+    assert all(
+        child["default_style"]["flex_shrink"] == 0
+        for child in titlebar["children"][1:]
+    )
+    assert [child["type"] for child in titlebar["children"][1:]] == [
+        "icon_button",
+        "icon_button",
+        "icon_button",
+    ]
+    assert [child["props"].get("icon") for child in titlebar["children"][1:]] == [
+        "minus",
+        "stop",
+        "close",
+    ]
     assert [child["props"].get("tooltip") for child in titlebar["children"][1:]] == [
         "Minimize window",
         "Maximize window",
@@ -856,6 +883,7 @@ def test_search_box_keeps_dynamic_default_separate_from_static_framework_style()
 
     assert baseline["default_style"] == {
         "align_items": "center",
+        "min_height": 38,
         "flex_grow": 0,
         "flex_shrink": 1,
         "width": 340.0,
@@ -5175,6 +5203,7 @@ def test_search_box_serializes_and_emits_change_and_clear() -> None:
     assert serialized["props"] == {"disabled": False, "clearable": True}
     assert serialized["default_style"] == {
         "align_items": "center",
+        "min_height": 38,
         "flex_grow": 0,
         "flex_shrink": 1,
         "width": 340.0,
@@ -5227,6 +5256,7 @@ def test_search_box_sizing_api_supports_standalone_toolbar_and_compact_contracts
 
     assert growing.to_dict()["default_style"] == {
         "align_items": "center",
+        "min_height": 38,
         "flex_grow": 1,
         "flex_shrink": 1,
         "min_width": 120.0,

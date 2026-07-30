@@ -9,10 +9,11 @@ class Theme:
     """Design-token set for DragonGUI's native renderer.
 
     Color values are CSS-style strings accepted by the native color parser,
-    including hex, ``transparent``, common named colors, ``rgb()/rgba()``,
+    including hex, ``transparent``, standard CSS named colors, ``rgb()/rgba()``,
     ``hsl()/hsla()``, ``hwb()``, ``lab()``, ``lch()``, ``oklab()``, ``oklch()``,
     ``color(srgb ...)``, and ``color(srgb-linear ...)``.
-    Numeric values are logical (device-independent) pixels.
+    Numeric values are logical (device-independent) pixels, except
+    ``base_line_height``, which is a unitless multiplier.
     """
 
     background: str = "#0a0f14"
@@ -30,6 +31,16 @@ class Theme:
     radius: float = 3.0
     spacing: float = 5.0
     font_size: float = 13.0
+    font_family: str = "sans-serif"
+    monospace_font_family: str = "Consolas, monospace"
+    base_line_height: float = 18.0 / 13.0
+    control_height: float = 25.0
+    compact_control_height: float = 22.0
+    default_border_width: float = 1.0
+    focus_width: float = 2.0
+    focus_offset: float = 1.0
+    panel_padding: float = 7.0
+    toolbar_gap: float = 6.0
 
     @property
     def space_xs(self) -> float:
@@ -85,6 +96,16 @@ class Theme:
             "radius": 3.0,
             "spacing": 5.0,
             "font_size": 13.0,
+            "font_family": "sans-serif",
+            "monospace_font_family": "Consolas, monospace",
+            "base_line_height": 18.0 / 13.0,
+            "control_height": 25.0,
+            "compact_control_height": 22.0,
+            "default_border_width": 1.0,
+            "focus_width": 2.0,
+            "focus_offset": 1.0,
+            "panel_padding": 7.0,
+            "toolbar_gap": 6.0,
         }
         values.update(overrides)
         return cls(**values)
@@ -106,4 +127,14 @@ class Theme:
             "radius": self.radius,
             "spacing": self.spacing,
             "font_size": self.font_size,
+            "font_family": self.font_family,
+            "monospace_font_family": self.monospace_font_family,
+            "base_line_height": self.base_line_height,
+            "control_height": self.control_height,
+            "compact_control_height": self.compact_control_height,
+            "default_border_width": self.default_border_width,
+            "focus_width": self.focus_width,
+            "focus_offset": self.focus_offset,
+            "panel_padding": self.panel_padding,
+            "toolbar_gap": self.toolbar_gap,
         }

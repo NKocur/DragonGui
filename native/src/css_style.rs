@@ -36,19 +36,19 @@ use crate::paint::{
     native_widget_part_paint_fallback, NativePaintFallback, PaintInteraction,
 };
 use crate::style::{
-    visual_style_is_empty, AnimationDirection, AnimationFillMode, AnimationIterationCount,
-    AnimationPlayState, AnimationStyle, BackdropFilterStyle, BackgroundImage, BackgroundImageFit,
-    BackgroundPaint, BackgroundPattern, BackgroundPatternKind, BlobGradient, BlobGradientStop,
-    BorderLineStyle, BoxShadow, CalcLength, ColorRef, ContainerTypeStyle, DisplayStyle,
-    FlexDirectionStyle, FlexWrapStyle, FontFamily, FontStyle, FontVariantNumeric, GeneratedContent,
-    GradientInterpolation, GradientStop, GridAutoFlowStyle, GridLineStyle, GridPlacementStyle,
-    GridTemplateArea, GridTemplateAreas, GridTrackFitContentSize, GridTrackMaxSize,
-    GridTrackMinSize, GridTrackRepeatKind, GridTrackSize, LayoutLength, LayoutStyle, LineHeight,
-    LinearGradient, MeshGradient, NodePartStyles, NodeStyle, OverflowStyle, PartLayoutStyle,
-    PartStyle, PositionStyle, RadialGradient, SharedStyleDeclarationProvenance,
-    StyleDeclarationProvenance, StyleProvenanceCandidates, TextAlign, TextOverflow, TextSpacing,
-    TextStyle, TextTransform, TransformStyle, TransitionProperty, TransitionStyle,
-    TransitionTimingFunction, VisualStyle,
+    visual_style_is_empty, AlignItemsStyle, AnimationDirection, AnimationFillMode,
+    AnimationIterationCount, AnimationPlayState, AnimationStyle, BackdropFilterStyle,
+    BackgroundImage, BackgroundImageFit, BackgroundPaint, BackgroundPattern, BackgroundPatternKind,
+    BlobGradient, BlobGradientStop, BorderLineStyle, BoxShadow, CalcLength, ColorRef,
+    ContainerTypeStyle, DisplayStyle, FlexDirectionStyle, FlexWrapStyle, FontFamily, FontStyle,
+    FontVariantNumeric, GeneratedContent, GradientInterpolation, GradientStop, GridAutoFlowStyle,
+    GridLineStyle, GridPlacementStyle, GridTemplateArea, GridTemplateAreas,
+    GridTrackFitContentSize, GridTrackMaxSize, GridTrackMinSize, GridTrackRepeatKind,
+    GridTrackSize, JustifyContentStyle, LayoutLength, LayoutStyle, LineHeight, LinearGradient,
+    MeshGradient, NodePartStyles, NodeStyle, OverflowStyle, PartLayoutStyle, PartStyle,
+    PositionStyle, RadialGradient, SharedStyleDeclarationProvenance, StyleDeclarationProvenance,
+    StyleProvenanceCandidates, TextAlign, TextOverflow, TextSpacing, TextStyle, TextTransform,
+    TransformStyle, TransitionProperty, TransitionStyle, TransitionTimingFunction, VisualStyle,
 };
 use crate::theme::{parse_web_color, Color, Theme};
 use crate::widget_capabilities::widget_supports_part;
@@ -907,6 +907,9 @@ pub enum DgLayoutDeclaration {
     Display(DgCssKeyword),
     FlexDirection(DgCssKeyword),
     FlexWrap(DgCssKeyword),
+    AlignItems(DgCssKeyword),
+    AlignSelf(DgCssKeyword),
+    JustifyContent(DgCssKeyword),
     Flex(DgCssNumber),
     FlexGrow(DgCssNumber),
     FlexShrink(DgCssNumber),
@@ -2992,6 +2995,9 @@ pub enum DgLayoutPropertyName {
     Display,
     FlexDirection,
     FlexWrap,
+    AlignItems,
+    AlignSelf,
+    JustifyContent,
     Flex,
     FlexGrow,
     FlexShrink,
@@ -3179,6 +3185,9 @@ impl DgStylePropertyName {
             "display" => Ok(Self::Layout(DgLayoutPropertyName::Display)),
             "flex-direction" => Ok(Self::Layout(DgLayoutPropertyName::FlexDirection)),
             "flex-wrap" => Ok(Self::Layout(DgLayoutPropertyName::FlexWrap)),
+            "align-items" => Ok(Self::Layout(DgLayoutPropertyName::AlignItems)),
+            "align-self" => Ok(Self::Layout(DgLayoutPropertyName::AlignSelf)),
+            "justify-content" => Ok(Self::Layout(DgLayoutPropertyName::JustifyContent)),
             "flex" => Ok(Self::Layout(DgLayoutPropertyName::Flex)),
             "flex-grow" => Ok(Self::Layout(DgLayoutPropertyName::FlexGrow)),
             "flex-shrink" => Ok(Self::Layout(DgLayoutPropertyName::FlexShrink)),
@@ -5556,10 +5565,9 @@ fn provenance_affected_properties(authored_property: &str) -> Vec<String> {
     properties
 }
 
-struct InheritedTextContext {
-    node_id: String,
-    text: TextStyle,
-    provenance: HashMap<Arc<str>, StyleProvenanceCandidates>,
+struct InheritedTextContext<'a> {
+    text: &'a TextStyle,
+    provenance: [Option<SharedStyleDeclarationProvenance>; INHERITED_TEXT_PROPERTIES.len()],
 }
 
 const INHERITED_TEXT_PROPERTIES: [&str; 11] = [
@@ -5581,7 +5589,7 @@ fn apply_stylesheets_to_node<'a>(
     rules: &'a StylesheetRuleRefs<'a>,
     features: StylesheetMatchFeatures,
     ancestors: &mut Vec<AncestorSnapshot>,
-    inherited_text: Option<&InheritedTextContext>,
+    inherited_text: Option<&InheritedTextContext<'_>>,
     validation_warnings: &mut Vec<DgStyleWarning>,
     seen_validation_warnings: &mut BTreeSet<String>,
     matched_scratch: &mut Vec<MatchedStyleDeclaration<'a>>,
@@ -5689,50 +5697,45 @@ fn apply_stylesheets_to_node<'a>(
     }
     node.style = computed;
 
-    let pushed_ancestor = features.needs_ancestor_snapshots();
+    // A leaf can never be an ancestor during this traversal. Avoid cloning its
+    // selector identity, classes, attributes, and container metadata only to
+    // pop the snapshot immediately without a descendant consuming it.
+    let pushed_ancestor = !node.children.is_empty() && features.needs_ancestor_snapshots();
     if pushed_ancestor {
         metrics.ancestor_snapshots = metrics.ancestor_snapshots.saturating_add(1);
         ancestors.push(AncestorSnapshot::from_node(node, features));
     }
-    let child_text = InheritedTextContext {
-        node_id: node.id.clone(),
-        text: node.style.text.clone(),
-        provenance: INHERITED_TEXT_PROPERTIES
-            .iter()
-            .filter_map(|property| {
-                node.style
-                    .provenance
-                    .get(*property)
-                    .cloned()
-                    .map(|candidates| (Arc::from(*property), candidates))
-            })
-            .collect(),
-    };
-    let child_fallback_context = child_layout_fallback_context(node);
-    for (index, child) in node.children.iter_mut().enumerate() {
-        apply_stylesheets_to_node(
-            child,
-            rules,
-            features,
-            ancestors,
-            Some(&child_text),
-            validation_warnings,
-            seen_validation_warnings,
-            matched_scratch,
-            candidate_scratch,
-            provenance_cache,
-            Some(index),
-            Some(child_count),
-            features
-                .sibling_snapshots
-                .then_some(child_siblings.as_slice()),
-            media,
-            containers,
-            child_fallback_context,
-            fallback_theme,
-            metrics,
-            record_full_provenance,
-        );
+    if !node.children.is_empty() {
+        let child_text = InheritedTextContext {
+            text: &node.style.text,
+            provenance: child_inherited_text_provenance(node),
+        };
+        let child_fallback_context = child_layout_fallback_context(node);
+        for (index, child) in node.children.iter_mut().enumerate() {
+            apply_stylesheets_to_node(
+                child,
+                rules,
+                features,
+                ancestors,
+                Some(&child_text),
+                validation_warnings,
+                seen_validation_warnings,
+                matched_scratch,
+                candidate_scratch,
+                provenance_cache,
+                Some(index),
+                Some(child_count),
+                features
+                    .sibling_snapshots
+                    .then_some(child_siblings.as_slice()),
+                media,
+                containers,
+                child_fallback_context,
+                fallback_theme,
+                metrics,
+                record_full_provenance,
+            );
+        }
     }
     forward_composite_semantic_parts(node);
     if pushed_ancestor {
@@ -6165,6 +6168,7 @@ fn merge_layout_style(base: &mut LayoutStyle, overlay: &LayoutStyle) {
     base.flex_wrap = overlay.flex_wrap.or(base.flex_wrap);
     base.align_items = overlay.align_items.or(base.align_items);
     base.align_self = overlay.align_self.or(base.align_self);
+    base.justify_content = overlay.justify_content.or(base.justify_content);
     base.width = overlay.width.or(base.width);
     base.height = overlay.height.or(base.height);
     base.min_width = overlay.min_width.or(base.min_width);
@@ -6390,7 +6394,7 @@ fn merge_part_layout_style(base: &mut PartLayoutStyle, overlay: &PartLayoutStyle
     base.gap = overlay.gap.or(base.gap);
 }
 
-fn inherit_text_provenance(target: &mut NodeStyle, inherited: &InheritedTextContext) {
+fn inherit_text_provenance(target: &mut NodeStyle, inherited: &InheritedTextContext<'_>) {
     let inherited_fields = [
         (
             "font-size",
@@ -6438,32 +6442,43 @@ fn inherit_text_provenance(target: &mut NodeStyle, inherited: &InheritedTextCont
             target.text.text_overflow.is_none() && inherited.text.text_overflow.is_some(),
         ),
     ];
-    for (property, should_inherit) in inherited_fields {
+    for (index, (property, should_inherit)) in inherited_fields.into_iter().enumerate() {
         if !should_inherit {
             continue;
         }
-        let Some(source) = inherited
-            .provenance
-            .get(property)
-            .and_then(|candidates| candidates.last())
-        else {
+        let Some(candidate) = &inherited.provenance[index] else {
             continue;
         };
-        let mut candidate = source.as_ref().clone();
-        candidate.source_origin = Some(
-            source
-                .source_origin
-                .clone()
-                .unwrap_or_else(|| source.origin.clone()),
-        );
-        candidate.origin = "inherited".to_string();
-        candidate.inherited_from = Some(inherited.node_id.clone());
         target
             .provenance
             .entry(Arc::from(property))
             .or_default()
-            .push(Arc::new(candidate));
+            .push(candidate.clone());
     }
+}
+
+fn child_inherited_text_provenance(
+    node: &WidgetNode,
+) -> [Option<SharedStyleDeclarationProvenance>; INHERITED_TEXT_PROPERTIES.len()] {
+    std::array::from_fn(|index| {
+        let property = INHERITED_TEXT_PROPERTIES[index];
+        node.style
+            .provenance
+            .get(property)
+            .and_then(|candidates| candidates.last())
+            .map(|source| {
+                let mut candidate = source.as_ref().clone();
+                candidate.source_origin = Some(
+                    source
+                        .source_origin
+                        .clone()
+                        .unwrap_or_else(|| source.origin.clone()),
+                );
+                candidate.origin = "inherited".to_string();
+                candidate.inherited_from = Some(node.id.clone());
+                Arc::new(candidate)
+            })
+    })
 }
 
 fn inherit_text_style(target: &mut TextStyle, inherited: &TextStyle) {
@@ -6615,6 +6630,15 @@ fn apply_layout_declaration(style: &mut LayoutStyle, declaration: &DgLayoutDecla
         }
         DgLayoutDeclaration::FlexWrap(value) => {
             style.flex_wrap = flex_wrap_from_keyword(value);
+        }
+        DgLayoutDeclaration::AlignItems(value) => {
+            style.align_items = align_items_from_keyword(value);
+        }
+        DgLayoutDeclaration::AlignSelf(value) => {
+            style.align_self = align_items_from_keyword(value);
+        }
+        DgLayoutDeclaration::JustifyContent(value) => {
+            style.justify_content = justify_content_from_keyword(value);
         }
         DgLayoutDeclaration::Flex(value) => {
             style.flex_grow = Some(value.0.max(0.0));
@@ -7348,6 +7372,56 @@ fn parse_flex_wrap_value(
     flex_wrap_from_keyword(&keyword)
         .map(|_| keyword)
         .ok_or_else(|| parse_warning(name, value, "nowrap, wrap, or wrap-reverse"))
+}
+
+fn align_items_from_keyword(value: &DgCssKeyword) -> Option<AlignItemsStyle> {
+    match value.0.trim().to_ascii_lowercase().as_str() {
+        "start" | "flex-start" => Some(AlignItemsStyle::Start),
+        "center" => Some(AlignItemsStyle::Center),
+        "end" | "flex-end" => Some(AlignItemsStyle::End),
+        "stretch" => Some(AlignItemsStyle::Stretch),
+        _ => None,
+    }
+}
+
+fn parse_align_items_value(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<DgCssKeyword, DgStyleWarning> {
+    let keyword = DgCssKeyword(resolve_keyword(value, variables));
+    align_items_from_keyword(&keyword)
+        .map(|_| keyword)
+        .ok_or_else(|| parse_warning(name, value, "start, center, end, or stretch"))
+}
+
+fn justify_content_from_keyword(value: &DgCssKeyword) -> Option<JustifyContentStyle> {
+    match value.0.trim().to_ascii_lowercase().as_str() {
+        "start" | "flex-start" => Some(JustifyContentStyle::Start),
+        "center" => Some(JustifyContentStyle::Center),
+        "end" | "flex-end" => Some(JustifyContentStyle::End),
+        "space-between" => Some(JustifyContentStyle::SpaceBetween),
+        "space-around" => Some(JustifyContentStyle::SpaceAround),
+        "space-evenly" => Some(JustifyContentStyle::SpaceEvenly),
+        _ => None,
+    }
+}
+
+fn parse_justify_content_value(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<DgCssKeyword, DgStyleWarning> {
+    let keyword = DgCssKeyword(resolve_keyword(value, variables));
+    justify_content_from_keyword(&keyword)
+        .map(|_| keyword)
+        .ok_or_else(|| {
+            parse_warning(
+                name,
+                value,
+                "start, center, end, space-between, space-around, or space-evenly",
+            )
+        })
 }
 
 fn text_align_from_keyword(value: &DgCssKeyword) -> Option<TextAlign> {
@@ -9984,6 +10058,15 @@ fn lower_layout(
         DgLayoutPropertyName::FlexWrap => {
             DgLayoutDeclaration::FlexWrap(parse_flex_wrap_value(name, value, variables)?)
         }
+        DgLayoutPropertyName::AlignItems => {
+            DgLayoutDeclaration::AlignItems(parse_align_items_value(name, value, variables)?)
+        }
+        DgLayoutPropertyName::AlignSelf => {
+            DgLayoutDeclaration::AlignSelf(parse_align_items_value(name, value, variables)?)
+        }
+        DgLayoutPropertyName::JustifyContent => DgLayoutDeclaration::JustifyContent(
+            parse_justify_content_value(name, value, variables)?,
+        ),
         DgLayoutPropertyName::Flex => {
             DgLayoutDeclaration::Flex(parse_number_value(name, value, variables)?)
         }
@@ -15762,6 +15845,27 @@ mod tests {
         let mut style = NodeStyle::default();
         apply_property_to_style(&mut style, &declaration.property);
         assert_eq!(style.layout.flex_wrap, Some(FlexWrapStyle::Wrap));
+    }
+
+    #[test]
+    fn parses_and_applies_flex_axis_alignment_properties() {
+        let parsed = parse_stylesheet(
+            "DropZone { align-items: center; align-self: end; justify-content: space-between; }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+        let mut style = NodeStyle::default();
+        for declaration in &parsed.rules[0].declarations {
+            apply_property_to_style(&mut style, &declaration.property);
+        }
+
+        assert_eq!(style.layout.align_items, Some(AlignItemsStyle::Center));
+        assert_eq!(style.layout.align_self, Some(AlignItemsStyle::End));
+        assert_eq!(
+            style.layout.justify_content,
+            Some(JustifyContentStyle::SpaceBetween)
+        );
+        assert!(parsed.warnings.is_empty());
     }
 
     #[test]

@@ -1,0 +1,368 @@
+{
+  "schema_version": 1,
+  "description": "Authoritative DragonGui widget CSS state and part capability registry.",
+  "part_property_categories": ["layout", "visual", "text", "generated-content"],
+  "generated_content": {
+    "parts": ["before", "after"],
+    "renderer": "text",
+    "excluded_native_kinds": ["window", "spacer", "unknown"],
+    "excluded_python_kinds": ["window", "spacer"]
+  },
+  "state_profiles": {
+    "container": ["hover", "active", "focus", "disabled"],
+    "interactive": ["hover", "active", "focus", "disabled"],
+    "checkable": ["hover", "active", "focus", "disabled", "checked"],
+    "selectable": ["hover", "active", "focus", "disabled", "selected"],
+    "disclosure": ["hover", "active", "focus", "disabled", "open", "expanded", "collapsed"]
+  },
+  "widgets": [
+    {
+      "public_type": "Window",
+      "native_kind": "window",
+      "python_kind": "window",
+      "css_type_chain": ["Window", "Container", "Widget"],
+      "states_profile": "container",
+      "parts": {
+        "forwarded": ["titlebar", "title", "minimize", "maximize", "close"],
+        "structural": ["resize-border"]
+      }
+    },
+    {
+      "public_type": "HLayout",
+      "native_kind": "h_layout",
+      "python_kind": "h_layout",
+      "css_type_chain": ["HLayout", "Container", "Widget"],
+      "states_profile": "container",
+      "parts": {"paint": ["scrollbar-track", "scrollbar-thumb"]}
+    },
+    {
+      "public_type": "SearchBox",
+      "native_kind": "h_layout",
+      "python_kind": "h_layout",
+      "semantic_only": true,
+      "css_type_chain": ["SearchBox", "HLayout", "Container", "Widget"],
+      "states_profile": "interactive",
+      "parts": {"forwarded": ["icon", "field", "clear"]}
+    },
+    {
+      "public_type": "VLayout",
+      "native_kind": "v_layout",
+      "python_kind": "v_layout",
+      "css_type_chain": ["VLayout", "Container", "Widget"],
+      "states_profile": "container",
+      "parts": {"paint": ["scrollbar-track", "scrollbar-thumb"]}
+    },
+    {
+      "public_type": "ScrollArea",
+      "native_kind": "scroll_area",
+      "python_kind": "scroll_area",
+      "css_type_chain": ["ScrollArea", "Container", "Widget"],
+      "states_profile": "container",
+      "parts": {"paint": ["scrollbar-track", "scrollbar-thumb"]}
+    },
+    {
+      "public_type": "Pages",
+      "native_kind": "pages",
+      "python_kind": "pages",
+      "css_type_chain": ["Pages", "Container", "Widget"],
+      "states_profile": "container",
+      "parts": {"paint": ["scrollbar-track", "scrollbar-thumb"]}
+    },
+    {
+      "public_type": "Page",
+      "native_kind": "page",
+      "python_kind": "page",
+      "css_type_chain": ["Page", "Container", "Widget"],
+      "states_profile": "container",
+      "parts": {"paint": ["scrollbar-track", "scrollbar-thumb"]}
+    },
+    {
+      "public_type": "Sidebar",
+      "native_kind": "sidebar",
+      "python_kind": "sidebar",
+      "css_type_chain": ["Sidebar", "Container", "Widget"],
+      "states_profile": "container",
+      "parts": {
+        "paint": ["body", "header", "scrollbar-track", "scrollbar-thumb"],
+        "text": ["title"]
+      }
+    },
+    {
+      "public_type": "Splitter",
+      "native_kind": "splitter",
+      "python_kind": "splitter",
+      "css_type_chain": ["Splitter", "Container", "Widget"],
+      "states_profile": "interactive",
+      "parts": {"paint": ["gutter"]}
+    },
+    {
+      "public_type": "Pane",
+      "native_kind": "pane",
+      "python_kind": "pane",
+      "css_type_chain": ["Pane", "Container", "Widget"],
+      "states_profile": "container",
+      "parts": {"structural": ["pane"]}
+    },
+    {
+      "public_type": "Panel",
+      "native_kind": "panel",
+      "python_kind": "panel",
+      "css_type_chain": ["Panel", "Container", "Widget"],
+      "states_profile": "container",
+      "parts": {
+        "paint": ["accent", "body", "header", "scrollbar-track", "scrollbar-thumb"],
+        "text": ["title"]
+      }
+    },
+    {
+      "public_type": "Collapsible",
+      "native_kind": "collapsible",
+      "python_kind": "collapsible",
+      "css_type_chain": ["Collapsible", "Container", "Widget"],
+      "states_profile": "disclosure",
+      "parts": {
+        "paint": ["header", "indicator", "scrollbar-track", "scrollbar-thumb"],
+        "structural": ["body"]
+      }
+    },
+    {
+      "public_type": "Modal",
+      "native_kind": "modal",
+      "python_kind": "modal",
+      "css_type_chain": ["Modal", "Container", "Widget"],
+      "states_profile": "disclosure",
+      "parts": {
+        "paint": ["body", "header", "scrim", "scrollbar-track", "scrollbar-thumb"],
+        "text": ["title"]
+      }
+    },
+    {
+      "public_type": "Menu",
+      "native_kind": "menu",
+      "python_kind": "menu",
+      "css_type_chain": ["Menu", "Container", "Widget"],
+      "states_profile": "disclosure",
+      "parts": {"paint": ["menu", "item", "item-hover", "item-disabled"]}
+    },
+    {
+      "public_type": "ContextMenu",
+      "native_kind": "context_menu",
+      "python_kind": "context_menu",
+      "css_type_chain": ["ContextMenu", "Container", "Widget"],
+      "states_profile": "disclosure",
+      "parts": {"paint": ["menu", "item", "item-hover", "item-disabled"]}
+    },
+    {
+      "public_type": "Button",
+      "native_kind": "button",
+      "python_kind": "button",
+      "css_type_chain": ["Button", "Widget"],
+      "states_profile": "interactive",
+      "parts": {"paint": ["badge"]}
+    },
+    {
+      "public_type": "SmallButton",
+      "native_kind": "small_button",
+      "python_kind": "small_button",
+      "css_type_chain": ["SmallButton", "Button", "Widget"],
+      "states_profile": "interactive",
+      "parts": {"paint": ["badge"]}
+    },
+    {
+      "public_type": "IconButton",
+      "native_kind": "icon_button",
+      "python_kind": "icon_button",
+      "css_type_chain": ["IconButton", "Button", "Widget"],
+      "states_profile": "interactive",
+      "parts": {"paint": ["icon"]}
+    },
+    {
+      "public_type": "ArrowButton",
+      "native_kind": "arrow_button",
+      "python_kind": "arrow_button",
+      "css_type_chain": ["ArrowButton", "Button", "Widget"],
+      "states_profile": "interactive",
+      "parts": {"paint": ["icon"]}
+    },
+    {
+      "public_type": "Selectable",
+      "native_kind": "selectable",
+      "python_kind": "selectable",
+      "css_type_chain": ["Selectable", "Widget"],
+      "states_profile": "selectable",
+      "parts": {"paint": ["row", "indicator"], "text": ["label"]}
+    },
+    {
+      "public_type": "RadioButton",
+      "native_kind": "radio_button",
+      "python_kind": "radio_button",
+      "css_type_chain": ["RadioButton", "Widget"],
+      "states_profile": "checkable",
+      "parts": {"paint": ["indicator", "dot"], "text": ["label"]}
+    },
+    {
+      "public_type": "TreeNode",
+      "native_kind": "tree_node",
+      "python_kind": "tree_node",
+      "css_type_chain": ["TreeNode", "Container", "Widget"],
+      "states_profile": "disclosure",
+      "parts": {"paint": ["row", "indicator", "guide"], "text": ["label"]}
+    },
+    {
+      "public_type": "CodeEditor",
+      "native_kind": "code_editor",
+      "python_kind": "code_editor",
+      "css_type_chain": ["CodeEditor", "Widget"],
+      "states_profile": "interactive",
+      "parts": {"paint": ["field", "gutter", "caret"], "text": ["line-number"]}
+    },
+    {
+      "public_type": "LogView",
+      "native_kind": "log_view",
+      "python_kind": "log_view",
+      "css_type_chain": ["LogView", "Widget"],
+      "states_profile": "interactive",
+      "parts": {"text": ["line", "debug", "info", "warning", "error"]}
+    },
+    {
+      "public_type": "NumberInput",
+      "native_kind": "number_input",
+      "python_kind": "number_input",
+      "css_type_chain": ["NumberInput", "Widget"],
+      "states_profile": "interactive",
+      "parts": {
+        "paint": ["field", "stepper", "stepper-up", "stepper-down", "stepper-divider", "divider", "caret"]
+      }
+    },
+    {
+      "public_type": "DragNumber",
+      "native_kind": "drag_number",
+      "python_kind": "drag_number",
+      "css_type_chain": ["DragNumber", "Widget"],
+      "states_profile": "interactive",
+      "parts": {"paint": ["field", "grip"], "text": ["value"]}
+    },
+    {
+      "public_type": "Dropdown",
+      "native_kind": "dropdown",
+      "python_kind": "dropdown",
+      "css_type_chain": ["Dropdown", "Widget"],
+      "states_profile": "disclosure",
+      "parts": {"paint": ["field", "chevron", "menu", "item", "item-selected", "item-hover"]}
+    },
+    {
+      "public_type": "Checkbox",
+      "native_kind": "checkbox",
+      "python_kind": "checkbox",
+      "css_type_chain": ["Checkbox", "Widget"],
+      "states_profile": "checkable",
+      "parts": {"paint": ["row", "box", "indicator"], "text": ["label"]}
+    },
+    {
+      "public_type": "ToggleSwitch",
+      "native_kind": "toggle_switch",
+      "python_kind": "toggle_switch",
+      "css_type_chain": ["ToggleSwitch", "Widget"],
+      "states_profile": "checkable",
+      "parts": {"paint": ["row", "track", "thumb"], "text": ["label"]}
+    },
+    {
+      "public_type": "LED",
+      "native_kind": "led",
+      "python_kind": "led",
+      "css_type_chain": ["LED", "Widget"],
+      "states_profile": "interactive",
+      "parts": {"paint": ["dot", "glow", "highlight"]}
+    },
+    {
+      "public_type": "Slider",
+      "native_kind": "slider",
+      "python_kind": "slider",
+      "css_type_chain": ["Slider", "Widget"],
+      "states_profile": "interactive",
+      "parts": {"paint": ["track", "fill", "thumb"]}
+    },
+    {
+      "public_type": "RangeSlider",
+      "native_kind": "range_slider",
+      "python_kind": "range_slider",
+      "css_type_chain": ["RangeSlider", "Widget"],
+      "states_profile": "interactive",
+      "parts": {"paint": ["track", "range", "thumb-min", "thumb-max"], "text": ["label"]}
+    },
+    {
+      "public_type": "ProgressBar",
+      "native_kind": "progress_bar",
+      "python_kind": "progress_bar",
+      "css_type_chain": ["ProgressBar", "Widget"],
+      "states_profile": "interactive",
+      "parts": {"paint": ["track", "fill"], "text": ["label"]}
+    },
+    {
+      "public_type": "LoadingSpinner",
+      "native_kind": "loading_spinner",
+      "python_kind": "loading_spinner",
+      "css_type_chain": ["LoadingSpinner", "Widget"],
+      "states_profile": "interactive",
+      "parts": {"paint": ["track", "arc"], "text": ["label"]}
+    },
+    {
+      "public_type": "PieChart",
+      "native_kind": "pie_chart",
+      "python_kind": "pie_chart",
+      "css_type_chain": ["PieChart", "Widget"],
+      "states_profile": "interactive",
+      "parts": {"text": ["label"]}
+    },
+    {
+      "public_type": "Heatmap",
+      "native_kind": "heatmap",
+      "python_kind": "heatmap",
+      "css_type_chain": ["Heatmap", "Widget"],
+      "states_profile": "interactive",
+      "parts": {"paint": ["cell", "grid", "hover", "scalar-bar"], "text": ["label"]}
+    },
+    {
+      "public_type": "BarChart",
+      "native_kind": "bar_chart",
+      "python_kind": "bar_chart",
+      "css_type_chain": ["BarChart", "Widget"],
+      "states_profile": "interactive",
+      "parts": {"text": ["label", "value-label"]}
+    },
+    {
+      "public_type": "Tabs",
+      "native_kind": "tabs",
+      "python_kind": "tabs",
+      "css_type_chain": ["Tabs", "Container", "Widget"],
+      "states_profile": "container",
+      "parts": {"paint": ["header"]}
+    },
+    {
+      "public_type": "Tab",
+      "native_kind": "tab",
+      "python_kind": "tab",
+      "css_type_chain": ["Tab", "Container", "Widget"],
+      "states_profile": "selectable",
+      "parts": {"paint": ["tab", "accent", "badge"]}
+    },
+    {
+      "public_type": "NavItem",
+      "native_kind": "nav_item",
+      "python_kind": "nav_item",
+      "css_type_chain": ["NavItem", "Widget"],
+      "states_profile": "selectable",
+      "parts": {"paint": ["item", "accent", "badge"]}
+    },
+    {
+      "public_type": "DataFrameTable",
+      "native_kind": "dataframe_table",
+      "python_kind": "dataframe_table",
+      "css_type_chain": ["DataFrameTable", "Widget"],
+      "states_profile": "selectable",
+      "parts": {
+        "paint": ["header", "row", "row-selected", "grid-line", "scrollbar-track", "scrollbar-thumb"]
+      }
+    }
+  ]
+}

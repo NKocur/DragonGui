@@ -500,6 +500,42 @@ def test_client_window_chrome_visual_matrix_is_registered() -> None:
     assert target["resize_checkpoints"] == [[720, 520], [940, 620]]
 
 
+def test_theme_forge_visual_audits_cover_all_routes_and_long_title_matrix() -> None:
+    visual_audit = load_visual_audit()
+    manifest_path = ROOT / "examples" / "css_feature_probes" / "visual_audit_manifest.json"
+    targets = {target["id"]: target for target in visual_audit.load_manifest(manifest_path)}
+
+    full = targets["theme-forge"]
+    assert full["script"] == "examples/theme_forge_stress_demo.py"
+    assert full["args"] == ["--no-live", "--rows", "24"]
+    assert [state["route"] for state in visual_audit.target_states(full)] == [
+        "theme",
+        "gallery",
+        "parts",
+        "borders",
+        "paint",
+        "type",
+        "layout",
+        "effects",
+        "icons",
+        "chrome",
+        "live",
+        "extreme",
+    ]
+
+    regression = targets["theme-forge-long-title"]
+    assert regression["args"] == ["--long-title", "--no-live", "--rows", "24"]
+    assert {tuple(size) for size in regression["sizes"]} == {
+        (320, 640),
+        (390, 720),
+        (640, 480),
+    }
+    assert regression["scales"] == [1.0, 1.5, 2.0]
+    assert visual_audit.target_states(regression) == [
+        {"name": "chrome", "route": "chrome", "actions": []}
+    ]
+
+
 def test_client_window_chrome_maximized_interaction_is_registered() -> None:
     visual_audit = load_visual_audit()
     manifest_path = ROOT / "examples" / "css_feature_probes" / "visual_audit_manifest.json"

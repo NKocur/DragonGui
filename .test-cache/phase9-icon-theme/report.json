@@ -1,0 +1,79 @@
+[
+  {
+    "captures": [
+      {
+        "actions": [],
+        "diagnostic_counts": {},
+        "error": null,
+        "name": "desktop-1@1x",
+        "route": null,
+        "scale": 1.0,
+        "screenshot": null,
+        "size": "default",
+        "snapshot": null,
+        "state": "default"
+      },
+      {
+        "actions": [],
+        "diagnostic_counts": {},
+        "error": null,
+        "name": "desktop-2@1.5x",
+        "route": null,
+        "scale": 1.5,
+        "screenshot": null,
+        "size": "default",
+        "snapshot": null,
+        "state": "default"
+      },
+      {
+        "actions": [],
+        "diagnostic_counts": {},
+        "error": null,
+        "name": "desktop-3@2x",
+        "route": null,
+        "scale": 2.0,
+        "screenshot": null,
+        "size": "default",
+        "snapshot": null,
+        "state": "default"
+      }
+    ],
+    "category": "css",
+    "diagnostic_comparisons": [],
+    "features": [
+      "IconButton",
+      "IconResource",
+      "IconStroke",
+      "semantic icon aliases"
+    ],
+    "id": "icon-theme",
+    "layout_issue_counts": {},
+    "layout_issues": [],
+    "logs": [
+      "logs/icon-theme-desktop-1@1x.stdout.txt",
+      "logs/icon-theme-desktop-1@1x.stderr.txt",
+      "logs/icon-theme-desktop-2@1.5x.stdout.txt",
+      "logs/icon-theme-desktop-2@1.5x.stderr.txt",
+      "logs/icon-theme-desktop-3@2x.stdout.txt",
+      "logs/icon-theme-desktop-3@2x.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Application Icon Theme",
+    "notes": "Phase 9 regression for resource-backed monochrome icon overrides and built-in fallback. Additional run: Probe exited before a window was detected with code 1; see logs.",
+    "priority": "high",
+    "reproduction": [
+      "python tools/visual_audit.py --target icon-theme --sizes desktop-1 --scales 1",
+      "python tools/visual_audit.py --target icon-theme --sizes desktop-2 --scales 1.5",
+      "python tools/visual_audit.py --target icon-theme --sizes desktop-3 --scales 2"
+    ],
+    "screenshots": [],
+    "script": "examples\\icon_theme_demo.py",
+    "snapshots": [],
+    "status": "blocked",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ],
+    "unmatched_selectors": []
+  }
+]

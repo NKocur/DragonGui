@@ -1005,5 +1005,46 @@
     "manual": false,
     "strict_css": true,
     "notes": "Phase 10.2 regression for app-owned encoded PNG/JPEG resources and bounded background sampling."
+  },
+  {
+    "id": "theme-forge",
+    "name": "THEME FORGE CSS Stress Demo",
+    "script": "examples/theme_forge_stress_demo.py",
+    "args": ["--no-live", "--rows", "24"],
+    "category": "css",
+    "features": ["named stylesheets", "custom properties", "widget parts", "backgrounds", "typography", "layout", "effects", "icons", "client chrome", "hostile CSS"],
+    "sizes": [[1024, 768]],
+    "scales": [1.0],
+    "states": [
+      {"name": "theme", "route": "theme"},
+      {"name": "gallery", "route": "gallery"},
+      {"name": "parts", "route": "parts"},
+      {"name": "borders", "route": "borders"},
+      {"name": "paint", "route": "paint"},
+      {"name": "type", "route": "type"},
+      {"name": "layout", "route": "layout"},
+      {"name": "effects", "route": "effects"},
+      {"name": "icons", "route": "icons"},
+      {"name": "chrome", "route": "chrome"},
+      {"name": "live", "route": "live"},
+      {"name": "extreme", "route": "extreme"}
+    ],
+    "manual": false,
+    "notes": "Full twelve-workspace CSS/theming stress-demo baseline with live updates disabled for deterministic captures."
+  },
+  {
+    "id": "theme-forge-long-title",
+    "name": "THEME FORGE Long Client Title",
+    "script": "examples/theme_forge_stress_demo.py",
+    "args": ["--long-title", "--no-live", "--rows", "24"],
+    "category": "layout",
+    "features": ["WindowTitle", "client decorations", "flex shrink", "ellipsis", "fixed window controls", "DPI scaling"],
+    "sizes": [[320, 640], [390, 720], [640, 480]],
+    "scales": [1.0, 1.5, 2.0],
+    "states": [
+      {"name": "chrome", "route": "chrome"}
+    ],
+    "manual": false,
+    "notes": "Regression: a long retained client title shrinks and ellipsizes while minimize/maximize/close remain visible and clickable."
   }
 ]

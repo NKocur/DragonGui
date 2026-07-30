@@ -19,6 +19,15 @@ from .dialogs import (
     save_file_dialog,
 )
 from .diagnostics import register_thread_role, thread_role
+from .icons import (
+    BUILTIN_ICONS,
+    ICON_ALIASES,
+    IconResolution,
+    IconResource,
+    IconStroke,
+    normalize_icon_name,
+    resolve_icon,
+)
 from .manual import HelpSection, help
 from .notifications import toast
 from .node_graph import (
@@ -196,6 +205,13 @@ __all__ = [
     "ResourceRef",
     "StateSlot",
     "Theme",
+    "BUILTIN_ICONS",
+    "ICON_ALIASES",
+    "IconResolution",
+    "IconResource",
+    "IconStroke",
+    "normalize_icon_name",
+    "resolve_icon",
     "ToastHandle",
     "VNode",
     "Badge",

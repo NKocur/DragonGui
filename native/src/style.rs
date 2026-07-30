@@ -528,6 +528,7 @@ pub struct LayoutStyle {
     pub flex_wrap: Option<FlexWrapStyle>,
     pub align_items: Option<AlignItemsStyle>,
     pub align_self: Option<AlignItemsStyle>,
+    pub justify_content: Option<JustifyContentStyle>,
     pub width: Option<f32>,
     pub height: Option<f32>,
     pub min_width: Option<f32>,
@@ -639,6 +640,16 @@ pub enum AlignItemsStyle {
     Center,
     End,
     Stretch,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JustifyContentStyle {
+    Start,
+    Center,
+    End,
+    SpaceBetween,
+    SpaceAround,
+    SpaceEvenly,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1470,6 +1481,8 @@ fn parse_layout(map: &serde_json::Map<String, Value>, out: &mut LayoutStyle) {
     out.flex_wrap = text_value(map, "flex_wrap", "flex-wrap").and_then(parse_flex_wrap);
     out.align_items = text_value(map, "align_items", "align-items").and_then(parse_align_items);
     out.align_self = text_value(map, "align_self", "align-self").and_then(parse_align_items);
+    out.justify_content =
+        text_value(map, "justify_content", "justify-content").and_then(parse_justify_content);
     out.width = number(map.get("width"));
     out.height = number(map.get("height"));
     out.min_width = number(map.get("min_width"));
@@ -1932,6 +1945,18 @@ fn parse_align_items(value: &str) -> Option<AlignItemsStyle> {
         "center" => Some(AlignItemsStyle::Center),
         "end" | "flex-end" => Some(AlignItemsStyle::End),
         "stretch" => Some(AlignItemsStyle::Stretch),
+        _ => None,
+    }
+}
+
+fn parse_justify_content(value: &str) -> Option<JustifyContentStyle> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "start" | "flex-start" => Some(JustifyContentStyle::Start),
+        "center" => Some(JustifyContentStyle::Center),
+        "end" | "flex-end" => Some(JustifyContentStyle::End),
+        "space-between" => Some(JustifyContentStyle::SpaceBetween),
+        "space-around" => Some(JustifyContentStyle::SpaceAround),
+        "space-evenly" => Some(JustifyContentStyle::SpaceEvenly),
         _ => None,
     }
 }
@@ -3124,6 +3149,21 @@ mod tests {
     fn parses_inline_flex_wrap() {
         let style = NodeStyle::from_json(Some(&json!({"flex_wrap": "wrap-reverse"})));
         assert_eq!(style.layout.flex_wrap, Some(FlexWrapStyle::WrapReverse));
+    }
+
+    #[test]
+    fn parses_inline_justify_content_aliases() {
+        let snake = NodeStyle::from_json(Some(&json!({"justify_content": "center"})));
+        let css = NodeStyle::from_json(Some(&json!({"justify-content": "space-between"})));
+
+        assert_eq!(
+            snake.layout.justify_content,
+            Some(JustifyContentStyle::Center)
+        );
+        assert_eq!(
+            css.layout.justify_content,
+            Some(JustifyContentStyle::SpaceBetween)
+        );
     }
 
     #[test]

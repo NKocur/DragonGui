@@ -161,6 +161,13 @@ def load_manifest(path: Path) -> list[dict[str, Any]]:
         script = resolve_path(str(item["script"]))
         if not script.exists():
             raise ValueError(f"probe script does not exist for {target_id}: {script}")
+        script_args = item.get("args", [])
+        if not isinstance(script_args, list) or not all(
+            isinstance(arg, str) and arg and "\x00" not in arg for arg in script_args
+        ):
+            raise ValueError(
+                f"visual audit target {target_id} args must be a list of non-empty strings"
+            )
         target_states(item)
     return data
 
@@ -400,12 +407,14 @@ def run_target(
 ) -> dict[str, Any]:
     target_id = str(target["id"])
     script = resolve_path(str(target["script"]))
+    script_args = list(target.get("args", []))
     selected_sizes = target_sizes(target, size_selectors)
     selected_scales = target_scales(target, scale_selectors or [None])
     result = {
         "id": target_id,
         "name": target["name"],
         "script": str(script.relative_to(ROOT)),
+        "args": script_args,
         "category": target["category"],
         "features": target["features"],
         "manual": bool(target.get("manual")),
@@ -428,7 +437,9 @@ def run_target(
         result["status"] = "blocked"
         result["priority"] = "low"
         result["notes"] = "--no-capture was used; report shell generated without launching probe."
-        result["reproduction"] = [f"python {target['script']}"]
+        result["reproduction"] = [
+            subprocess.list2cmdline(["python", str(target["script"]), *script_args])
+        ]
         return result
 
     captures = [
@@ -467,6 +478,7 @@ def run_target(
             stderr_path=stderr_path,
             route=route,
             actions=actions,
+            script_args=script_args,
         )
         result["logs"].extend(
             [relative_artifact(stdout_path, out_dir), relative_artifact(stderr_path, out_dir)]
@@ -1754,6 +1766,7 @@ def run_probe_process(
     stderr_path: Path,
     route: str | None = None,
     actions: list[str] | None = None,
+    script_args: list[str] | None = None,
 ) -> dict[str, Any]:
     wrapper = make_wrapper(script)
     screenshot_error = screenshot_error_path(screenshot_path)
@@ -1776,6 +1789,7 @@ def run_probe_process(
     env["DRAGONGUI_AUDIT_RESIZE_CHECKPOINTS"] = json.dumps(resize_checkpoints)
     env["DRAGONGUI_AUDIT_ROUTE"] = route or ""
     env["DRAGONGUI_AUDIT_ACTIONS"] = json.dumps(actions or [])
+    env["DRAGONGUI_AUDIT_SCRIPT_ARGS"] = json.dumps(script_args or [])
     env.pop("DRAGONGUI_DEV_FALLBACK", None)
 
     proc = subprocess.Popen(
@@ -2008,6 +2022,11 @@ def _audited_run(self, window):
     )
     audit_route = os.environ.get("DRAGONGUI_AUDIT_ROUTE") or None
     audit_actions = json.loads(os.environ.get("DRAGONGUI_AUDIT_ACTIONS", "[]"))
+    audit_scale = max(
+        float(os.environ.get("DRAGONGUI_AUDIT_SCALE_FACTOR", "1")),
+        1.0,
+    )
+    snapshot_timeout_ms = max(3000, round(5000 * audit_scale))
 
     def walk_widgets(widget):
         yield widget
@@ -2143,7 +2162,7 @@ def _audited_run(self, window):
         last_error = None
         for _attempt in range(2):
             try:
-                return self.debug_snapshot(timeout_ms=3000)
+                return self.debug_snapshot(timeout_ms=snapshot_timeout_ms)
             except RuntimeError as exc:
                 last_error = exc
                 time.sleep(0.15)
@@ -2306,7 +2325,7 @@ def _audited_run(self, window):
             for action in audit_actions:
                 perform_action(action)
             time.sleep(max(0.0, wait_ms / 1000.0))
-            initial_snapshot = self.debug_snapshot(timeout_ms=3000)
+            initial_snapshot = self.debug_snapshot(timeout_ms=snapshot_timeout_ms)
             initial_window = initial_snapshot.get("gpu", {{}}).get("window", {{}})
             initial_scale = max(float(initial_window.get("scale_factor", 1.0)), 0.001)
             initial_width = round(float(initial_window.get("width", 0)) / initial_scale)
@@ -2326,17 +2345,17 @@ def _audited_run(self, window):
             ]
             if initial_width > 0 and initial_height > 0 and sequence:
                 sequence.append((initial_width, initial_height))
+            snapshot = initial_snapshot
             for index, (width, height) in enumerate(sequence, start=1):
                 self._handle.request_window_resize(width, height)
-                checkpoint = wait_for_logical_size(width, height)
+                snapshot = wait_for_logical_size(width, height)
                 checkpoint_path = snapshot_path.with_name(
                     f"{{snapshot_path.stem}}-resize-{{index}}-{{width}}x{{height}}.json"
                 )
                 checkpoint_path.write_text(
-                    json.dumps(checkpoint, indent=2, sort_keys=True),
+                    json.dumps(snapshot, indent=2, sort_keys=True),
                     encoding="utf-8",
                 )
-            snapshot = self.debug_snapshot(timeout_ms=3000)
             snapshot_path.parent.mkdir(parents=True, exist_ok=True)
             snapshot_path.write_text(json.dumps(snapshot, indent=2, sort_keys=True), encoding="utf-8")
         except Exception as exc:
@@ -2399,6 +2418,10 @@ def _audited_run(self, window):
 
 dg.App.run = _audited_run
 dg.Window.__init__ = _audited_window_init
+sys.argv = [
+    {str(script)!r},
+    *json.loads(os.environ.get("DRAGONGUI_AUDIT_SCRIPT_ARGS", "[]")),
+]
 runpy.run_path({str(script)!r}, run_name="__main__")
 """
     handle = tempfile.NamedTemporaryFile(

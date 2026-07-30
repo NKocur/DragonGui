@@ -42,6 +42,7 @@ def test_vnode_preserves_default_style_separately_from_inline_style() -> None:
     assert vnode.style == {"width": 220}
     assert vnode.to_dict()["default_style"] == {
         "align_items": "center",
+        "min_height": 38,
         "flex_grow": 0,
         "flex_shrink": 1,
         "width": 340.0,

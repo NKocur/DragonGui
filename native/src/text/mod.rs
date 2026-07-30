@@ -742,7 +742,8 @@ impl TextRendererDg {
         let open_dropdown = state.open_dropdown.as_deref();
         let dropdown_overlay = dropdown_overlay_rect(tree, layout, state, theme, sf);
         let menu_overlays = active_menu_overlay_rects(tree, layout, state, theme, sf);
-        let tooltip_overlay = active_tooltip_overlay_rect(tree, layout, theme, state, sf);
+        let tooltip_overlay =
+            active_tooltip_overlay_rect(tree, layout, theme, state, sf, stylesheets, media);
         self.sync_stylesheet_fonts(stylesheets);
         let mut entries = std::mem::take(&mut self.entries);
         let font_aliases = &self.font_aliases;
@@ -843,6 +844,7 @@ impl TextRendererDg {
         state: &WidgetState,
         resources: &ResourceRegistry,
         stylesheets: &StylesheetStore,
+        media: DgMediaEnvironment,
         widget_id: &str,
         table_only: bool,
     ) -> Option<WidgetTextRebuild> {
@@ -893,7 +895,8 @@ impl TextRendererDg {
         let open_dropdown = state.open_dropdown.as_deref();
         let dropdown_overlay = dropdown_overlay_rect(tree, layout, state, theme, sf);
         let menu_overlays = active_menu_overlay_rects(tree, layout, state, theme, sf);
-        let tooltip_overlay = active_tooltip_overlay_rect(tree, layout, theme, state, sf);
+        let tooltip_overlay =
+            active_tooltip_overlay_rect(tree, layout, theme, state, sf, stylesheets, media);
         let mut cache = HashMap::new();
         let mut kept = Vec::with_capacity(self.entries.len());
         let mut insertion = None;
@@ -3761,7 +3764,12 @@ fn standalone_badge_line_height(node: &WidgetNode, font_size: f32, theme: &Theme
     (height_lp * sf).max(font_size + 2.0 * sf).max(1.0)
 }
 
-fn text_line_height_for_style(style: &TextStyle, font_size: f32, theme: &Theme, sf: f32) -> f32 {
+pub(crate) fn text_line_height_for_style(
+    style: &TextStyle,
+    font_size: f32,
+    theme: &Theme,
+    sf: f32,
+) -> f32 {
     match style.line_height {
         Some(LineHeight::Multiplier(value)) => (font_size * value.max(0.1)).max(1.0),
         Some(LineHeight::LogicalPx(value)) => (value.max(1.0) * sf).max(1.0),
@@ -4652,7 +4660,8 @@ fn collect_tooltip_text(
     if rich_tooltip_target(tree, layout, state).is_some() {
         return;
     }
-    let Some((node, rect)) = tooltip_target(tree, layout, theme, state, sf) else {
+    let Some((node, rect)) = tooltip_target(tree, layout, theme, state, sf, stylesheets, media)
+    else {
         return;
     };
     let Some(text) = node.props.tooltip.as_deref() else {
@@ -4665,16 +4674,42 @@ fn collect_tooltip_text(
         stylesheets,
         Some(media),
     );
-    let pad = uniform_layout_padding(&style.layout)
-        .map(|padding| padding.max(0.0) * sf)
-        .unwrap_or(theme.spacing * sf * 1.25);
+    let fallback_pad = theme.spacing * 1.25;
+    let pad_left = style
+        .layout
+        .padding_left
+        .or(style.layout.padding)
+        .unwrap_or(fallback_pad)
+        .max(0.0)
+        * sf;
+    let pad_right = style
+        .layout
+        .padding_right
+        .or(style.layout.padding)
+        .unwrap_or(fallback_pad)
+        .max(0.0)
+        * sf;
+    let pad_top = style
+        .layout
+        .padding_top
+        .or(style.layout.padding)
+        .unwrap_or(fallback_pad)
+        .max(0.0)
+        * sf;
+    let pad_bottom = style
+        .layout
+        .padding_bottom
+        .or(style.layout.padding)
+        .unwrap_or(fallback_pad)
+        .max(0.0)
+        * sf;
     let font_size = style
         .text
         .font_size
         .map(|font_size| font_size.max(1.0) * sf)
         .unwrap_or_else(|| (theme.font_size * sf).max(8.0 * sf));
     let line_height = text_line_height_for_style(&style.text, font_size, theme, sf);
-    let top = rect.y + pad;
+    let top = rect.y + pad_top;
     let opacity = overlay_opacity(&style, 1.0);
     push_wrapped_text_entry(
         font_system,
@@ -4685,13 +4720,13 @@ fn collect_tooltip_text(
         line_height,
         style.text.font_family.as_ref(),
         style.text.font_weight.unwrap_or(Weight::NORMAL.0),
-        rect.x + pad,
+        rect.x + pad_left,
         top,
         TextBounds {
-            left: (rect.x + pad) as i32,
+            left: (rect.x + pad_left) as i32,
             top: rect.y as i32,
-            right: (rect.x + rect.w - pad) as i32,
-            bottom: (rect.y + rect.h) as i32,
+            right: (rect.x + rect.w - pad_right) as i32,
+            bottom: (rect.y + rect.h - pad_bottom) as i32,
         },
         overlay_text_color(&style, theme, theme.text, opacity),
         style.text.text_align.unwrap_or(TextAlign::Left),
@@ -4765,7 +4800,8 @@ fn collect_overlay_text(
     let open_dropdown = state.open_dropdown.as_deref();
     let dropdown_overlay = dropdown_overlay_rect(tree, layout, state, theme, sf);
     let menu_overlays = active_menu_overlay_rects(tree, layout, state, theme, sf);
-    let tooltip_overlay = active_tooltip_overlay_rect(tree, layout, theme, state, sf);
+    let tooltip_overlay =
+        active_tooltip_overlay_rect(tree, layout, theme, state, sf, stylesheets, media);
     if let Some(modal) = active_open_modal(tree) {
         collect_text(
             modal,
@@ -8989,7 +9025,15 @@ mod tests {
             hovered: Some("target".to_string()),
             ..Default::default()
         };
-        let tooltip_overlay = active_tooltip_overlay_rect(&root, &layout, &theme, &state, 1.0);
+        let tooltip_overlay = active_tooltip_overlay_rect(
+            &root,
+            &layout,
+            &theme,
+            &state,
+            1.0,
+            &StylesheetStore::default(),
+            DgMediaEnvironment::new(400.0, 240.0),
+        );
         assert!(tooltip_overlay.is_some());
 
         let mut font_system = FontSystem::new();
@@ -9022,6 +9066,92 @@ mod tests {
                 .iter()
                 .any(|entry| entry.key.text == "Text under tooltip"),
             "tooltip overlays should paint above existing text without deleting it from the base pass"
+        );
+    }
+
+    #[test]
+    fn plain_tooltip_surface_contains_every_shaped_wrapped_line() {
+        let tooltip_text = "This long plain tooltip must wrap through every shaped line and keep the final words and descenders inside the painted tooltip surface without relying on a four-line estimate.";
+        let mut target = node("target", WidgetKind::Button);
+        target.props.tooltip = Some(tooltip_text.to_string());
+        let mut root = node("window", WidgetKind::Window);
+        root.children = vec![target];
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "window".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 190.0,
+                h: 520.0,
+            },
+        );
+        layout.rects.insert(
+            "target".to_string(),
+            Rect {
+                x: 144.0,
+                y: 12.0,
+                w: 34.0,
+                h: 34.0,
+            },
+        );
+        let state = WidgetState {
+            hovered: Some("target".to_string()),
+            ..Default::default()
+        };
+        let theme = Theme::dark();
+        let media = DgMediaEnvironment::new(190.0, 520.0);
+        let mut stylesheets = StylesheetStore::default();
+        stylesheets
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                "Tooltip.static { font-size: 18px; line-height: 1.4; padding: 11px 13px 15px 17px; }",
+            )
+            .expect("tooltip stylesheet");
+        let tooltip_rect = tooltip_target(&root, &layout, &theme, &state, 1.0, &stylesheets, media)
+            .expect("tooltip target")
+            .1;
+
+        let mut font_system = FontSystem::new();
+        let font_aliases = FontFamilyAliases::default();
+        let mut cache = TextBufferCache::default();
+        let mut caret_positions = HashMap::new();
+        let mut entries = Vec::new();
+        collect_tooltip_text(
+            &root,
+            &layout,
+            &state,
+            &theme,
+            &mut font_system,
+            &font_aliases,
+            1.0,
+            &stylesheets,
+            media,
+            &mut cache,
+            &mut caret_positions,
+            &mut entries,
+        );
+
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        let runs = entry.buffer.layout_runs().collect::<Vec<_>>();
+        assert!(
+            runs.len() > 4,
+            "regression must render more than four wrapped lines: {}",
+            runs.len()
+        );
+        let shaped_bottom = runs
+            .iter()
+            .map(|run| run.line_top + run.line_height)
+            .fold(0.0, f32::max);
+        let available_height = entry.clip.bottom as f32 - entry.top;
+        assert!(
+            shaped_bottom <= available_height + 0.5,
+            "final wrapped line must fit inside the text clip: shaped_bottom={shaped_bottom} available={available_height} rect={tooltip_rect:?}"
+        );
+        assert!(
+            entry.clip.right <= (tooltip_rect.x + tooltip_rect.w) as i32
+                && entry.clip.bottom <= (tooltip_rect.y + tooltip_rect.h) as i32
         );
     }
 

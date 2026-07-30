@@ -390,8 +390,19 @@ _RUNTIME_SYMBOLS = (
     "HelpSection",
 )
 
+_ICON_SYMBOLS = (
+    "BUILTIN_ICONS",
+    "ICON_ALIASES",
+    "IconResolution",
+    "IconResource",
+    "IconStroke",
+    "normalize_icon_name",
+    "resolve_icon",
+)
+
 _PUBLIC_EXPORT_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("runtime", _RUNTIME_SYMBOLS),
+    ("icons", _ICON_SYMBOLS),
     ("models", _MODEL_SYMBOLS),
     ("components", _COMPONENT_SYMBOLS),
     ("dialogs", _DIALOG_SYMBOLS),
@@ -458,6 +469,8 @@ _SIGNATURE_OVERRIDES = {
     "help": "help(topic: str | None = None) -> str",
     "link_cameras": "link_cameras(*scatters: Scatter3D) -> None",
     "unlink_cameras": "unlink_cameras(*scatters: Scatter3D) -> None",
+    "BUILTIN_ICONS": "BUILTIN_ICONS: frozenset[str]",
+    "ICON_ALIASES": "ICON_ALIASES: Mapping[str, str]",
 }
 
 _SYMBOL_NOTES = {
@@ -477,6 +490,13 @@ _SYMBOL_NOTES = {
     "Splitter": "Resizable split layout with one or more `Pane` children.",
     "Modal": "Overlay dialog container; use `show()` and `close()` at runtime.",
     "Button": "Standard command button with `on_click`.",
+    "IconResolution": "Describes canonical built-in icon resolution, alias use, and fallback behavior.",
+    "IconResource": "Bounded monochrome stroke geometry used for an application icon override.",
+    "IconStroke": "One open or closed polyline within an `IconResource`.",
+    "normalize_icon_name": "Normalizes a semantic icon identifier without resolving aliases.",
+    "resolve_icon": "Resolves a semantic icon name to the native built-in geometry that will be painted.",
+    "BUILTIN_ICONS": "Immutable catalog of canonical native vector icon identities.",
+    "ICON_ALIASES": "Read-only mapping from accepted compatibility aliases to canonical icon identities.",
     "Badge": "Compact status label; use `level` and CSS parts for semantic styling.",
     "NumberInput": "Numeric field with stepper controls; use for bounded scalar form values.",
     "DragNumber": "Numeric field optimized for drag-to-adjust workflows.",
@@ -608,6 +628,10 @@ Supported display-list commands:
 
 Runtime rules:
 - Call `repaint()` after changing fields used by `paint(ctx)`.
+- Mounted shape/text display lists use a paint-only native update and preserve
+  widget identity, styles, layout, callbacks, and retained state.
+- Display lists containing `ctx.image(...)` use the structural compatibility
+  path so native image resources can be discovered and synchronized.
 - Keep `paint(ctx)` deterministic and fast; it runs when props are generated.
 - Use theme tokens such as `surface`, `text`, `muted`, and `accent` for colors
   when the widget should follow the app style.
@@ -702,8 +726,8 @@ _PARAMETER_NOTES = {
     ),
     "Panel": (
         "`title` creates the panel header.",
-        "`width`/`height` constrain the panel; prefer `flex_grow` for responsive fill.",
-        "Use `scroll=True` or a nested `ScrollArea` when content can overflow.",
+        "`width` constrains the panel; set height through `style` and prefer `flex_grow` for responsive fill.",
+        "For bounded overflowing content, use `style={\"overflow_y\": \"auto\"}` or a nested `ScrollArea`.",
         "When a `Panel` is the first visible body inside an active `Tab`, its top corners are squared so the tab and panel connect cleanly.",
     ),
     "Tabs": (
@@ -855,7 +879,7 @@ _PARAMETER_NOTES = {
 }
 
 _EXAMPLE_METADATA: dict[str, dict[str, tuple[str, ...]]] = {
-    "Terminal": {"examples": ("examples/terminal_wrapper_demo.py",)},
+    "Terminal": {"examples": ("examples/all_features_v3_demo.py",)},
     "Panel": {
         "probes": (
             "examples/css_feature_probes/layout_panel_bounds_probe.py",
@@ -920,7 +944,7 @@ _EXAMPLE_METADATA: dict[str, dict[str, tuple[str, ...]]] = {
     },
     "LogView": {"probes": ("examples/css_feature_probes/log_view_probe.py",)},
     "LoadingSpinner": {"probes": ("examples/css_feature_probes/loading_spinner_probe.py",)},
-    "ProgressBar": {"examples": ("examples/pytorch_training_dashboard.py",)},
+    "ProgressBar": {"examples": ("examples/nexus_studio_stress_demo.py",)},
     "DataFrameTable": {
         "probes": (
             "examples/css_feature_probes/data_table_upgrades_probe.py",
@@ -993,6 +1017,7 @@ def _object_for_symbol(name: str) -> Any | None:
     from . import components as components_module
     from . import diagnostics as diagnostics_module
     from . import dialogs as dialogs_module
+    from . import icons as icons_module
     from . import notifications as notifications_module
     from . import node_graph as node_graph_module
     from . import runtime as runtime_module
@@ -1009,6 +1034,7 @@ def _object_for_symbol(name: str) -> Any | None:
         app_module,
         components_module,
         dialogs_module,
+        icons_module,
         diagnostics_module,
         notifications_module,
         node_graph_module,
@@ -1149,10 +1175,18 @@ def _public_members_for_symbol(name: str) -> tuple[list[tuple[str, str]], list[s
 
 
 def _css_parts_for_symbol(name: str) -> tuple[str, tuple[str, ...]]:
-    from .widgets import _SUPPORTED_PARTS_BY_KIND
+    from ._widget_capabilities import capability_by_public_type
 
     kind = _widget_kind_for_symbol(name)
-    return kind, tuple(sorted(_SUPPORTED_PARTS_BY_KIND.get(kind, ())))
+    capability = capability_by_public_type().get(name)
+    if capability is None:
+        return kind, ()
+    parts = {
+        part
+        for renderer_parts in capability["parts"].values()
+        for part in renderer_parts
+    }
+    return kind, tuple(sorted(parts))
 
 
 def _summary_for_symbol(name: str, category: str) -> str:
@@ -1286,24 +1320,41 @@ def _group_section(
 
 
 def _css_parts_reference() -> HelpSection:
-    from .widgets import _SUPPORTED_PARTS_BY_KIND
+    from ._widget_capabilities import widget_css_capabilities
 
     lines = [
-        "Generated from `dragongui.widgets._SUPPORTED_PARTS_BY_KIND`.",
+        "Generated from the packaged `widget_css_capabilities.json` registry.",
         "",
         "Use CSS parts with `Widget::part { ... }` or `.class::part { ... }`.",
         "`Tabs::header` is opt-in: unstyled `Tabs` do not paint a header box.",
         "",
     ]
-    for kind in sorted(_SUPPORTED_PARTS_BY_KIND):
-        parts = ", ".join(f"`::{part}`" for part in sorted(_SUPPORTED_PARTS_BY_KIND[kind]))
-        lines.append(f"- `{kind}`: {parts or 'no registered parts'}")
+    capabilities = widget_css_capabilities()
+    state_profiles = capabilities["state_profiles"]
+    generated = capabilities["generated_content"]
+    generated_parts = ", ".join(f"`::{part}`" for part in generated["parts"])
+    lines.append(
+        f"- Global generated-content hooks: {generated_parts} ({generated['renderer']} renderer)."
+    )
+    for widget in sorted(capabilities["widgets"], key=lambda item: item["public_type"]):
+        parts = ", ".join(
+            f"`::{part}` ({renderer})"
+            for renderer, renderer_parts in widget["parts"].items()
+            for part in sorted(renderer_parts)
+        )
+        states = ", ".join(f"`:{state}`" for state in state_profiles[widget["states_profile"]])
+        lines.append(
+            f"- `{widget['public_type']}`: {parts or 'no registered parts'}; states: {states}"
+        )
     return _section(
         "css_parts",
         "CSS Parts Reference",
         "Supported widget CSS parts, synchronized with the widget registry.",
         "\n".join(lines),
-        metadata={"source": "widgets._SUPPORTED_PARTS_BY_KIND"},
+        metadata={
+            "source": "widget_css_capabilities.json",
+            "schema_version": capabilities["schema_version"],
+        },
     )
 
 
@@ -1483,6 +1534,13 @@ def _build_reference_sections() -> HelpSection:
         _RUNTIME_SYMBOLS,
         "runtime",
     )
+    icons = _group_section(
+        "icons",
+        "Icon Identity Reference",
+        "Semantic built-in icon names, aliases, normalization, and resolution diagnostics.",
+        _ICON_SYMBOLS,
+        "runtime",
+    )
     models = _group_section(
         "models",
         "Models Reference",
@@ -1546,6 +1604,7 @@ you need a specific symbol.
         [
             exports,
             runtime,
+            icons,
             models,
             components,
             dialogs,
@@ -1642,12 +1701,26 @@ Important methods:
 - `document(window)` serializes startup state without running the GUI.
 - `stylesheet(css)`, `load_stylesheet(path)`, and `clear_stylesheets()` manage
   user CSS before and during runtime.
+- `set_stylesheet(id, css)` atomically adds or replaces one named user sheet
+  without changing its cascade position; `remove_stylesheet(id)` removes it.
+- `set_theme(theme)` replaces active design tokens without rebuilding the
+  widget tree. Interaction state, focus, selection, pages, and scrolling stay
+  native and survive the switch.
+- `set_image_resource(id, bytes_or_path)` registers or live-replaces a bounded
+  PNG/JPEG application resource for CSS `app-resource("id", fit)` backgrounds;
+  `release_image_resource(id)` removes it.
 - `run(window)` starts the native event loop.
 - `debug_snapshot(timeout_ms=1000)` returns runtime/layout/style diagnostics.
 - `request_redraw()` asks the native runtime to draw another frame.
 - `request_exit()` closes the app.
-- `call_soon_threadsafe(fn)` schedules a callable from producer/background threads.
+- `call_soon_threadsafe(fn, coalesce_key=None)` schedules a callable from
+  producer/background threads. Reusing a key keeps only the newest pending
+  snapshot callback; omit the key for events and append-only streams.
 - `toast(...)` posts a native notification and returns a `ToastHandle`.
+
+Named stylesheet and theme changes are safe inside `call_soon_threadsafe`.
+See `examples/runtime_theme_switching_demo.py` for live Nexus, Windows 3.11,
+and classic Mac-style switching.
 """,
     )
     window_api = _section(
@@ -1701,12 +1774,18 @@ Callbacks should not block the UI. For work that takes time:
 ```python
 def worker():
     result = train_one_epoch()
-    app.call_soon_threadsafe(lambda: progress.set_value(result.progress))
+    app.call_soon_threadsafe(
+        lambda: progress.set_value(result.progress),
+        coalesce_key="training-progress",
+    )
 ```
 
 Use `register_thread_role("trainer")` or `with dg.thread_role("loader"):` to
 label worker threads in diagnostics. Background threads should enqueue live
-widget calls rather than mutating native state directly.
+widget calls rather than mutating native state directly. A coalescing key is
+appropriate for complete latest-state snapshots such as progress, telemetry,
+or camera frames. Do not use one for clicks, log records, line-plot appends, or
+other streams where every callback carries distinct information.
 """,
     )
     diagnostics_api = _section(
@@ -1751,7 +1830,8 @@ Live methods such as `set_value`, `set_style`, `set_frame`, `set_points`,
         "Framed titled containers for grouped controls and dashboard cards.",
         """
 Use `Panel(title=None, width=None)` for grouped controls. Panels lay out their
-children vertically and can scroll overflowing content.
+children vertically. For a bounded body that can overflow, set
+`style={"overflow_y": "auto"}` or place a `ScrollArea` inside the panel.
 
 ```python
 with dg.Panel("Hyperparameters", width=300, style={"gap": 10, "padding": 14}):
@@ -1929,7 +2009,8 @@ Important:
 - Use `GridLayout` for dashboards.
 - Give scroll owners a bound (`height`, `flex_grow`, or window body space).
 - Do not use overlays as normal children when you expect them to float.
-- Titled panels reserve their header and clip/scroll children in the body below.
+- Titled panels reserve their header and clip children in the body below; add
+  `overflow_y: "auto"` or a nested `ScrollArea` when that body must scroll.
 - Snapshot issues `below-minimum-viewport` and `unreachable-root-overflow`
   identify responsive-minimum and missing-scroll-owner problems.
 """,
@@ -2114,6 +2195,19 @@ Use:
 - `Toolbar(orientation="horizontal", compact=True)` for dense commands.
 - `IconButton(icon, tooltip=...)`, `SmallButton`, `ImageButton`, and
   `ArrowButton(direction)` for command surfaces.
+
+`IconButton` names are semantic. Call `dg.resolve_icon(name)` to inspect the
+canonical built-in identity before rendering. `dg.BUILTIN_ICONS` lists
+canonical geometry and `dg.ICON_ALIASES` lists compatibility aliases. Unknown
+names currently fall back to `more`; native computed-style snapshots report
+the requested name, resolved name, alias status, and fallback status.
+
+Call `app.set_icon_theme({...})` before startup or live to replace semantic
+icon geometry. Values may be another semantic name or an `IconResource`
+containing bounded open/closed `IconStroke` polylines. Resources are
+monochrome: CSS continues to control the `IconButton::icon` tint and
+interaction states. Live `IconButton.set_icon()` changes resolve against the
+same retained registry without relayout.
 
 Toolbars should use icons for obvious repeated actions and tooltips for
 meaning. Use `ToolbarSeparator` to group commands. Horizontal toolbars wrap and
@@ -2401,13 +2495,44 @@ Common layout properties:
 
 Common visual properties:
 `background`, `background-color`, gradients/background paint,
-`border`, `border-color`, `border-width`, `border-radius`,
+`border`, `border-color`, `border-width`, `border-style`, side-specific
+`border-top/right/bottom/left` shorthands and longhands, `border-radius`,
 per-corner radius, `outline`, `outline-color`, `outline-width`,
-`outline-offset`, `opacity`, `box-shadow`.
+`outline-style`, `outline-offset`, `opacity`, `box-shadow`.
+
+Border and outline styles accept `solid`, `dotted`, `dashed`, `double`, `none`,
+and `hidden`. Side-specific border widths participate in layout; outlines are
+paint-only and do not change layout.
+
+Linear and radial gradient stops accept percentages, logical pixels, and mixed
+`calc()` length-percentage positions. Repeating gradients preserve fixed
+logical-pixel stripe periods across widget sizes and display DPI.
+
+`dg-pattern(kind, foreground, background, tile-size)` adds bounded procedural
+backgrounds. Kinds are `checker`, `pinstripe`, `dot`/`stipple`, and
+`diagonal-hatch`; tile size must be `2px..128px`. Patterns work in `background`
+or `background-image` and retain rounded clipping, opacity, transforms,
+layering, and DPI-aware logical sizing.
+
+Packaged PNG/JPEG surfaces use
+`app.set_image_resource("linen", bytes_or_path)` and
+`background-image: app-resource("linen", contain|cover|stretch|repeat)`.
+Encoded resources are limited to 16 MiB; decoded images are limited to
+4096x4096 and 16 million pixels. IDs are semantic names, not paths. Live
+replacement and `app.release_image_resource("linen")` are supported.
+`background-image: url(...)` remains unsupported and CSS cannot access files,
+HTTP, file URIs, or data URIs.
 
 Common text properties:
 `color`, `font-size`, `font-family`, `font-weight`, `text-align`,
 `line-height`, and wrapping-related fields where widgets support them.
+
+`font-family` accepts ordered CSS fallback stacks such as
+`"Chicago", "Geneva", Arial, system-ui, sans-serif`. DragonGUI selects the
+first installed named family, `@font-face` alias, or generic family in
+declaration order. Missing requested names are recorded in runtime font
+diagnostics without per-frame console warnings. Inline styles accept either a
+comma-separated string or a list of family names.
 
 Use snake-case keys in Python inline styles or CSS property names in
 stylesheets. Examples: `{"border_radius": 8}` and `border-radius: 8px;`.
@@ -2440,6 +2565,21 @@ Themes provide colors and spacing tokens. CSS can reference tokens such as
 `Theme.spacing` derives `space_xs`, `space_sm`, `space_md`, `space_lg`, and
 `space_xl` for Python layout arguments. CSS exposes the same scale as
 `--dg-space-xs` through `--dg-space-xl`.
+
+High-value system defaults are also theme tokens: `font_family`,
+`monospace_font_family`, `base_line_height`, `control_height`,
+`compact_control_height`, `default_border_width`, `focus_width`,
+`focus_offset`, `panel_padding`, and `toolbar_gap`. CSS exposes these as
+`--dg-font-family`, `--dg-monospace-font-family`, `--dg-line-height`,
+`--dg-control-height`, `--dg-compact-control-height`, `--dg-border-width`,
+`--dg-focus-width`, `--dg-focus-offset`, `--dg-panel-padding`, and
+`--dg-toolbar-gap`.
+
+Theme values supply framework defaults. Theme-origin and application CSS remain
+higher in the cascade, and inline style remains highest, so detailed widget
+appearance stays CSS-owned. Override a property in application CSS for a local
+or app-wide exception; replace the Theme token when the system default itself
+should change.
 
 Prefer token-based styles for reusable widgets. Use direct colors only for
 domain-specific visual encodings.
@@ -2540,7 +2680,9 @@ def worker():
 
 Guidelines:
 - Do not call slow training/data code directly in GUI callbacks.
-- Coalesce high-rate producer updates before scheduling UI work.
+- Schedule replaceable snapshots with a stable key, for example
+  `app.call_soon_threadsafe(apply_frame, coalesce_key="telemetry")`.
+- Leave append/event callbacks unkeyed so every value remains FIFO and lossless.
 - Use live frame streams for high-volume scatter replacement.
 - Prefer latest-frame semantics when old frames are not useful.
 """,
@@ -2836,6 +2978,9 @@ Rules:
 Rules:
 - Keep `paint(ctx)` deterministic and cheap.
 - Call `repaint()` only when display-list state changes.
+- Repaints containing shapes or text avoid style and layout work; obsolete
+  pending display-list snapshots for the same widget are coalesced.
+- Image-bearing repaints retain the full resource-discovery fallback.
 - Prefer a small number of batched primitives over many tiny display-list items.
 - Cache text, geometry, and normalized values in Python object state when they
   do not change every frame.
@@ -3188,7 +3333,7 @@ Related probes: `examples/css_feature_probes/custom_composite_widget_probe.py`,
     pytorch_dashboard_recipe = _section(
         "pytorch_dashboard",
         "PyTorch Dashboard Recipe",
-        "Training dashboard structure based on `examples/pytorch_training_dashboard.py`.",
+        "Training dashboard structure based on `examples/older/pytorch_training_dashboard.py`.",
         """
 Use an app-shell layout with:
 - left-side run configuration and hyperparameters,
@@ -3200,7 +3345,7 @@ Keep training work off the UI thread. Push metric updates through
 `app.call_soon_threadsafe(...)`, `LinePlot.append_points(...)`,
 `ProgressBar.set_value(...)`, `LogView.append(...)`, and table/label setters.
 
-Related example: `examples/pytorch_training_dashboard.py`.
+Related example: `examples/older/pytorch_training_dashboard.py`.
 """,
     )
     recipes = _section(
@@ -3524,14 +3669,14 @@ Checks:
   padding hacks when the issue appears in multiple themes.
 
 Relevant probes: `tool_buttons_probe.py`, `data_table_upgrades_probe.py`,
-`pytorch_training_dashboard.py`.
+`older/pytorch_training_dashboard.py`.
 """,
         metadata={
             "probes": [
                 "examples/css_feature_probes/tool_buttons_probe.py",
                 "examples/css_feature_probes/data_table_upgrades_probe.py",
             ],
-            "examples": ["examples/pytorch_training_dashboard.py"],
+            "examples": ["examples/older/pytorch_training_dashboard.py"],
         },
     )
     troubleshooting_plots = _section(

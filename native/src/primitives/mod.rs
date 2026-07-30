@@ -14833,7 +14833,8 @@ fn emit_tooltip_overlay(
         }
         return;
     }
-    let Some((_node, rect)) = tooltip_target(tree, layout, theme, state, sf) else {
+    let Some((_node, rect)) = tooltip_target(tree, layout, theme, state, sf, stylesheets, media)
+    else {
         return;
     };
     let style = computed_style_for_virtual_element_with_media(

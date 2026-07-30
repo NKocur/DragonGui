@@ -585,6 +585,70 @@ impl CommandQueue {
             return Err(CommandQueueError::Closed);
         }
         let mut inner = self.inner.lock().expect("command queue mutex poisoned");
+        match &command {
+            Command::SetProp { id, prop, .. } => {
+                inner.items.retain(|queued| {
+                    !matches!(
+                        queued,
+                        Command::SetProp {
+                            id: queued_id,
+                            prop: queued_prop,
+                            ..
+                        } if queued_id == id && queued_prop == prop
+                    )
+                });
+            }
+            Command::SetTheme { .. } => {
+                inner
+                    .items
+                    .retain(|queued| !matches!(queued, Command::SetTheme { .. }));
+            }
+            Command::SetStylesheet { origin, id, .. } => {
+                inner.items.retain(|queued| match queued {
+                    Command::SetStylesheet {
+                        origin: queued_origin,
+                        id: queued_id,
+                        ..
+                    } => queued_origin != origin || queued_id != id,
+                    Command::RemoveStylesheet {
+                        origin: queued_origin,
+                        id: queued_id,
+                    } => queued_origin != origin || Some(queued_id.as_str()) != id.as_deref(),
+                    _ => true,
+                });
+            }
+            Command::RemoveStylesheet { origin, id } => {
+                inner.items.retain(|queued| match queued {
+                    Command::SetStylesheet {
+                        origin: queued_origin,
+                        id: Some(queued_id),
+                        ..
+                    } => queued_origin != origin || queued_id != id,
+                    Command::RemoveStylesheet {
+                        origin: queued_origin,
+                        id: queued_id,
+                    } => queued_origin != origin || queued_id != id,
+                    _ => true,
+                });
+            }
+            Command::ClearStylesheets { origin } => {
+                inner.items.retain(|queued| {
+                    !matches!(
+                        queued,
+                        Command::SetStylesheet {
+                            origin: queued_origin,
+                            ..
+                        } | Command::RemoveStylesheet {
+                            origin: queued_origin,
+                            ..
+                        } | Command::ClearStylesheets {
+                            origin: queued_origin,
+                        } if queued_origin == origin
+                    )
+                });
+            }
+            _ => {}
+        }
         if let Command::SetScatterPointsPacked {
             id,
             fit,
@@ -2564,7 +2628,7 @@ mod tests {
             .push(Command::DebugSnapshot { request_id: 7 })
             .unwrap();
 
-        assert_eq!(queue.len(), 12);
+        assert_eq!(queue.len(), 11);
         assert_eq!(
             queue.drain(),
             vec![
@@ -2613,11 +2677,6 @@ mod tests {
                 Command::ReleaseResource {
                     id: "buffer".to_string(),
                 },
-                Command::SetStylesheet {
-                    origin: StylesheetOrigin::User,
-                    id: None,
-                    css: "Button { border-radius: 4px; }".to_string(),
-                },
                 Command::ClearStylesheets {
                     origin: StylesheetOrigin::User,
                 },
@@ -2625,6 +2684,88 @@ mod tests {
             ]
         );
         assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn queue_coalesces_pending_theme_and_stylesheet_replacements() {
+        let queue = CommandQueue::default();
+        let mut first_theme = Theme::dark();
+        first_theme.spacing = 4.0;
+        let mut final_theme = Theme::dark();
+        final_theme.spacing = 9.0;
+
+        queue
+            .push(Command::SetTheme { theme: first_theme })
+            .unwrap();
+        queue
+            .push(Command::SetStylesheet {
+                origin: StylesheetOrigin::User,
+                id: Some("appearance".to_string()),
+                css: "Button { color: red; }".to_string(),
+            })
+            .unwrap();
+        queue
+            .push(Command::SetTheme { theme: final_theme })
+            .unwrap();
+        queue
+            .push(Command::SetStylesheet {
+                origin: StylesheetOrigin::User,
+                id: Some("appearance".to_string()),
+                css: "Button { color: blue; }".to_string(),
+            })
+            .unwrap();
+
+        let commands = queue.drain();
+        assert_eq!(commands.len(), 2);
+        assert!(matches!(
+            &commands[0],
+            Command::SetTheme { theme } if theme.spacing == 9.0
+        ));
+        assert!(matches!(
+            &commands[1],
+            Command::SetStylesheet { id, css, .. }
+                if id.as_deref() == Some("appearance") && css.contains("blue")
+        ));
+    }
+
+    #[test]
+    fn queue_keeps_only_the_latest_pending_widget_property_value() {
+        let queue = CommandQueue::default();
+        for value in ["first", "second", "final"] {
+            queue
+                .push(Command::SetProp {
+                    id: "theme-status".to_string(),
+                    prop: "text".to_string(),
+                    value: CommandValue::Text(value.to_string()),
+                })
+                .unwrap();
+        }
+        queue
+            .push(Command::SetProp {
+                id: "theme-status".to_string(),
+                prop: "class".to_string(),
+                value: CommandValue::Text("active".to_string()),
+            })
+            .unwrap();
+
+        let commands = queue.drain();
+        assert_eq!(commands.len(), 2);
+        assert!(matches!(
+            &commands[0],
+            Command::SetProp {
+                prop,
+                value: CommandValue::Text(value),
+                ..
+            } if prop == "text" && value == "final"
+        ));
+        assert!(matches!(
+            &commands[1],
+            Command::SetProp {
+                prop,
+                value: CommandValue::Text(value),
+                ..
+            } if prop == "class" && value == "active"
+        ));
     }
 
     #[test]

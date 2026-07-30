@@ -20,6 +20,11 @@ import time
 from typing import Any, ClassVar, Self
 import webbrowser
 
+from ._widget_capabilities import (
+    supported_parts_by_python_kind,
+    supported_parts_for_widget,
+    supports_generated_content_part,
+)
 from .dataframe import (
     DEFAULT_TABLE_SAMPLE_ROWS,
     extract_table_column_buffers,
@@ -499,66 +504,7 @@ def _color_hex(value: Sequence[int]) -> str:
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
-_SUPPORTED_PARTS_BY_KIND: dict[str, set[str]] = {
-    "h_layout": {"scrollbar-track", "scrollbar-thumb"},
-    "v_layout": {"scrollbar-track", "scrollbar-thumb"},
-    "pages": {"scrollbar-track", "scrollbar-thumb"},
-    "page": {"scrollbar-track", "scrollbar-thumb"},
-    "sidebar": {"scrollbar-track", "scrollbar-thumb"},
-    "splitter": {"gutter"},
-    "pane": {"pane"},
-    "panel": {"accent", "scrollbar-track", "scrollbar-thumb"},
-    "collapsible": {
-        "header",
-        "indicator",
-        "body",
-        "scrollbar-track",
-        "scrollbar-thumb",
-    },
-    "modal": {"scrim", "scrollbar-track", "scrollbar-thumb"},
-    "menu": {"menu", "item", "item-hover", "item-disabled"},
-    "context_menu": {"menu", "item", "item-hover", "item-disabled"},
-    "button": {"badge"},
-    "small_button": {"badge"},
-    "icon_button": {"icon"},
-    "image_button": {"image"},
-    "arrow_button": {"icon"},
-    "number_input": {
-        "field",
-        "stepper",
-        "stepper-up",
-        "stepper-down",
-        "stepper-divider",
-        "divider",
-        "caret",
-    },
-    "code_editor": {"field", "gutter", "line-number", "caret"},
-    "log_view": {"line", "debug", "info", "warning", "error"},
-    "drag_number": {"field", "value", "grip"},
-    "dropdown": {"field", "chevron", "menu", "item", "item-selected", "item-hover"},
-    "checkbox": {"row", "box", "indicator", "label"},
-    "toggle_switch": {"row", "track", "thumb", "label"},
-    "tree_node": {"row", "indicator", "label", "guide"},
-    "led": {"dot", "glow", "highlight"},
-    "slider": {"track", "fill", "thumb"},
-    "range_slider": {"track", "range", "thumb-min", "thumb-max", "label"},
-    "progress_bar": {"track", "fill", "label"},
-    "loading_spinner": {"track", "arc", "label"},
-    "pie_chart": {"label"},
-    "heatmap": {"cell", "grid", "hover", "scalar-bar", "label"},
-    "bar_chart": {"label", "value-label"},
-    "tabs": {"header"},
-    "tab": {"tab", "accent", "badge"},
-    "nav_item": {"item", "accent", "badge"},
-    "dataframe_table": {
-        "header",
-        "row",
-        "row-selected",
-        "grid-line",
-        "scrollbar-track",
-        "scrollbar-thumb",
-    },
-}
+_SUPPORTED_PARTS_BY_KIND = supported_parts_by_python_kind()
 
 _BADGE_LEVELS = {"neutral", "info", "success", "warning", "danger", "error"}
 
@@ -572,20 +518,23 @@ def _normalize_part_name(name: object) -> str:
     return normalized
 
 
-def _validate_style_parts(style: Mapping[str, object], widget_kind: str) -> None:
+def _validate_style_parts(
+    style: Mapping[str, object],
+    widget_kind: str,
+    public_type: str,
+) -> None:
     if "parts" not in style:
         return
     parts = style["parts"]
     if not isinstance(parts, Mapping):
         raise TypeError("style['parts'] must be a mapping")
-    supported = _SUPPORTED_PARTS_BY_KIND.get(widget_kind, set())
+    supported = supported_parts_for_widget(public_type, widget_kind)
     for raw_name, part_style in parts.items():
         name = _normalize_part_name(raw_name)
-        if name not in supported:
-            widget = widget_kind.replace("_", " ").title().replace(" ", "")
+        if name not in supported and not supports_generated_content_part(widget_kind, name):
             allowed = ", ".join(sorted(supported)) or "none"
             raise ValueError(
-                f"{widget} has no CSS part {name!r}; supported parts: {allowed}"
+                f"{public_type} has no CSS part {name!r}; supported parts: {allowed}"
             )
         if not isinstance(part_style, Mapping):
             raise TypeError(f"style['parts'][{raw_name!r}] must be a mapping")
@@ -595,12 +544,13 @@ def _copy_style(
     style: Mapping[str, object] | None,
     *,
     widget_kind: str,
+    public_type: str,
 ) -> dict[str, object] | None:
     if style is None:
         return None
     if not isinstance(style, Mapping):
         raise TypeError("widget style must be a mapping")
-    _validate_style_parts(style, widget_kind)
+    _validate_style_parts(style, widget_kind, public_type)
     return dict(style)
 
 
@@ -1469,8 +1419,17 @@ class Widget:
         self.id = id or f"dg-{next(_ids)}"
         self.key = key
         self.class_ = class_
-        self.default_style = _copy_style(_default_style, widget_kind=self.kind)
-        self.style = _copy_style(style, widget_kind=self.kind)
+        public_type = self.css_types()[0]
+        self.default_style = _copy_style(
+            _default_style,
+            widget_kind=self.kind,
+            public_type=public_type,
+        )
+        self.style = _copy_style(
+            style,
+            widget_kind=self.kind,
+            public_type=public_type,
+        )
         self.tooltip = None if tooltip is None else str(tooltip)
         self._live_handle: Any | None = None
         self.parent: Container | None = None
@@ -1546,7 +1505,11 @@ class Widget:
         pass
 
     def set_style(self, style: Mapping[str, object] | None) -> None:
-        new_style = _copy_style(style, widget_kind=self.kind)
+        new_style = _copy_style(
+            style,
+            widget_kind=self.kind,
+            public_type=self.css_types()[0],
+        )
         patch = _style_patch(self.style, new_style)
         self.style = new_style
         handle = self._live()
@@ -1556,7 +1519,11 @@ class Widget:
     def _merge_default_style(self, style: Mapping[str, object] | None) -> None:
         """Merge construction-time widget defaults below authored stylesheets."""
 
-        defaults = _copy_style(style, widget_kind=self.kind)
+        defaults = _copy_style(
+            style,
+            widget_kind=self.kind,
+            public_type=self.css_types()[0],
+        )
         if defaults is None:
             return
         merged = dict(self.default_style or {})
@@ -2145,8 +2112,21 @@ class PaintWidget(ExtensionWidget):
         pass
 
     def repaint(self) -> None:
-        """Rebuild the display list and replace live extension props if mounted."""
-        self.set_extension_props(self._paint_extension_props())
+        """Rebuild the display list and update live paint data if mounted."""
+        props = self._paint_extension_props()
+        self.extension_props = self._runtime_extension_props(props)
+        if (handle := self._live()) is None:
+            return
+        display_list = props["display_list"]
+        has_image = any(
+            isinstance(command, Mapping) and command.get("cmd") == "image"
+            for command in display_list
+        )
+        if not has_image and handle.enqueue_update_extension_display_list(display_list):
+            return
+        # Image resource discovery and older native extensions still require the
+        # structural compatibility path.
+        handle.enqueue_replace_node(self.to_dict())
 
     def _build_display_list(self) -> list[dict[str, object]]:
         ctx = PaintContext(self.paint_size.width, self.paint_size.height)
@@ -2170,6 +2150,7 @@ class PaintWidget(ExtensionWidget):
 
 class Window(Container):
     kind = "window"
+    _DECORATION_MODES = {"native", "client"}
 
     def __init__(
         self,
@@ -2177,6 +2158,7 @@ class Window(Container):
         *,
         width: int = 1024,
         height: int = 768,
+        decorations: str = "native",
         id: str | None = None,
         key: str | None = None,
         class_: str | None = None,
@@ -2187,6 +2169,10 @@ class Window(Container):
         self.title = title
         self.width = width
         self.height = height
+        decoration_mode = str(decorations).strip().lower().replace("_", "-")
+        if decoration_mode not in self._DECORATION_MODES:
+            raise ValueError("Window decorations must be 'native' or 'client'")
+        self.decorations = decoration_mode
         _BuildContext.stack = []
         super().__init__(id=id, key=key, class_=class_, style=style, parent=None)
         _BuildContext.root = self
@@ -2196,7 +2182,116 @@ class Window(Container):
             "title": self.title,
             "width": self.width,
             "height": self.height,
+            "decorations": self.decorations,
         }
+
+    def _client_titlebar_dict(self) -> dict[str, Any]:
+        """Build the retained internal titlebar used by client decorations.
+
+        These nodes intentionally use stable CSS types while their ids remain
+        namespaced to the owning window. Keeping the titlebar in the document
+        tree makes it participate in normal layout, clipping, hover, focus, and
+        accessibility metadata.
+        """
+
+        prefix = f"{self.id}--dg-window"
+
+        def chrome_node(
+            suffix: str,
+            kind: str,
+            css_type: str,
+            *,
+            text: str | None = None,
+            icon: str | None = None,
+            tooltip: str | None = None,
+            accessible_name: str | None = None,
+            accessibility_role: str | None = None,
+            default_style: Mapping[str, object] | None = None,
+        ) -> dict[str, Any]:
+            props: dict[str, object] = {} if text is None else {"text": text}
+            if icon is not None:
+                props["icon"] = icon
+            if tooltip is not None:
+                props["tooltip"] = tooltip
+            if accessible_name is not None:
+                props["accessible_name"] = accessible_name
+            if accessibility_role is not None:
+                props["accessibility_role"] = accessibility_role
+            node: dict[str, Any] = {
+                "id": f"{prefix}-{suffix}",
+                "type": kind,
+                "css_types": [css_type, "Widget"],
+                "props": props,
+            }
+            if default_style:
+                node["default_style"] = dict(default_style)
+            return node
+
+        title = chrome_node(
+            "title",
+            "label",
+            "WindowTitle",
+            text=self.title,
+            default_style={
+                "width": 0,
+                "flex_grow": 1,
+                "flex_shrink": 1,
+                "min_width": 0,
+                "height": 34,
+                "padding_left": 12,
+                "padding_right": 8,
+                "overflow": "hidden",
+                "text_overflow": "ellipsis",
+            },
+        )
+        title["props"]["wrap"] = False
+        controls = [
+            chrome_node(
+                action,
+                "icon_button",
+                css_type,
+                icon=icon,
+                tooltip=tooltip,
+                accessible_name=tooltip,
+                accessibility_role="button",
+                default_style={
+                    "width": 46,
+                    "height": 34,
+                    "min_width": 0,
+                    "flex_shrink": 0,
+                    "padding": 0,
+                    "border_radius": 0,
+                },
+            )
+            for action, css_type, icon, tooltip in (
+                ("minimize", "WindowMinimize", "minus", "Minimize window"),
+                ("maximize", "WindowMaximize", "stop", "Maximize window"),
+                ("close", "WindowClose", "close", "Close window"),
+            )
+        ]
+        return {
+            "id": f"{prefix}-titlebar",
+            "type": "h_layout",
+            "css_types": ["WindowTitlebar", "Container", "Widget"],
+            "class": "dg-window-titlebar",
+            "props": {},
+            "default_style": {
+                "height": 34,
+                "min_height": 34,
+                "flex_shrink": 0,
+                "gap": 0,
+                "align_items": "center",
+                "overflow": "hidden",
+            },
+            "children": [title, *controls],
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        data = super().to_dict()
+        if self.decorations == "client":
+            data["props"]["window_state"] = "normal"
+            data["children"] = [self._client_titlebar_dict(), *data["children"]]
+        return data
 
 
 class HLayout(Container):
@@ -3151,7 +3246,7 @@ class Toolbar(HLayout):
         self,
         *,
         orientation: str = "horizontal",
-        gap: int | float | None = 6,
+        gap: int | float | None = None,
         compact: bool = True,
         id: str | None = None,
         key: str | None = None,
@@ -6880,6 +6975,10 @@ class SearchBox(HLayout):
         self.clear_button: IconButton | None = None
         default_style = {
             "align_items": "center",
+            # flex-shrink is needed when SearchBox is used in a horizontal
+            # toolbar, but it also acts on height inside a vertical flex
+            # parent. Keep the composite from collapsing beneath its children.
+            "min_height": 38,
             **sizing_style,
         }
         super().__init__(
@@ -6917,6 +7016,12 @@ class SearchBox(HLayout):
                 tooltip="Clear",
                 parent=self,
             )
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "disabled": self.disabled,
+            "clearable": self.clearable,
+        }
 
     def _handle_input_change(self, value: str) -> None:
         self.value = str(value)
@@ -11850,7 +11955,11 @@ class Scatter3D(Widget):
         self._point_style = s
         current = dict(self.style or {})
         current["scatter_point_style"] = s
-        self.style = _copy_style(current, widget_kind=self.kind)
+        self.style = _copy_style(
+            current,
+            widget_kind=self.kind,
+            public_type=self.css_types()[0],
+        )
         if (handle := self._live()) is not None:
             handle.enqueue_set_scatter_point_style(s)
 
@@ -11860,7 +11969,11 @@ class Scatter3D(Widget):
         self.point_size = value
         current = dict(self.style or {})
         current["scatter_point_size"] = value
-        self.style = _copy_style(current, widget_kind=self.kind)
+        self.style = _copy_style(
+            current,
+            widget_kind=self.kind,
+            public_type=self.css_types()[0],
+        )
         if (handle := self._live()) is not None:
             handle.enqueue_set_scatter_point_size(value)
 
