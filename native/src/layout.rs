@@ -6,13 +6,14 @@ use taffy::style::Overflow;
 use crate::document::{WidgetKind, WidgetNode};
 use crate::events::WidgetState;
 use crate::style::{
-    badge_width_for_text, code_editor_gutter_width_for_style, collapsible_header_height_for_style,
-    standalone_badge_horizontal_padding_lp, tabs_header_height_for_style, AlignItemsStyle,
-    DisplayStyle, FlexDirectionStyle, FlexWrapStyle, GridAutoFlowStyle, GridLineStyle,
-    GridPlacementStyle, GridTemplateAreas, GridTrackFitContentSize, GridTrackMaxSize,
-    GridTrackMinSize, GridTrackRepeatKind, GridTrackSize, LayoutLength, LineHeight, NodeStyle,
-    OverflowStyle, PositionStyle, TextOverflow, BADGE_GAP_LP, BADGE_MIN_HEIGHT_LP, CHECKBOX_BOX_LP,
-    CHECKBOX_LEFT_PAD_LP, TOGGLE_SWITCH_TRACK_WIDTH_LP,
+    badge_width_for_text, base_part_style, code_editor_gutter_width_for_style,
+    collapsible_header_height_for_style, standalone_badge_horizontal_padding_lp,
+    tabs_header_height_for_style, AlignItemsStyle, DisplayStyle, FlexDirectionStyle, FlexWrapStyle,
+    GridAutoFlowStyle, GridLineStyle, GridPlacementStyle, GridTemplateAreas,
+    GridTrackFitContentSize, GridTrackMaxSize, GridTrackMinSize, GridTrackRepeatKind,
+    GridTrackSize, LayoutLength, LineHeight, NodeStyle, OverflowStyle, PositionStyle, TextOverflow,
+    BADGE_GAP_LP, BADGE_MIN_HEIGHT_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP,
+    TOGGLE_SWITCH_TRACK_WIDTH_LP,
 };
 use crate::text::{measure_text_for_layout, measure_wrapped_text_for_layout};
 use crate::theme::Theme;
@@ -1136,7 +1137,7 @@ fn style_for_with_viewport(
     viewport_width_lp: f32,
 ) -> Style {
     let ctrl_gap = (theme.spacing * 0.75) * sf;
-    let panel_pad = (theme.spacing + 2.0) * sf;
+    let panel_pad = theme.panel_padding.max(0.0) * sf;
     let mut style = match node.kind {
         // ── containers ──────────────────────────────────────────────────────
         WidgetKind::Window => Style {
@@ -2619,7 +2620,16 @@ fn titled_container_uses_body_layout(node: &WidgetNode) -> bool {
 
 fn titled_container_body_style(node: &WidgetNode, sf: f32, theme: &Theme) -> Style {
     let metrics = titled_container_metrics(node, sf, theme, None);
-    let top_margin = metrics.title_line_height + metrics.body_gap + metrics.body_visual_inset;
+    let default_panel_padding = theme.panel_padding.max(0.0) * sf;
+    let panel_top_padding = authored_padding_top(node, sf, None)
+        .map(lp_value)
+        .unwrap_or(default_panel_padding)
+        .max(0.0);
+    let header_height =
+        panel_header_band_height_px(node, metrics.title_line_height, panel_top_padding, sf);
+    let top_margin =
+        (header_height - panel_top_padding).max(0.0) + metrics.body_gap + metrics.body_visual_inset;
+    let body_padding = panel_body_padding_lp(node) * sf;
     let row_gap = node
         .style
         .layout
@@ -2668,12 +2678,61 @@ fn titled_container_body_style(node: &WidgetNode, sf: f32, theme: &Theme) -> Sty
             top: LengthPercentageAuto::Length(top_margin),
             bottom: LengthPercentageAuto::Length(0.0),
         },
+        padding: taffy::geometry::Rect {
+            left: LengthPercentage::Length(body_padding),
+            right: LengthPercentage::Length(body_padding),
+            top: LengthPercentage::Length(body_padding),
+            bottom: LengthPercentage::Length(body_padding),
+        },
         gap: taffy::geometry::Size {
             width: column_gap,
             height: row_gap,
         },
         ..Default::default()
     }
+}
+
+fn panel_body_padding_lp(node: &WidgetNode) -> f32 {
+    node.style
+        .parts
+        .parts
+        .get("body")
+        .and_then(|part| part.layout.padding)
+        .unwrap_or(0.0)
+        .max(0.0)
+}
+
+fn panel_header_padding_lp(node: &WidgetNode) -> Option<f32> {
+    node.style
+        .parts
+        .parts
+        .get("header")
+        .and_then(|part| part.layout.padding)
+        .map(|padding| padding.max(0.0))
+}
+
+fn panel_header_height_lp(node: &WidgetNode) -> Option<f32> {
+    node.style
+        .parts
+        .parts
+        .get("header")
+        .and_then(|part| part.layout.height)
+        .map(|height| height.max(0.0))
+}
+
+fn panel_header_band_height_px(
+    node: &WidgetNode,
+    title_line_height: f32,
+    panel_top_padding: f32,
+    sf: f32,
+) -> f32 {
+    let authored_padding = panel_header_padding_lp(node).map(|padding| padding * sf);
+    let minimum = title_line_height + authored_padding.unwrap_or(0.0) * 2.0;
+    panel_header_height_lp(node)
+        .map(|height| height * sf)
+        .or_else(|| authored_padding.map(|_| minimum))
+        .unwrap_or(panel_top_padding + title_line_height)
+        .max(minimum)
 }
 
 fn reserve_collapsible_header_space(
@@ -2690,7 +2749,7 @@ fn reserve_collapsible_header_space(
 
     let header_h = collapsible_header_height_for_style(&node.style, theme, sf);
     let default_body_pad = if collapsible_expanded(node, state) {
-        (theme.spacing + 2.0) * sf
+        theme.panel_padding.max(0.0) * sf
     } else {
         0.0
     };
@@ -2956,11 +3015,22 @@ fn reserve_panel_title_space(style: &mut Style, node: &WidgetNode, sf: f32, them
 }
 
 pub(crate) fn panel_title_line_height_lp(node: &WidgetNode, theme: &Theme) -> f32 {
-    let font_size = node_font_size_lp(node, theme);
-    match node.style.text.line_height {
+    let title_text = base_part_style(&node.style, "title").map(|part| &part.text);
+    let font_size = title_text
+        .and_then(|text| text.font_size)
+        .or(node.style.text.font_size)
+        .unwrap_or_else(|| crate::style::native_fallback_font_size(theme))
+        .max(8.0);
+    match title_text
+        .and_then(|text| text.line_height)
+        .or(node.style.text.line_height)
+    {
         Some(LineHeight::Multiplier(value)) => (font_size * value.max(0.1)).max(1.0),
         Some(LineHeight::LogicalPx(value)) => value.max(1.0),
-        None => (font_size + 5.0).max(theme.font_size + 3.0),
+        None => {
+            let base_leading = (theme.font_size * (theme.base_line_height.max(0.1) - 1.0)).max(0.0);
+            (font_size + base_leading).max(theme.font_size + 3.0)
+        }
     }
 }
 
@@ -2982,13 +3052,22 @@ pub(crate) fn panel_title_body_gap_lp(node: &WidgetNode, theme: &Theme) -> f32 {
 }
 
 pub(crate) fn panel_title_top_padding_lp(node: &WidgetNode, theme: &Theme) -> f32 {
-    let default = theme.spacing + 2.0;
+    let default = theme.panel_padding.max(0.0);
     let layout = &node.style.layout;
-    layout
+    let panel_padding = layout
         .padding_top
         .or(layout.padding)
         .unwrap_or(default)
-        .max(0.0)
+        .max(0.0);
+    if panel_header_padding_lp(node).is_some() || panel_header_height_lp(node).is_some() {
+        let line_height = panel_title_line_height_lp(node, theme);
+        let header_height = panel_header_band_height_px(node, line_height, panel_padding, 1.0);
+        panel_header_padding_lp(node)
+            .unwrap_or(0.0)
+            .max((header_height - line_height) * 0.5)
+    } else {
+        panel_padding
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -3051,7 +3130,7 @@ pub(crate) fn titled_container_geometry(
     }
     let mut resolved_box = layout.resolved_box(&node.id)?;
     if !layout.resolved_padding.contains_key(&node.id) {
-        let default = (theme.spacing + 2.0) * sf;
+        let default = theme.panel_padding.max(0.0) * sf;
         let authored = &node.style.layout;
         let all_value = authored
             .padding_value
@@ -3079,24 +3158,49 @@ pub(crate) fn titled_container_geometry(
             ResolvedBox::from_rect(resolved_box.border_box, ResolvedEdges::default(), padding);
     }
     let metrics = titled_container_metrics(node, sf, theme, Some(resolved_box.padding_box.w));
+    let header_layout_authored =
+        panel_header_padding_lp(node).is_some() || panel_header_height_lp(node).is_some();
+    let header_height = panel_header_band_height_px(
+        node,
+        metrics.title_line_height,
+        resolved_box.padding.top,
+        sf,
+    )
+    .min(resolved_box.padding_box.h)
+    .max(0.0);
+    let title_inset = panel_header_padding_lp(node)
+        .map(|padding| padding * sf)
+        .unwrap_or(0.0);
+    let title_x = if panel_header_padding_lp(node).is_some() {
+        resolved_box.padding_box.x + title_inset
+    } else {
+        resolved_box.content_box.x
+    };
+    let title_y = if header_layout_authored {
+        resolved_box.padding_box.y
+            + title_inset.max((header_height - metrics.title_line_height) * 0.5)
+    } else {
+        resolved_box.content_box.y
+    };
     let title_box = Rect {
-        x: resolved_box.content_box.x,
-        y: resolved_box.content_box.y,
-        w: resolved_box.content_box.w,
-        h: metrics.title_line_height.min(
-            (resolved_box.padding_box.y + resolved_box.padding_box.h - resolved_box.content_box.y)
-                .max(0.0),
-        ),
+        x: title_x,
+        y: title_y,
+        w: if panel_header_padding_lp(node).is_some() {
+            (resolved_box.padding_box.w - title_inset * 2.0).max(0.0)
+        } else {
+            resolved_box.content_box.w
+        },
+        h: metrics
+            .title_line_height
+            .min((resolved_box.padding_box.y + header_height - title_y).max(0.0)),
     };
     let title_band = Rect {
         x: resolved_box.padding_box.x,
         y: resolved_box.padding_box.y,
         w: resolved_box.padding_box.w,
-        h: (resolved_box.padding.top + metrics.title_line_height)
-            .min(resolved_box.padding_box.h)
-            .max(0.0),
+        h: header_height,
     };
-    let body_top = (title_box.y + metrics.title_line_height + metrics.body_gap)
+    let body_top = (title_band.y + title_band.h + metrics.body_gap)
         .min(resolved_box.padding_box.y + resolved_box.padding_box.h);
     Some(TitledContainerGeometry {
         title_box,
@@ -3107,7 +3211,9 @@ pub(crate) fn titled_container_geometry(
             w: resolved_box.padding_box.w,
             h: (resolved_box.padding_box.y + resolved_box.padding_box.h - body_top).max(0.0),
         },
-        body_content_origin_y: (body_top + metrics.body_visual_inset)
+        body_content_origin_y: (body_top
+            + metrics.body_visual_inset
+            + panel_body_padding_lp(node) * sf)
             .min(resolved_box.padding_box.y + resolved_box.padding_box.h),
     })
 }
@@ -3193,8 +3299,10 @@ fn apply_inline_status_leaf_alignment(
     node: &WidgetNode,
     parent_flex_direction: Option<FlexDirection>,
 ) {
-    if !matches!(node.kind, WidgetKind::Badge | WidgetKind::Tag | WidgetKind::Led)
-        || style.align_self.is_some()
+    if !matches!(
+        node.kind,
+        WidgetKind::Badge | WidgetKind::Tag | WidgetKind::Led
+    ) || style.align_self.is_some()
         || !matches!(
             parent_flex_direction,
             Some(FlexDirection::Row | FlexDirection::RowReverse)
@@ -3612,13 +3720,13 @@ fn apply_node_style(
     // visual border width never reached Taffy: bordered flex composites such
     // as SearchBox consequently placed their first and last children against
     // the outer edge, underneath the painted border.
-    if let Some(width) = node.style.visual.border_width {
-        let edge = LengthPercentage::Length(width.max(0.0) * sf);
+    let border_widths = node.style.visual.effective_border_widths();
+    if border_widths.iter().any(|width| *width > 0.0) {
         style.border = taffy::geometry::Rect {
-            left: edge,
-            right: edge,
-            top: edge,
-            bottom: edge,
+            left: LengthPercentage::Length(border_widths[3] * sf),
+            right: LengthPercentage::Length(border_widths[1] * sf),
+            top: LengthPercentage::Length(border_widths[0] * sf),
+            bottom: LengthPercentage::Length(border_widths[2] * sf),
         };
     }
     if let Some(basis) = layout_dimension(
@@ -4515,7 +4623,7 @@ fn scroll_geometry(
             .unwrap_or_else(|| empty_rect_within(body_viewport, clip))
     };
     let content_bounds =
-        scroll_content_bounds(node, result, resolved_box).unwrap_or(resolved_box.content_box);
+        scroll_content_bounds(node, result, resolved_box, sf).unwrap_or(resolved_box.content_box);
     let mut geometry = ScrollGeometry {
         viewport,
         content_bounds,
@@ -4617,6 +4725,7 @@ fn scroll_content_bounds(
     node: &WidgetNode,
     result: &LayoutResult,
     resolved_box: ResolvedBox,
+    sf: f32,
 ) -> Option<Rect> {
     let mut left = f32::INFINITY;
     let mut right = f32::NEG_INFINITY;
@@ -4633,10 +4742,15 @@ fn scroll_content_bounds(
         );
     }
     if top.is_finite() {
+        let body_padding = if titled_container_uses_body_layout(node) {
+            panel_body_padding_lp(node) * sf
+        } else {
+            0.0
+        };
         left = left.min(resolved_box.content_box.x);
         top = top.min(resolved_box.content_box.y);
-        right += resolved_box.padding.right;
-        bottom += resolved_box.padding.bottom;
+        right += resolved_box.padding.right + body_padding;
+        bottom += resolved_box.padding.bottom + body_padding;
         Some(Rect {
             x: left,
             y: top,
@@ -4947,7 +5061,7 @@ fn active_tooltip<'a>(node: &'a WidgetNode, hovered: &str) -> Option<&'a WidgetN
 }
 
 fn estimate_tooltip_height(node: &WidgetNode, theme: &Theme, sf: f32) -> f32 {
-    let pad = (theme.spacing + 2.0) * sf;
+    let pad = theme.panel_padding.max(0.0) * sf;
     let gap = (theme.spacing * 0.75) * sf;
     let child_count = node.children.len().max(1) as f32;
     let child_height = node
@@ -8946,6 +9060,111 @@ mod tests {
     }
 
     #[test]
+    fn titled_panel_reservation_uses_title_part_typography() {
+        let mut panel = node(
+            "panel",
+            WidgetKind::Panel,
+            NodeProps {
+                text: Some("Part-styled title".to_string()),
+                ..NodeProps::default()
+            },
+            vec![node(
+                "button",
+                WidgetKind::Button,
+                NodeProps {
+                    text: Some("Child".to_string()),
+                    ..NodeProps::default()
+                },
+                vec![],
+            )],
+        );
+        panel.style.layout.padding = Some(0.0);
+        panel.style.layout.gap = Some(0.0);
+        let mut title = crate::style::PartStyle::default();
+        title.text.font_size = Some(20.0);
+        title.text.line_height = Some(LineHeight::LogicalPx(36.0));
+        panel.style.parts.parts.insert("title".to_string(), title);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![panel],
+        );
+
+        let layout = compute_layout(&root, 240.0, 100.0, 1.0, &Theme::dark(), None);
+        let panel = layout.rects.get("panel").unwrap();
+        let button = layout.rects.get("button").unwrap();
+
+        assert_eq!(
+            panel_title_line_height_lp(root.children.first().unwrap(), &Theme::dark()),
+            36.0
+        );
+        assert!(
+            button.y >= panel.y + 36.0,
+            "title-part line-height was not reserved: panel={panel:?} button={button:?}"
+        );
+    }
+
+    #[test]
+    fn panel_header_part_centers_title_and_grows_for_large_fonts() {
+        fn layout_for_font(font_size: f32) -> (WidgetNode, LayoutResult) {
+            let mut panel = node(
+                "panel",
+                WidgetKind::Panel,
+                NodeProps {
+                    text: Some("Centered title".to_string()),
+                    ..NodeProps::default()
+                },
+                vec![node(
+                    "child",
+                    WidgetKind::Button,
+                    NodeProps {
+                        text: Some("Body".to_string()),
+                        ..NodeProps::default()
+                    },
+                    vec![],
+                )],
+            );
+            panel.style.layout.width = Some(260.0);
+            panel.style.layout.height = Some(160.0);
+            panel.style.layout.padding = Some(8.0);
+            panel.style.layout.gap = Some(6.0);
+            let mut header = crate::style::PartStyle::default();
+            header.layout.height = Some(60.0);
+            header.layout.padding = Some(10.0);
+            panel.style.parts.parts.insert("header".to_string(), header);
+            let mut title = crate::style::PartStyle::default();
+            title.text.font_size = Some(font_size);
+            panel.style.parts.parts.insert("title".to_string(), title);
+            let root = node(
+                "window",
+                WidgetKind::Window,
+                NodeProps::default(),
+                vec![panel],
+            );
+            let layout = compute_layout(&root, 320.0, 220.0, 1.0, &Theme::dark(), None);
+            (root, layout)
+        }
+
+        for (font_size, expected_header_height) in [(14.0, 60.0), (52.0, 77.0)] {
+            let (root, layout) = layout_for_font(font_size);
+            let panel = &root.children[0];
+            let geometry = titled_container_geometry(panel, &layout, 1.0, &Theme::dark()).unwrap();
+            let child = layout.rects["child"];
+            let title_center = geometry.title_box.y + geometry.title_box.h * 0.5;
+            let header_center = geometry.title_band.y + geometry.title_band.h * 0.5;
+
+            assert!((geometry.title_band.h - expected_header_height).abs() <= 0.5);
+            assert!((title_center - header_center).abs() <= 0.5);
+            assert!((geometry.title_box.x - (geometry.title_band.x + 10.0)).abs() <= 0.5);
+            assert!(
+                child.y >= geometry.body_content_origin_y - 0.5,
+                "body overlapped header for font size {font_size}: geometry={geometry:?} child={child:?}"
+            );
+        }
+    }
+
+    #[test]
     fn titled_panel_reservation_uses_custom_title_line_height() {
         let mut panel = node(
             "panel",
@@ -9290,7 +9509,7 @@ mod tests {
 
     #[test]
     fn search_box_composite_sizing_preserves_preferred_compact_and_growing_modes() {
-        fn search_box(id: &str, grow: bool, clearable: bool) -> WidgetNode {
+        fn search_box(id: &str, grow: bool, clearable: bool, border: f32) -> WidgetNode {
             let mut icon = node(
                 &format!("{id}-icon"),
                 WidgetKind::IconButton,
@@ -9340,16 +9559,22 @@ mod tests {
             search.style.layout.gap = Some(6.0);
             search.style.layout.flex_grow = Some(if grow { 1.0 } else { 0.0 });
             search.style.layout.flex_shrink = Some(1.0);
-            search.style.visual.border_width = Some(2.0);
+            search.style.visual.border_width = Some(border);
             search
         }
 
-        fn layout_search(width: f32, grow: bool, clearable: bool) -> LayoutResult {
+        fn layout_search(
+            width: f32,
+            grow: bool,
+            clearable: bool,
+            border: f32,
+            scale_factor: f32,
+        ) -> LayoutResult {
             let toolbar = node(
                 "toolbar",
                 WidgetKind::HLayout,
                 NodeProps::default(),
-                vec![search_box("search", grow, clearable)],
+                vec![search_box("search", grow, clearable, border)],
             );
             let root = node(
                 "window",
@@ -9357,10 +9582,17 @@ mod tests {
                 NodeProps::default(),
                 vec![toolbar],
             );
-            compute_layout(&root, width, 100.0, 1.0, &Theme::dark(), None)
+            compute_layout(
+                &root,
+                width * scale_factor,
+                100.0 * scale_factor,
+                scale_factor,
+                &Theme::dark(),
+                None,
+            )
         }
 
-        let standalone = layout_search(520.0, false, true);
+        let standalone = layout_search(520.0, false, true, 2.0, 1.0);
         assert_eq!(standalone.rects["search"].w, 340.0);
         let search = standalone.rects["search"];
         let icon = standalone.rects["search-icon"];
@@ -9376,7 +9608,7 @@ mod tests {
             "clear button must remain inside the bordered content box: search={search:?} clear={clear:?}"
         );
 
-        let compact = layout_search(240.0, false, true);
+        let compact = layout_search(240.0, false, true, 2.0, 1.0);
         assert_eq!(compact.rects["search"].w, 240.0);
         assert!(
             compact.rects["search-input"].w >= 100.0,
@@ -9384,15 +9616,101 @@ mod tests {
             compact.rects["search-input"]
         );
 
-        let growing = layout_search(520.0, true, true);
+        let growing = layout_search(520.0, true, true, 2.0, 1.0);
         assert_eq!(growing.rects["search"].w, 520.0);
 
-        let without_clear = layout_search(340.0, false, false);
+        let without_clear = layout_search(340.0, false, false, 2.0, 1.0);
         assert_eq!(
             without_clear.rects["search-input"].w,
             standalone.rects["search-input"].w + 34.0,
             "removing clear chrome should release its width and one gap"
         );
+
+        for border in [0.0, 1.0, 2.0, 4.0] {
+            for scale_factor in [1.0, 1.25, 2.0] {
+                for clearable in [false, true] {
+                    let layout = layout_search(180.0, false, clearable, border, scale_factor);
+                    let search = layout.rects["search"];
+                    for child_id in ["search-icon", "search-input"] {
+                        let child = layout.rects[child_id];
+                        assert!(
+                            child.x >= search.x - 0.5
+                                && child.x + child.w <= search.x + search.w + 0.5
+                                && child.y >= search.y - 0.5
+                                && child.y + child.h <= search.y + search.h + 0.5,
+                            "{child_id} escaped compact SearchBox: border={border} scale={scale_factor} search={search:?} child={child:?}"
+                        );
+                    }
+                    if clearable {
+                        let clear = layout.rects["search-clear"];
+                        assert!(
+                            clear.x >= search.x - 0.5
+                                && clear.x + clear.w <= search.x + search.w + 0.5
+                                && clear.y >= search.y - 0.5
+                                && clear.y + clear.h <= search.y + search.h + 0.5,
+                            "clear escaped compact SearchBox: border={border} scale={scale_factor} search={search:?} clear={clear:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn asymmetric_visual_borders_reserve_each_content_edge() {
+        let mut child = node("child", WidgetKind::Panel, NodeProps::default(), vec![]);
+        child.style.layout.flex_grow = Some(1.0);
+        child.style.layout.align_self = Some(AlignItemsStyle::Stretch);
+
+        let mut root = node(
+            "root",
+            WidgetKind::HLayout,
+            NodeProps::default(),
+            vec![child],
+        );
+        root.style.layout.width = Some(100.0);
+        root.style.layout.height = Some(50.0);
+        root.style.visual.border_top_width = Some(2.0);
+        root.style.visual.border_right_width = Some(3.0);
+        root.style.visual.border_bottom_width = Some(5.0);
+        root.style.visual.border_left_width = Some(4.0);
+
+        let result = compute_layout(&root, 100.0, 50.0, 1.0, &Theme::dark(), None);
+        let root_rect = result.rects["root"];
+        let child_rect = result.rects["child"];
+
+        assert!((child_rect.x - (root_rect.x + 4.0)).abs() < 0.01);
+        assert!((child_rect.y - (root_rect.y + 2.0)).abs() < 0.01);
+        assert!((child_rect.w - 93.0).abs() < 0.01);
+        assert!((child_rect.h - 43.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn patterned_outline_width_and_offset_do_not_affect_layout() {
+        let mut child = node("child", WidgetKind::Panel, NodeProps::default(), vec![]);
+        child.style.layout.flex_grow = Some(1.0);
+        child.style.layout.align_self = Some(AlignItemsStyle::Stretch);
+
+        let mut root = node(
+            "root",
+            WidgetKind::HLayout,
+            NodeProps::default(),
+            vec![child],
+        );
+        root.style.layout.width = Some(100.0);
+        root.style.layout.height = Some(50.0);
+        root.style.visual.outline_width = Some(8.0);
+        root.style.visual.outline_offset = Some(6.0);
+        root.style.visual.outline_style = Some(crate::style::BorderLineStyle::Dashed);
+
+        let result = compute_layout(&root, 100.0, 50.0, 1.0, &Theme::dark(), None);
+        let root_rect = result.rects["root"];
+        let child_rect = result.rects["child"];
+
+        assert!((child_rect.x - root_rect.x).abs() < 0.01);
+        assert!((child_rect.y - root_rect.y).abs() < 0.01);
+        assert!((child_rect.w - root_rect.w).abs() < 0.01);
+        assert!((child_rect.h - root_rect.h).abs() < 0.01);
     }
 
     #[test]
@@ -14333,6 +14651,77 @@ mod tests {
             (actual_gap - 14.0).abs() <= 0.5,
             "titled panel body did not preserve child gap: first={first:?} second={second:?} actual_gap={actual_gap}"
         );
+    }
+
+    #[test]
+    fn titled_panel_body_part_padding_controls_content_and_scroll_extent() {
+        fn layout_with_body_padding(padding: f32) -> (WidgetNode, LayoutResult) {
+            let mut child = node(
+                "content",
+                WidgetKind::Button,
+                NodeProps {
+                    text: Some("Tall content".to_string()),
+                    ..NodeProps::default()
+                },
+                vec![],
+            );
+            child.style.layout.height = Some(180.0);
+            child.style.layout.flex_shrink = Some(0.0);
+            let mut panel = node(
+                "panel",
+                WidgetKind::Panel,
+                NodeProps {
+                    text: Some("Padded body".to_string()),
+                    ..NodeProps::default()
+                },
+                vec![child],
+            );
+            panel.style.layout.width = Some(240.0);
+            panel.style.layout.height = Some(130.0);
+            panel.style.layout.padding = Some(8.0);
+            panel.style.layout.overflow_y = Some(OverflowStyle::Auto);
+            if padding > 0.0 {
+                let mut body = crate::style::PartStyle::default();
+                body.layout.padding = Some(padding);
+                panel.style.parts.parts.insert("body".to_string(), body);
+            }
+            let root = node(
+                "window",
+                WidgetKind::Window,
+                NodeProps::default(),
+                vec![panel],
+            );
+            let layout = compute_layout(
+                &root,
+                300.0,
+                180.0,
+                1.0,
+                &Theme::dark(),
+                Some(&WidgetState::default()),
+            );
+            (root, layout)
+        }
+
+        let (plain_root, plain) = layout_with_body_padding(0.0);
+        let (padded_root, padded) = layout_with_body_padding(12.0);
+        let plain_content = plain.rects["content"];
+        let padded_content = padded.rects["content"];
+        let geometry =
+            titled_container_geometry(&padded_root.children[0], &padded, 1.0, &Theme::dark())
+                .expect("padded body geometry");
+
+        assert!((padded_content.x - plain_content.x - 12.0).abs() <= 0.5);
+        assert!((padded_content.y - plain_content.y - 12.0).abs() <= 0.5);
+        assert!((plain_content.w - padded_content.w - 24.0).abs() <= 0.5);
+        assert!((padded_content.y - geometry.body_content_origin_y).abs() <= 0.5);
+        let plain_scroll = plain.scroll_max_y["panel"];
+        let padded_scroll = padded.scroll_max_y["panel"];
+        assert!(
+            (padded_scroll - plain_scroll - 24.0).abs() <= 0.5,
+            "body padding must contribute leading and trailing scroll extent: plain={plain_scroll} padded={padded_scroll}"
+        );
+        assert_eq!(panel_body_padding_lp(&plain_root.children[0]), 0.0);
+        assert_eq!(panel_body_padding_lp(&padded_root.children[0]), 12.0);
     }
 
     #[test]

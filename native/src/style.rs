@@ -1,5 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Mutex, OnceLock};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::{Arc, Mutex, OnceLock};
+
+use smallvec::SmallVec;
 
 pub(crate) const FOCUS_RING_LP: f32 = 2.0;
 pub(crate) const PANEL_ACCENT_WIDTH_LP: f32 = 3.0;
@@ -266,6 +268,9 @@ pub struct StyleDeclarationProvenance {
     pub specificity: Option<[u16; 3]>,
 }
 
+pub type SharedStyleDeclarationProvenance = Arc<StyleDeclarationProvenance>;
+pub type StyleProvenanceCandidates = SmallVec<[SharedStyleDeclarationProvenance; 4]>;
+
 #[derive(Debug, Clone, Default)]
 pub struct NodeStyle {
     pub layout: LayoutStyle,
@@ -286,7 +291,7 @@ pub struct NodeStyle {
     pub selected: VisualStyle,
     /// Ordered declaration candidates for each authored property. The last
     /// candidate is the current winner; earlier candidates were overridden.
-    pub provenance: BTreeMap<String, Vec<StyleDeclarationProvenance>>,
+    pub provenance: HashMap<Arc<str>, StyleProvenanceCandidates>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -591,7 +596,7 @@ pub enum ContainerTypeStyle {
     InlineSize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct CalcLength {
     pub percent: f32,
     pub px: f32,
@@ -739,7 +744,7 @@ impl GridTemplateAreas {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct VisualStyle {
     pub background: Option<ColorRef>,
     pub background_paint: Option<BackgroundPaint>,
@@ -748,8 +753,22 @@ pub struct VisualStyle {
     pub foreground: Option<ColorRef>,
     pub border_color: Option<ColorRef>,
     pub border_width: Option<f32>,
+    pub border_style: Option<BorderLineStyle>,
+    pub border_top_color: Option<ColorRef>,
+    pub border_right_color: Option<ColorRef>,
+    pub border_bottom_color: Option<ColorRef>,
+    pub border_left_color: Option<ColorRef>,
+    pub border_top_width: Option<f32>,
+    pub border_right_width: Option<f32>,
+    pub border_bottom_width: Option<f32>,
+    pub border_left_width: Option<f32>,
+    pub border_top_style: Option<BorderLineStyle>,
+    pub border_right_style: Option<BorderLineStyle>,
+    pub border_bottom_style: Option<BorderLineStyle>,
+    pub border_left_style: Option<BorderLineStyle>,
     pub outline_color: Option<ColorRef>,
     pub outline_width: Option<f32>,
+    pub outline_style: Option<BorderLineStyle>,
     pub outline_offset: Option<f32>,
     pub border_radius: Option<f32>,
     pub corner_radii: CornerRadii,
@@ -760,6 +779,15 @@ pub struct VisualStyle {
     pub background_noise: Option<f32>,
     pub box_shadows: Option<Vec<BoxShadow>>,
     pub transform: Option<TransformStyle>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BorderLineStyle {
+    None,
+    Solid,
+    Dotted,
+    Dashed,
+    Double,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -832,7 +860,39 @@ pub enum BackgroundPaint {
     RadialGradient(RadialGradient),
     BlobGradient(BlobGradient),
     MeshGradient(MeshGradient),
+    Pattern(BackgroundPattern),
+    Image(BackgroundImage),
     Layers(Vec<BackgroundPaint>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackgroundPatternKind {
+    Checker,
+    Pinstripe,
+    Dot,
+    DiagonalHatch,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BackgroundPattern {
+    pub kind: BackgroundPatternKind,
+    pub foreground: ColorRef,
+    pub background: ColorRef,
+    pub tile_size: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackgroundImageFit {
+    Contain,
+    Cover,
+    Stretch,
+    Repeat,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackgroundImage {
+    pub resource_id: String,
+    pub fit: BackgroundImageFit,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -852,7 +912,7 @@ pub struct RadialGradient {
 #[derive(Debug, Clone, PartialEq)]
 pub struct GradientStop {
     pub color: ColorRef,
-    pub position: Option<f32>,
+    pub position: Option<CalcLength>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1179,6 +1239,7 @@ pub enum FontFamily {
     Cursive,
     Fantasy,
     Name(String),
+    Stack(Vec<FontFamily>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1214,6 +1275,68 @@ impl NodeStyle {
 }
 
 impl VisualStyle {
+    pub fn has_border_side_overrides(&self) -> bool {
+        self.border_top_color.is_some()
+            || self.border_right_color.is_some()
+            || self.border_bottom_color.is_some()
+            || self.border_left_color.is_some()
+            || self.border_top_width.is_some()
+            || self.border_right_width.is_some()
+            || self.border_bottom_width.is_some()
+            || self.border_left_width.is_some()
+            || self.border_top_style.is_some()
+            || self.border_right_style.is_some()
+            || self.border_bottom_style.is_some()
+            || self.border_left_style.is_some()
+    }
+
+    pub fn resolved_border_widths(&self) -> [f32; 4] {
+        let uniform = self.border_width.unwrap_or(0.0).max(0.0);
+        [
+            self.border_top_width.unwrap_or(uniform).max(0.0),
+            self.border_right_width.unwrap_or(uniform).max(0.0),
+            self.border_bottom_width.unwrap_or(uniform).max(0.0),
+            self.border_left_width.unwrap_or(uniform).max(0.0),
+        ]
+    }
+
+    pub fn effective_border_widths(&self) -> [f32; 4] {
+        let widths = self.resolved_border_widths();
+        let styles = self.resolved_border_styles();
+        [
+            if styles[0] == BorderLineStyle::None {
+                0.0
+            } else {
+                widths[0]
+            },
+            if styles[1] == BorderLineStyle::None {
+                0.0
+            } else {
+                widths[1]
+            },
+            if styles[2] == BorderLineStyle::None {
+                0.0
+            } else {
+                widths[2]
+            },
+            if styles[3] == BorderLineStyle::None {
+                0.0
+            } else {
+                widths[3]
+            },
+        ]
+    }
+
+    pub fn resolved_border_styles(&self) -> [BorderLineStyle; 4] {
+        let uniform = self.border_style.unwrap_or(BorderLineStyle::Solid);
+        [
+            self.border_top_style.unwrap_or(uniform),
+            self.border_right_style.unwrap_or(uniform),
+            self.border_bottom_style.unwrap_or(uniform),
+            self.border_left_style.unwrap_or(uniform),
+        ]
+    }
+
     pub fn merged(&self, other: &VisualStyle) -> VisualStyle {
         VisualStyle {
             background: other.background.clone().or_else(|| self.background.clone()),
@@ -1229,11 +1352,37 @@ impl VisualStyle {
                 .clone()
                 .or_else(|| self.border_color.clone()),
             border_width: other.border_width.or(self.border_width),
+            border_style: other.border_style.or(self.border_style),
+            border_top_color: other
+                .border_top_color
+                .clone()
+                .or_else(|| self.border_top_color.clone()),
+            border_right_color: other
+                .border_right_color
+                .clone()
+                .or_else(|| self.border_right_color.clone()),
+            border_bottom_color: other
+                .border_bottom_color
+                .clone()
+                .or_else(|| self.border_bottom_color.clone()),
+            border_left_color: other
+                .border_left_color
+                .clone()
+                .or_else(|| self.border_left_color.clone()),
+            border_top_width: other.border_top_width.or(self.border_top_width),
+            border_right_width: other.border_right_width.or(self.border_right_width),
+            border_bottom_width: other.border_bottom_width.or(self.border_bottom_width),
+            border_left_width: other.border_left_width.or(self.border_left_width),
+            border_top_style: other.border_top_style.or(self.border_top_style),
+            border_right_style: other.border_right_style.or(self.border_right_style),
+            border_bottom_style: other.border_bottom_style.or(self.border_bottom_style),
+            border_left_style: other.border_left_style.or(self.border_left_style),
             outline_color: other
                 .outline_color
                 .clone()
                 .or_else(|| self.outline_color.clone()),
             outline_width: other.outline_width.or(self.outline_width),
+            outline_style: other.outline_style.or(self.outline_style),
             outline_offset: other.outline_offset.or(self.outline_offset),
             border_radius: other.border_radius.or(self.border_radius),
             corner_radii: self.corner_radii.merged(&other.corner_radii),
@@ -1435,12 +1584,56 @@ fn parse_visual(map: &serde_json::Map<String, Value>, out: &mut VisualStyle) {
     out.backdrop_filter =
         value_for_keys(map, "backdrop_filter", "backdrop-filter").and_then(parse_backdrop_filter);
     out.foreground = color_ref(map.get("foreground")).or_else(|| color_ref(map.get("color")));
-    out.border_color = color_ref(map.get("border_color"));
-    out.border_width = number(map.get("border_width"));
+    out.border_color = color_ref(value_for_keys(map, "border_color", "border-color"));
+    out.border_width = number(value_for_keys(map, "border_width", "border-width"));
+    out.border_style =
+        value_for_keys(map, "border_style", "border-style").and_then(parse_border_line_style);
+    out.border_top_color = color_ref(value_for_keys(map, "border_top_color", "border-top-color"));
+    out.border_right_color = color_ref(value_for_keys(
+        map,
+        "border_right_color",
+        "border-right-color",
+    ));
+    out.border_bottom_color = color_ref(value_for_keys(
+        map,
+        "border_bottom_color",
+        "border-bottom-color",
+    ));
+    out.border_left_color = color_ref(value_for_keys(
+        map,
+        "border_left_color",
+        "border-left-color",
+    ));
+    out.border_top_width = number(value_for_keys(map, "border_top_width", "border-top-width"));
+    out.border_right_width = number(value_for_keys(
+        map,
+        "border_right_width",
+        "border-right-width",
+    ));
+    out.border_bottom_width = number(value_for_keys(
+        map,
+        "border_bottom_width",
+        "border-bottom-width",
+    ));
+    out.border_left_width = number(value_for_keys(
+        map,
+        "border_left_width",
+        "border-left-width",
+    ));
+    out.border_top_style = value_for_keys(map, "border_top_style", "border-top-style")
+        .and_then(parse_border_line_style);
+    out.border_right_style = value_for_keys(map, "border_right_style", "border-right-style")
+        .and_then(parse_border_line_style);
+    out.border_bottom_style = value_for_keys(map, "border_bottom_style", "border-bottom-style")
+        .and_then(parse_border_line_style);
+    out.border_left_style = value_for_keys(map, "border_left_style", "border-left-style")
+        .and_then(parse_border_line_style);
     out.outline_color =
         color_ref(map.get("outline_color")).or_else(|| color_ref(map.get("outline-color")));
     out.outline_width =
         number(map.get("outline_width")).or_else(|| number(map.get("outline-width")));
+    out.outline_style =
+        value_for_keys(map, "outline_style", "outline-style").and_then(parse_border_line_style);
     out.outline_offset =
         number(map.get("outline_offset")).or_else(|| number(map.get("outline-offset")));
     out.border_radius = number(map.get("border_radius"));
@@ -1465,10 +1658,8 @@ fn parse_visual(map: &serde_json::Map<String, Value>, out: &mut VisualStyle) {
 
 fn parse_text(map: &serde_json::Map<String, Value>, out: &mut TextStyle) {
     out.font_size = number(map.get("font_size"));
-    out.font_family = map
-        .get("font_family")
-        .and_then(Value::as_str)
-        .and_then(parse_font_family);
+    out.font_family =
+        value_for_keys(map, "font_family", "font-family").and_then(parse_font_family_value);
     out.font_weight = map.get("font_weight").and_then(parse_font_weight);
     out.color = color_ref(map.get("color")).or_else(|| color_ref(map.get("foreground")));
     out.text_align = map
@@ -1675,8 +1866,22 @@ pub(crate) fn visual_style_is_empty(style: &VisualStyle) -> bool {
         && style.foreground.is_none()
         && style.border_color.is_none()
         && style.border_width.is_none()
+        && style.border_style.is_none()
+        && style.border_top_color.is_none()
+        && style.border_right_color.is_none()
+        && style.border_bottom_color.is_none()
+        && style.border_left_color.is_none()
+        && style.border_top_width.is_none()
+        && style.border_right_width.is_none()
+        && style.border_bottom_width.is_none()
+        && style.border_left_width.is_none()
+        && style.border_top_style.is_none()
+        && style.border_right_style.is_none()
+        && style.border_bottom_style.is_none()
+        && style.border_left_style.is_none()
         && style.outline_color.is_none()
         && style.outline_width.is_none()
+        && style.outline_style.is_none()
         && style.outline_offset.is_none()
         && style.border_radius.is_none()
         && style.corner_radii.is_empty()
@@ -2208,6 +2413,17 @@ fn text_value<'a>(
     value_for_keys(map, snake, dashed).and_then(Value::as_str)
 }
 
+fn parse_border_line_style(value: &Value) -> Option<BorderLineStyle> {
+    match value.as_str()?.trim().to_ascii_lowercase().as_str() {
+        "none" | "hidden" => Some(BorderLineStyle::None),
+        "solid" => Some(BorderLineStyle::Solid),
+        "dotted" => Some(BorderLineStyle::Dotted),
+        "dashed" => Some(BorderLineStyle::Dashed),
+        "double" => Some(BorderLineStyle::Double),
+        _ => None,
+    }
+}
+
 fn parse_generated_content(value: &str) -> Option<GeneratedContent> {
     let value = value.trim();
     if value.is_empty()
@@ -2537,12 +2753,56 @@ fn parse_font_family(value: &str) -> Option<FontFamily> {
         return None;
     }
     match value.to_ascii_lowercase().as_str() {
-        "serif" => Some(FontFamily::Serif),
-        "sans" | "sans-serif" | "sans_serif" | "system" => Some(FontFamily::SansSerif),
-        "mono" | "monospace" => Some(FontFamily::Monospace),
+        "serif" | "ui-serif" => Some(FontFamily::Serif),
+        "sans" | "sans-serif" | "sans_serif" | "system" | "system-ui" | "ui-sans-serif"
+        | "ui-rounded" => Some(FontFamily::SansSerif),
+        "mono" | "monospace" | "ui-monospace" => Some(FontFamily::Monospace),
         "cursive" => Some(FontFamily::Cursive),
         "fantasy" => Some(FontFamily::Fantasy),
         _ => Some(FontFamily::Name(value.to_string())),
+    }
+}
+
+fn parse_font_family_value(value: &Value) -> Option<FontFamily> {
+    let families = match value {
+        Value::String(value) => split_font_family_list(value)
+            .filter_map(parse_font_family)
+            .collect::<Vec<_>>(),
+        Value::Array(values) => values
+            .iter()
+            .filter_map(Value::as_str)
+            .flat_map(split_font_family_list)
+            .filter_map(parse_font_family)
+            .collect::<Vec<_>>(),
+        _ => return None,
+    };
+    font_family_stack(families)
+}
+
+fn split_font_family_list(value: &str) -> impl Iterator<Item = &str> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|family| !family.is_empty())
+        .map(|family| {
+            family
+                .strip_prefix('"')
+                .and_then(|family| family.strip_suffix('"'))
+                .or_else(|| {
+                    family
+                        .strip_prefix('\'')
+                        .and_then(|family| family.strip_suffix('\''))
+                })
+                .unwrap_or(family)
+                .trim()
+        })
+}
+
+fn font_family_stack(mut families: Vec<FontFamily>) -> Option<FontFamily> {
+    match families.len() {
+        0 => None,
+        1 => families.pop(),
+        _ => Some(FontFamily::Stack(families)),
     }
 }
 
@@ -2840,6 +3100,24 @@ mod tests {
         assert_eq!(filter.blur, 8.0);
         assert!((filter.brightness - 1.2).abs() < 0.001);
         assert_eq!(filter.saturate, 0.75);
+    }
+
+    #[test]
+    fn inline_font_family_accepts_ordered_string_and_array_stacks() {
+        let expected = Some(FontFamily::Stack(vec![
+            FontFamily::Name("Chicago".to_string()),
+            FontFamily::Name("Geneva".to_string()),
+            FontFamily::SansSerif,
+        ]));
+        let string_style = NodeStyle::from_json(Some(&json!({
+            "font_family": "\"Chicago\", 'Geneva', sans-serif"
+        })));
+        let array_style = NodeStyle::from_json(Some(&json!({
+            "font-family": ["Chicago", "Geneva", "sans-serif"]
+        })));
+
+        assert_eq!(string_style.text.font_family, expected);
+        assert_eq!(array_style.text.font_family, expected);
     }
 
     #[test]

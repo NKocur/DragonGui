@@ -366,9 +366,28 @@ impl ResourceRegistry {
         self.buffers.len()
     }
 
-    #[cfg(test)]
-    fn buffer(&self, id: &str) -> Option<&BufferResource> {
+    pub fn buffer(&self, id: &str) -> Option<&BufferResource> {
         self.buffers.get(id)
+    }
+
+    pub fn image(&self, id: &str) -> Option<&BufferResource> {
+        self.buffer(id)
+            .filter(|resource| resource.kind == "image_encoded")
+    }
+
+    pub fn image_count(&self) -> usize {
+        self.buffers
+            .values()
+            .filter(|resource| resource.kind == "image_encoded")
+            .count()
+    }
+
+    pub fn image_encoded_bytes(&self) -> usize {
+        self.buffers
+            .values()
+            .filter(|resource| resource.kind == "image_encoded")
+            .map(|resource| resource.bytes.len())
+            .sum()
     }
 
     pub fn table_cell_text(
@@ -468,6 +487,10 @@ impl ResourceRegistry {
             "buffers": {
                 "count": self.buffers.len(),
                 "items": buffers,
+            },
+            "images": {
+                "count": self.image_count(),
+                "encoded_bytes": self.image_encoded_bytes(),
             }
         })
     }
@@ -717,6 +740,36 @@ mod tests {
         assert!(registry.release("image-1"));
         assert_eq!(registry.buffer_count(), 0);
         assert!(!registry.release("image-1"));
+    }
+
+    #[test]
+    fn registry_tracks_managed_image_versions_bytes_and_release() {
+        let mut registry = ResourceRegistry::default();
+        registry.update_buffer(
+            "surface".to_string(),
+            "image_encoded".to_string(),
+            vec![1, 2, 3, 4],
+            None,
+        );
+        registry.update_buffer("other".to_string(), "bytes".to_string(), vec![5, 6], None);
+
+        assert_eq!(registry.image_count(), 1);
+        assert_eq!(registry.image_encoded_bytes(), 4);
+        assert_eq!(registry.image("surface").expect("image").version, 1);
+        assert!(registry.image("other").is_none());
+        assert_eq!(registry.snapshot()["images"]["count"], 1);
+        assert_eq!(registry.snapshot()["images"]["encoded_bytes"], 4);
+
+        registry.update_buffer(
+            "surface".to_string(),
+            "image_encoded".to_string(),
+            vec![7, 8],
+            None,
+        );
+        assert_eq!(registry.image("surface").expect("updated image").version, 2);
+        assert_eq!(registry.image_encoded_bytes(), 2);
+        assert!(registry.release("surface"));
+        assert_eq!(registry.image_count(), 0);
     }
 
     #[test]

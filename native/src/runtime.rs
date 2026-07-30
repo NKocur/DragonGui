@@ -16,7 +16,7 @@ use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
-use winit::window::{Theme as WinitTheme, Window, WindowId};
+use winit::window::{CursorIcon, ResizeDirection, Theme as WinitTheme, Window, WindowId};
 
 #[cfg(windows)]
 use windows::Win32::Foundation::{HANDLE, HGLOBAL};
@@ -28,19 +28,23 @@ use windows::Win32::System::DataExchange::{
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
 #[cfg(windows)]
 use windows::Win32::System::Ole::CF_UNICODETEXT;
+#[cfg(windows)]
+use windows::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime;
+#[cfg(windows)]
+use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXDOUBLECLK, SM_CYDOUBLECLK};
 
 use crate::commands::{
     Command, CommandBridge, CommandValue, Dirty, RuntimeEvent, ScatterHoverColumnPacket,
     ScatterTelemetry, TableColumnPacket,
 };
 use crate::css_style::{
-    apply_stylesheets_to_tree_for_media_and_containers,
+    apply_stylesheets_to_tree_for_diagnostics, apply_stylesheets_to_tree_for_media_and_containers,
     matched_part_rule_labels_for_tree_with_media, matched_rule_diagnostics_for_tree_with_media,
-    matched_rule_labels_for_tree_with_media, refresh_live_pane_fallback_provenance,
-    user_selector_diagnostics_for_tree_with_media, user_selector_match_counts_for_tree_with_media,
-    DgContainerQueryContext, DgKeyframes, DgMatchedRuleDiagnostic, DgMediaColorGamut,
-    DgMediaColorScheme, DgMediaEnvironment, DgMediaHover, DgMediaPointer, StylesheetOrigin,
-    StylesheetStore,
+    matched_rule_labels_for_tree_with_media, materialize_native_fallback_provenance,
+    refresh_live_pane_fallback_provenance, user_selector_diagnostics_for_tree_with_media,
+    user_selector_match_counts_for_tree_with_media, DgContainerQueryContext, DgKeyframes,
+    DgMatchedRuleDiagnostic, DgMediaColorGamut, DgMediaColorScheme, DgMediaEnvironment,
+    DgMediaHover, DgMediaPointer, StylesheetOrigin, StylesheetStore,
 };
 use crate::document::{
     self, BarChartHoverProp, HeatmapHoverProp, LinePlotHoverProp, LoadingScreenSpec, NodeProps,
@@ -49,9 +53,9 @@ use crate::document::{
 use crate::document::{LinePlotPayloadFormat, ScatterPayloadFormat};
 use crate::error::DragonError;
 use crate::events::{
-    has_active_modal, hit_test, hit_test_extension_event, hit_test_hover, is_interactive_node,
-    modal_blocks_point, ChangeValue, DragNumberDrag, RangeSliderDrag, SliderDrag, TableSortColumn,
-    WidgetState,
+    has_active_modal, hit_test, hit_test_extension_event, hit_test_hover_with_targets,
+    is_interactive_node, modal_blocks_point, ChangeValue, DragNumberDrag, RangeSliderDrag,
+    SliderDrag, TableSortColumn, WidgetState,
 };
 use crate::html_report_webview::HtmlReportWebViewManager;
 use crate::image_widget::ImageRenderer;
@@ -82,7 +86,8 @@ use crate::style::{
     GeneratedContent, GridAutoFlowStyle, GridLineStyle, GridPlacementStyle, GridTrackSize,
     LayoutLength, LayoutStyle, LineHeight, NodeStyle, OverflowStyle, PartLayoutStyle, PartStyle,
     PositionStyle, StepPosition, TextAlign, TextOverflow, TextSpacing, TextStyle, TextTransform,
-    TransitionStyle, TransitionTimingFunction, VisualStyle, WidgetStyle, BORDER_WIDTH_LP,
+    TransitionProperty, TransitionStyle, TransitionTimingFunction, VisualStyle, WidgetStyle,
+    BORDER_WIDTH_LP,
 };
 use crate::table::{self, TableHit};
 use crate::text::{measure_wrapped_text_for_layout, TextRendererDg};
@@ -176,9 +181,13 @@ pub struct AppSpec {
     pub title: String,
     pub width: u32,
     pub height: u32,
+    /// Whether DragonGUI renders and operates retained client-side window chrome.
+    pub client_decorations: bool,
     pub widget_tree: Option<WidgetNode>,
     /// Python-provided theme overrides; `None` → use `Theme::dark()` defaults.
     pub theme: Option<Theme>,
+    /// Validated semantic icon overrides retained for startup and live reconciliation.
+    pub icon_theme: crate::icons::IconThemeRegistry,
     /// Parsed startup stylesheets. Cascade/render integration is added in later CSS milestones.
     pub stylesheets: StylesheetStore,
     /// Button on_click callbacks keyed by widget id.
@@ -210,6 +219,23 @@ pub struct RunResult {
 const MAX_COMMAND_DRAIN_BATCHES: usize = 16;
 const MAX_COMMANDS_PER_DRAIN_BATCH: usize = 32;
 const COMMAND_DRAIN_BUDGET: Duration = Duration::from_millis(6);
+const COMMAND_FAIRNESS_WARNING_INTERVAL: Duration = Duration::from_secs(1);
+
+fn merge_deferred_visual_targets(
+    text_targets: &mut HashSet<String>,
+    visual_targets: HashSet<String>,
+) {
+    text_targets.extend(visual_targets);
+}
+
+fn can_use_targeted_deferred_rebuild(
+    dirty: Dirty,
+    text_requires_full: bool,
+    visual_requires_full: bool,
+    has_targets: bool,
+) -> bool {
+    matches!(dirty, Dirty::Text) && !text_requires_full && !visual_requires_full && has_targets
+}
 
 fn coalesce_runtime_command_batch(commands: &mut Vec<Command>) {
     if commands.len() < 2 {
@@ -219,6 +245,17 @@ fn coalesce_runtime_command_batch(commands: &mut Vec<Command>) {
     let mut seen_scatter_actor_updates = HashMap::new();
     let mut seen_scatter_scalar_bars = HashMap::new();
     let mut seen_line_plot_updates = HashMap::new();
+    let structurally_replaced_ids: HashSet<String> = commands
+        .iter()
+        .filter_map(|command| match command {
+            Command::ReplaceNode { id, .. } | Command::ReplaceChildren { id, .. } => {
+                Some(id.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    let mut seen_extension_display_lists = HashSet::new();
+    let mut seen_icon_theme = false;
     let mut filtered = Vec::with_capacity(commands.len());
     while let Some(command) = commands.pop() {
         let keep = match &command {
@@ -280,6 +317,15 @@ fn coalesce_runtime_command_batch(commands: &mut Vec<Command>) {
                     seen_scatter_scalar_bars.insert(id.clone(), filtered.len());
                     true
                 }
+            }
+            Command::UpdateExtensionDisplayList { id, .. } => {
+                structurally_replaced_ids.contains(id)
+                    || seen_extension_display_lists.insert(id.clone())
+            }
+            Command::SetIconTheme { .. } => {
+                let keep = !seen_icon_theme;
+                seen_icon_theme = true;
+                keep
             }
             _ => true,
         };
@@ -1520,18 +1566,71 @@ impl FrameRenderTimings {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+fn display_list_text_commands(display_list: Option<&Value>) -> Vec<&Value> {
+    display_list
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|command| command.get("cmd").and_then(Value::as_str) == Some("text"))
+        .collect()
+}
+
+fn extension_display_list_dirty(previous: Option<&Value>, next: &Value) -> Dirty {
+    if display_list_text_commands(previous) == display_list_text_commands(Some(next)) {
+        Dirty::Visual
+    } else {
+        Dirty::Text
+    }
+}
+
+const STAGE_TIMING_SAMPLE_WINDOW: usize = 128;
+
+#[derive(Debug, Clone, Copy)]
 struct StageTimingStats {
     count: u64,
     last_ms: f64,
     total_ms: f64,
+    min_ms: f64,
+    max_ms: f64,
+    samples_ms: [f64; STAGE_TIMING_SAMPLE_WINDOW],
+    sample_count: u16,
+    sample_cursor: u16,
+}
+
+impl Default for StageTimingStats {
+    fn default() -> Self {
+        Self {
+            count: 0,
+            last_ms: 0.0,
+            total_ms: 0.0,
+            min_ms: 0.0,
+            max_ms: 0.0,
+            samples_ms: [0.0; STAGE_TIMING_SAMPLE_WINDOW],
+            sample_count: 0,
+            sample_cursor: 0,
+        }
+    }
 }
 
 impl StageTimingStats {
     fn record(&mut self, ms: f64) {
+        if self.count == 0 {
+            self.min_ms = ms;
+            self.max_ms = ms;
+        } else {
+            self.min_ms = self.min_ms.min(ms);
+            self.max_ms = self.max_ms.max(ms);
+        }
         self.count += 1;
         self.last_ms = ms;
         self.total_ms += ms;
+        let cursor = self.sample_cursor as usize;
+        self.samples_ms[cursor] = ms;
+        self.sample_cursor = ((cursor + 1) % STAGE_TIMING_SAMPLE_WINDOW) as u16;
+        self.sample_count = self
+            .sample_count
+            .saturating_add(1)
+            .min(STAGE_TIMING_SAMPLE_WINDOW as u16);
     }
 
     fn avg_ms(self) -> f64 {
@@ -1542,14 +1641,223 @@ impl StageTimingStats {
         }
     }
 
+    fn percentile_ms(self, percentile: f64) -> f64 {
+        let sample_count = self.sample_count as usize;
+        if sample_count == 0 {
+            return 0.0;
+        }
+        let mut samples = self.samples_ms[..sample_count].to_vec();
+        samples.sort_by(f64::total_cmp);
+        let rank = ((samples.len() - 1) as f64 * percentile.clamp(0.0, 1.0)).round() as usize;
+        samples[rank]
+    }
+
     fn json_value(self) -> Value {
         json!({
             "count": self.count,
             "last_ms": self.last_ms,
             "avg_ms": self.avg_ms(),
             "total_ms": self.total_ms,
+            "min_ms": self.min_ms,
+            "max_ms": self.max_ms,
+            "p50_ms": self.percentile_ms(0.50),
+            "p95_ms": self.percentile_ms(0.95),
+            "p99_ms": self.percentile_ms(0.99),
+            "sample_window": self.sample_count,
         })
     }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct FrameTimingStats {
+    total: StageTimingStats,
+    work: StageTimingStats,
+    prepare: StageTimingStats,
+    acquire: StageTimingStats,
+    encode: StageTimingStats,
+    submit: StageTimingStats,
+    present: StageTimingStats,
+}
+
+impl FrameTimingStats {
+    fn record(&mut self, timings: FrameRenderTimings) {
+        self.total.record(timings.total_ms);
+        self.work.record(timings.work_ms());
+        self.prepare.record(timings.prepare_ms);
+        self.acquire.record(timings.acquire_ms);
+        self.encode.record(timings.encode_ms);
+        self.submit.record(timings.submit_ms);
+        self.present.record(timings.present_ms);
+    }
+
+    fn json_value(self) -> Value {
+        json!({
+            "total": self.total.json_value(),
+            "work": self.work.json_value(),
+            "prepare": self.prepare.json_value(),
+            "acquire": self.acquire.json_value(),
+            "encode": self.encode.json_value(),
+            "submit": self.submit.json_value(),
+            "present": self.present.json_value(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct DirtyRebuildStats {
+    requested: [u64; 5],
+    executed: [u64; 5],
+    deferred_merges: u64,
+}
+
+impl DirtyRebuildStats {
+    fn index(dirty: Dirty) -> usize {
+        match dirty {
+            Dirty::Layout => 0,
+            Dirty::Text => 1,
+            Dirty::Visual => 2,
+            Dirty::GpuData => 3,
+            Dirty::Full => 4,
+        }
+    }
+
+    fn record_request(&mut self, dirty: Dirty) {
+        let index = Self::index(dirty);
+        self.requested[index] = self.requested[index].saturating_add(1);
+    }
+
+    fn record_execution(&mut self, dirty: Dirty) {
+        let index = Self::index(dirty);
+        self.executed[index] = self.executed[index].saturating_add(1);
+    }
+
+    fn counts_json(counts: [u64; 5]) -> Value {
+        json!({
+            "layout": counts[0],
+            "text": counts[1],
+            "visual": counts[2],
+            "gpu_data": counts[3],
+            "full": counts[4],
+        })
+    }
+
+    fn json_value(self) -> Value {
+        json!({
+            "requested": Self::counts_json(self.requested),
+            "executed": Self::counts_json(self.executed),
+            "deferred_merges": self.deferred_merges,
+        })
+    }
+}
+
+const MAX_TARGETED_TEXT_ROOTS_PER_BATCH: usize = 64;
+
+#[derive(Debug, Clone, Copy, Default)]
+struct CommandTextRebuildStats {
+    targeted_requests: u64,
+    global_requests: u64,
+    overlay_requests: u64,
+    attempted_batches: u64,
+    completed_batches: u64,
+    overlay_batches: u64,
+    fallback_batches: u64,
+    rebuilt_roots: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct InteractionTextRebuildStats {
+    attempts: u64,
+    completed: u64,
+    fallbacks: u64,
+    widget_roots: u64,
+    table_roots: u64,
+    overlay_passes: u64,
+}
+
+impl InteractionTextRebuildStats {
+    fn json_value(self) -> Value {
+        json!({
+            "attempts": self.attempts,
+            "completed": self.completed,
+            "fallbacks": self.fallbacks,
+            "widget_roots": self.widget_roots,
+            "table_roots": self.table_roots,
+            "overlay_passes": self.overlay_passes,
+        })
+    }
+}
+
+impl CommandTextRebuildStats {
+    fn json_value(self) -> Value {
+        json!({
+            "targeted_requests": self.targeted_requests,
+            "global_requests": self.global_requests,
+            "overlay_requests": self.overlay_requests,
+            "attempted_batches": self.attempted_batches,
+            "completed_batches": self.completed_batches,
+            "overlay_batches": self.overlay_batches,
+            "fallback_batches": self.fallback_batches,
+            "rebuilt_roots": self.rebuilt_roots,
+            "max_roots_per_batch": MAX_TARGETED_TEXT_ROOTS_PER_BATCH,
+        })
+    }
+}
+
+fn collect_targeted_text_roots(
+    node: &WidgetNode,
+    targets: &HashSet<String>,
+    roots: &mut HashSet<String>,
+    matched: &mut usize,
+    ancestor_selected: bool,
+) {
+    let selected = targets.contains(&node.id);
+    if selected {
+        *matched += 1;
+    }
+    if selected && !ancestor_selected {
+        roots.insert(node.id.clone());
+    }
+    for child in &node.children {
+        collect_targeted_text_roots(
+            child,
+            targets,
+            roots,
+            matched,
+            ancestor_selected || selected,
+        );
+    }
+}
+
+fn normalize_targeted_text_roots(
+    tree: &WidgetNode,
+    targets: &HashSet<String>,
+) -> Option<HashSet<String>> {
+    let mut roots = HashSet::new();
+    let mut matched = 0;
+    collect_targeted_text_roots(tree, targets, &mut roots, &mut matched, false);
+    (matched == targets.len()).then_some(roots)
+}
+
+fn subtree_contains_widget_kind(node: &WidgetNode, kind: WidgetKind) -> bool {
+    node.kind == kind
+        || node
+            .children
+            .iter()
+            .any(|child| subtree_contains_widget_kind(child, kind))
+}
+
+fn targeted_subtrees_contain_widget_kind(
+    tree: &WidgetNode,
+    targets: &HashSet<String>,
+    kind: WidgetKind,
+) -> Option<bool> {
+    for target in targets {
+        let node = find_node(tree, target)?;
+        if subtree_contains_widget_kind(node, kind) {
+            return Some(true);
+        }
+    }
+    Some(false)
 }
 
 fn surface_present_mode_name(mode: wgpu::PresentMode) -> &'static str {
@@ -1682,6 +1990,30 @@ fn collect_widget_kinds(node: &WidgetNode, out: &mut HashMap<String, WidgetKind>
     out.insert(node.id.clone(), node.kind.clone());
     for child in &node.children {
         collect_widget_kinds(child, out);
+    }
+}
+
+fn collect_tooltip_overlay_targets(node: &WidgetNode, out: &mut HashSet<String>) {
+    if node
+        .props
+        .tooltip
+        .as_deref()
+        .is_some_and(|tooltip| !tooltip.trim().is_empty())
+    {
+        out.insert(node.id.clone());
+    }
+    if node.kind == WidgetKind::Tooltip {
+        if let Some(target) = node
+            .props
+            .target
+            .as_deref()
+            .filter(|target| !target.is_empty())
+        {
+            out.insert(target.to_string());
+        }
+    }
+    for child in &node.children {
+        collect_tooltip_overlay_targets(child, out);
     }
 }
 
@@ -1879,16 +2211,22 @@ fn active_scroll_container_at_pos(
     scroll_container_at_pos(root, layout, state, pos)
 }
 
-fn clear_line_plot_hover_except(node: &mut WidgetNode, keep_id: Option<&str>, changed: &mut bool) {
+fn clear_line_plot_hover_except(
+    node: &mut WidgetNode,
+    keep_id: Option<&str>,
+    changed: &mut bool,
+    cleared: &mut Vec<String>,
+) {
     if node.kind == WidgetKind::LinePlot
         && Some(node.id.as_str()) != keep_id
         && node.props.line_plot_hover.is_some()
     {
         node.props.line_plot_hover = None;
+        cleared.push(node.id.clone());
         *changed = true;
     }
     for child in &mut node.children {
-        clear_line_plot_hover_except(child, keep_id, changed);
+        clear_line_plot_hover_except(child, keep_id, changed, cleared);
     }
 }
 
@@ -2445,6 +2783,9 @@ fn font_family_json(font_family: &FontFamily) -> Value {
         FontFamily::Cursive => json!("cursive"),
         FontFamily::Fantasy => json!("fantasy"),
         FontFamily::Name(name) => json!(name),
+        FontFamily::Stack(families) => {
+            Value::Array(families.iter().map(font_family_json).collect())
+        }
     }
 }
 
@@ -2907,6 +3248,28 @@ fn background_paint_json(paint: &BackgroundPaint) -> Option<Value> {
             "bottom_left": color_ref_json(&gradient.bottom_left),
             "bottom_right": color_ref_json(&gradient.bottom_right),
         })),
+        BackgroundPaint::Pattern(pattern) => Some(json!({
+            "type": "pattern",
+            "kind": match pattern.kind {
+                crate::style::BackgroundPatternKind::Checker => "checker",
+                crate::style::BackgroundPatternKind::Pinstripe => "pinstripe",
+                crate::style::BackgroundPatternKind::Dot => "dot",
+                crate::style::BackgroundPatternKind::DiagonalHatch => "diagonal-hatch",
+            },
+            "foreground": color_ref_json(&pattern.foreground),
+            "background": color_ref_json(&pattern.background),
+            "tile_size": pattern.tile_size,
+        })),
+        BackgroundPaint::Image(image) => Some(json!({
+            "type": "image",
+            "resource_id": image.resource_id,
+            "fit": match image.fit {
+                crate::style::BackgroundImageFit::Contain => "contain",
+                crate::style::BackgroundImageFit::Cover => "cover",
+                crate::style::BackgroundImageFit::Stretch => "stretch",
+                crate::style::BackgroundImageFit::Repeat => "repeat",
+            },
+        })),
     }
 }
 
@@ -3288,10 +3651,10 @@ fn style_declaration_provenance_snapshot(style: &NodeStyle) -> Value {
         let overridden = candidates
             .iter()
             .take(candidates.len().saturating_sub(1))
-            .map(style_declaration_candidate_snapshot)
+            .map(|candidate| style_declaration_candidate_snapshot(candidate))
             .collect::<Vec<_>>();
         properties.insert(
-            property.clone(),
+            property.to_string(),
             json!({
                 "winner": style_declaration_candidate_snapshot(winner),
                 "overridden": overridden,
@@ -3367,15 +3730,36 @@ fn computed_styles_snapshot_with_state(
     media: Option<DgMediaEnvironment>,
     state: Option<&WidgetState>,
 ) -> Value {
+    computed_styles_snapshot_with_state_and_containers(root, store, media, state, None)
+}
+
+fn computed_styles_snapshot_with_state_and_containers(
+    root: Option<&WidgetNode>,
+    store: &StylesheetStore,
+    media: Option<DgMediaEnvironment>,
+    state: Option<&WidgetState>,
+    containers: Option<&DgContainerQueryContext>,
+) -> Value {
     let Some(root) = root else {
         return json!({});
     };
+    let mut diagnostic_root = root.clone();
+    let mut diagnostic_store = store.clone();
+    apply_stylesheets_to_tree_for_diagnostics(
+        &mut diagnostic_root,
+        &mut diagnostic_store,
+        media,
+        containers,
+    );
+    let root = &diagnostic_root;
+    let store = &diagnostic_store;
     let matched_rules = matched_rule_labels_for_tree_with_media(root, store, media);
     let matched_rule_details = matched_rule_diagnostics_for_tree_with_media(root, store, media);
     let matched_part_rules = matched_part_rule_labels_for_tree_with_media(root, store, media);
     let mut out = Map::new();
     collect_computed_styles_snapshot(
         root,
+        store.fallback_theme(),
         &matched_rules,
         &matched_rule_details,
         &matched_part_rules,
@@ -3388,6 +3772,7 @@ fn computed_styles_snapshot_with_state(
 
 fn collect_computed_styles_snapshot(
     node: &WidgetNode,
+    fallback_theme: Option<&Theme>,
     matched_rules: &std::collections::BTreeMap<String, Vec<String>>,
     matched_rule_details: &std::collections::BTreeMap<String, Vec<DgMatchedRuleDiagnostic>>,
     matched_part_rules: &std::collections::BTreeMap<
@@ -3399,39 +3784,86 @@ fn collect_computed_styles_snapshot(
     out: &mut Map<String, Value>,
 ) {
     let mut snapshot_style = node.style.clone();
+    materialize_native_fallback_provenance(
+        &mut snapshot_style,
+        node,
+        fallback_context,
+        fallback_theme,
+    );
     refresh_live_pane_fallback_provenance(
         &mut snapshot_style,
         node,
         fallback_context,
         state.and_then(|state| state.pane_size(&node.id)),
     );
-    out.insert(
-        node.id.clone(),
-        json!({
-            "matched_rules": matched_rules.get(&node.id).cloned().unwrap_or_default(),
-            "matched_selectors": matched_rule_details.get(&node.id).into_iter().flatten().map(|rule| {
-                json!({
-                    "selector": rule.selector,
-                    "origin": rule.origin,
-                    "source_index": rule.source_index,
-                    "line": rule.source_line,
-                    "column": rule.source_column,
-                    "source_order": rule.source_order,
-                    "specificity": {
-                        "ids": rule.specificity.ids,
-                        "classes": rule.specificity.classes,
-                        "types": rule.specificity.types,
-                    },
-                })
-            }).collect::<Vec<_>>(),
-            "style": node_style_snapshot(&snapshot_style, matched_part_rules.get(&node.id)),
-            "provenance": style_declaration_provenance_snapshot(&snapshot_style),
-        }),
-    );
+    let mut node_snapshot = json!({
+        "matched_rules": matched_rules.get(&node.id).cloned().unwrap_or_default(),
+        "matched_selectors": matched_rule_details.get(&node.id).into_iter().flatten().map(|rule| {
+            json!({
+                "selector": rule.selector,
+                "origin": rule.origin,
+                "source_index": rule.source_index,
+                "line": rule.source_line,
+                "column": rule.source_column,
+                "source_order": rule.source_order,
+                "specificity": {
+                    "ids": rule.specificity.ids,
+                    "classes": rule.specificity.classes,
+                    "types": rule.specificity.types,
+                },
+            })
+        }).collect::<Vec<_>>(),
+        "style": node_style_snapshot(&snapshot_style, matched_part_rules.get(&node.id)),
+        "provenance": style_declaration_provenance_snapshot(&snapshot_style),
+    });
+    if matches!(node.kind, WidgetKind::IconButton | WidgetKind::NavItem) {
+        if let Some(requested) = node.props.raw_props.get("icon").and_then(Value::as_str) {
+            let custom_resource = node.props.raw_props.get("icon_override_resource");
+            let override_name = node
+                .props
+                .raw_props
+                .get("icon_override_name")
+                .and_then(Value::as_str);
+            let resolution = crate::icons::resolve_builtin_icon(override_name.unwrap_or(requested));
+            let source = if custom_resource.is_some() || override_name.is_some() {
+                "application"
+            } else {
+                "builtin"
+            };
+            let resolved = if custom_resource.is_some() {
+                node.props
+                    .raw_props
+                    .get("icon_override_key")
+                    .and_then(Value::as_str)
+                    .unwrap_or(requested)
+            } else {
+                resolution.resolved
+            };
+            node_snapshot
+                .as_object_mut()
+                .expect("snapshot object")
+                .insert(
+                    "icon".to_string(),
+                    json!({
+                        "requested": requested,
+                        "resolved": resolved,
+                        "recognized": custom_resource.is_some() || resolution.recognized,
+                        "alias": custom_resource.is_none() && resolution.alias,
+                        "fallback": custom_resource.is_none() && !resolution.recognized,
+                        "source": source,
+                        "resource_type": custom_resource
+                            .and_then(|resource| resource.get("type"))
+                            .and_then(Value::as_str),
+                    }),
+                );
+        }
+    }
+    out.insert(node.id.clone(), node_snapshot);
     let child_fallback_context = child_layout_fallback_context(node);
     for child in &node.children {
         collect_computed_styles_snapshot(
             child,
+            fallback_theme,
             matched_rules,
             matched_rule_details,
             matched_part_rules,
@@ -3885,11 +4317,7 @@ fn collect_clip_diagnostic_issues(
     // Report only the first empty clip in a clipped subtree. Descendants inherit
     // the same structural failure and would otherwise turn one bad boundary
     // into dozens of redundant errors.
-    if fully_clipped
-        && !parent_fully_clipped
-        && !inside_scroll_owner
-        && !exempt_empty_clip
-    {
+    if fully_clipped && !parent_fully_clipped && !inside_scroll_owner && !exempt_empty_clip {
         let message = format!(
             "empty-paint-clip: {} {} has rect ({:.1}, {:.1}, {:.1}, {:.1}) but final clip ({:.1}, {:.1}, {:.1}, {:.1}) is empty",
             node.id,
@@ -4013,13 +4441,13 @@ fn collect_dimension_contract_issues(
         // to one physical pixel below their mathematical value without
         // violating the effective size contract.
         const PHYSICAL_PIXEL_QUANTIZATION_TOLERANCE: f32 = 1.0;
-        let violation = if minimum.is_some_and(|minimum| {
-            resolved + PHYSICAL_PIXEL_QUANTIZATION_TOLERANCE < minimum
-        }) {
+        let violation = if minimum
+            .is_some_and(|minimum| resolved + PHYSICAL_PIXEL_QUANTIZATION_TOLERANCE < minimum)
+        {
             Some(("minimum", minimum.unwrap()))
-        } else if maximum.is_some_and(|maximum| {
-            resolved > maximum + PHYSICAL_PIXEL_QUANTIZATION_TOLERANCE
-        }) {
+        } else if maximum
+            .is_some_and(|maximum| resolved > maximum + PHYSICAL_PIXEL_QUANTIZATION_TOLERANCE)
+        {
             Some(("maximum", maximum.unwrap()))
         } else {
             None
@@ -4593,7 +5021,58 @@ fn theme_snapshot(theme: &Theme) -> Value {
         "radius": theme.radius,
         "spacing": theme.spacing,
         "font_size": theme.font_size,
+        "font_family": theme.font_family,
+        "monospace_font_family": theme.monospace_font_family,
+        "base_line_height": theme.base_line_height,
+        "control_height": theme.control_height,
+        "compact_control_height": theme.compact_control_height,
+        "default_border_width": theme.default_border_width,
+        "focus_width": theme.focus_width,
+        "focus_offset": theme.focus_offset,
+        "panel_padding": theme.panel_padding,
+        "toolbar_gap": theme.toolbar_gap,
     })
+}
+
+fn theme_change_dirty(current: &Theme, next: &Theme) -> Option<Dirty> {
+    if current == next {
+        None
+    } else if current.spacing != next.spacing
+        || current.font_size != next.font_size
+        || current.font_family != next.font_family
+        || current.monospace_font_family != next.monospace_font_family
+        || current.base_line_height != next.base_line_height
+        || current.control_height != next.control_height
+        || current.compact_control_height != next.compact_control_height
+        || current.default_border_width != next.default_border_width
+        || current.panel_padding != next.panel_padding
+        || current.toolbar_gap != next.toolbar_gap
+    {
+        Some(Dirty::Layout)
+    } else {
+        Some(Dirty::Visual)
+    }
+}
+
+fn active_stylesheets_snapshot(stylesheets: &StylesheetStore) -> Vec<Value> {
+    stylesheets
+        .active_stylesheets()
+        .into_iter()
+        .map(|sheet| {
+            json!({
+                "origin": match sheet.origin {
+                    StylesheetOrigin::Framework => "framework",
+                    StylesheetOrigin::Theme => "theme",
+                    StylesheetOrigin::User => "user",
+                    StylesheetOrigin::NativeFallback => "native-fallback",
+                    StylesheetOrigin::WidgetDefault => "widget-default",
+                    StylesheetOrigin::Inline => "inline",
+                },
+                "id": sheet.id,
+                "source_order": sheet.source_order,
+            })
+        })
+        .collect()
 }
 
 fn theme_color_scheme(theme: &Theme) -> DgMediaColorScheme {
@@ -4699,6 +5178,20 @@ fn set_widget_text_prop(node: &mut WidgetNode, id: &str, prop: &str, value: Stri
         }
         _ => false,
     }
+}
+
+fn set_widget_icon_prop(node: &mut WidgetNode, id: &str, icon: String) -> bool {
+    let Some(target) = find_widget_mut(node, id) else {
+        return false;
+    };
+    if target.kind != WidgetKind::IconButton || icon.trim().is_empty() {
+        return false;
+    }
+    target
+        .props
+        .raw_props
+        .insert("icon".to_string(), Value::String(icon));
+    true
 }
 
 fn set_widget_loading_spinner_prop(
@@ -5219,9 +5712,661 @@ fn pseudo_style_value_changes_text(key: &str, value: &Value) -> bool {
 #[cfg(test)]
 mod style_patch_tests {
     use super::*;
+
+    #[test]
+    fn client_chrome_ids_map_only_to_window_actions() {
+        assert_eq!(
+            client_chrome_action("main--dg-window-minimize"),
+            Some(ClientChromeAction::Minimize)
+        );
+        assert_eq!(
+            client_chrome_action("main--dg-window-maximize"),
+            Some(ClientChromeAction::Maximize)
+        );
+        assert_eq!(
+            client_chrome_action("main--dg-window-close"),
+            Some(ClientChromeAction::Close)
+        );
+        assert_eq!(client_chrome_action("ordinary-close"), None);
+    }
+
+    #[test]
+    fn client_chrome_keyboard_actions_require_activation_keys() {
+        assert_eq!(
+            client_chrome_keyboard_action("main--dg-window-minimize", &Key::Named(NamedKey::Enter),),
+            Some(ClientChromeAction::Minimize)
+        );
+        assert_eq!(
+            client_chrome_keyboard_action("main--dg-window-close", &Key::Named(NamedKey::Space),),
+            Some(ClientChromeAction::Close)
+        );
+        assert_eq!(
+            client_chrome_keyboard_action("main--dg-window-close", &Key::Named(NamedKey::Escape),),
+            None
+        );
+        assert_eq!(
+            client_chrome_keyboard_action("ordinary-button", &Key::Named(NamedKey::Enter)),
+            None
+        );
+    }
+
+    #[test]
+    fn client_chrome_maximized_state_updates_attribute_glyph_and_tooltip() {
+        let mut tree = crate::document::parse_widget_node(&json!({
+            "id": "window",
+            "type": "window",
+            "css_types": ["Window", "Container", "Widget"],
+            "props": {"window_state": "normal"},
+            "children": [{
+                "id": "window--dg-window-titlebar",
+                "type": "h_layout",
+                "css_types": ["WindowTitlebar", "Container", "Widget"],
+                "children": [{
+                    "id": "window--dg-window-maximize",
+                    "type": "button",
+                    "css_types": ["WindowMaximize", "Widget"],
+                    "props": {"text": "□", "tooltip": "Maximize window"}
+                }]
+            }]
+        }))
+        .unwrap();
+
+        assert!(sync_client_chrome_maximized_state(&mut tree, true));
+        assert_eq!(tree.props.raw_props["window_state"], json!("maximized"));
+        let maximize = find_widget_with_css_type_mut(&mut tree, "WindowMaximize").unwrap();
+        assert_eq!(maximize.props.text.as_deref(), Some("❐"));
+        assert_eq!(maximize.props.tooltip.as_deref(), Some("Restore window"));
+        assert_eq!(
+            maximize.props.raw_props["accessible_name"],
+            json!("Restore window")
+        );
+        assert_eq!(maximize.props.raw_props["text"], json!("❐"));
+        assert_eq!(maximize.props.raw_props["tooltip"], json!("Restore window"));
+
+        assert!(!sync_client_chrome_maximized_state(&mut tree, true));
+        assert!(sync_client_chrome_maximized_state(&mut tree, false));
+        assert_eq!(tree.props.raw_props["window_state"], json!("normal"));
+        let maximize = find_widget_with_css_type_mut(&mut tree, "WindowMaximize").unwrap();
+        assert_eq!(maximize.props.text.as_deref(), Some("□"));
+        assert_eq!(maximize.props.tooltip.as_deref(), Some("Maximize window"));
+        assert_eq!(
+            maximize.props.raw_props["accessible_name"],
+            json!("Maximize window")
+        );
+    }
+
+    #[test]
+    fn client_chrome_controls_are_named_buttons_in_focus_order() {
+        let tree = crate::document::parse_widget_node(&json!({
+            "id": "window",
+            "type": "window",
+            "css_types": ["Window", "Container", "Widget"],
+            "children": [{
+                "id": "window--dg-window-titlebar",
+                "type": "h_layout",
+                "css_types": ["WindowTitlebar", "Container", "Widget"],
+                "children": [
+                    {
+                        "id": "window--dg-window-title",
+                        "type": "label",
+                        "css_types": ["WindowTitle", "Widget"],
+                        "props": {"text": "Client chrome"}
+                    },
+                    {
+                        "id": "window--dg-window-minimize",
+                        "type": "button",
+                        "css_types": ["WindowMinimize", "Widget"],
+                        "props": {
+                            "text": "—",
+                            "accessible_name": "Minimize window",
+                            "accessibility_role": "button"
+                        }
+                    },
+                    {
+                        "id": "window--dg-window-maximize",
+                        "type": "button",
+                        "css_types": ["WindowMaximize", "Widget"],
+                        "props": {
+                            "text": "□",
+                            "accessible_name": "Maximize window",
+                            "accessibility_role": "button"
+                        }
+                    },
+                    {
+                        "id": "window--dg-window-close",
+                        "type": "button",
+                        "css_types": ["WindowClose", "Widget"],
+                        "props": {
+                            "text": "×",
+                            "accessible_name": "Close window",
+                            "accessibility_role": "button"
+                        }
+                    }
+                ]
+            }, {
+                "id": "application-button",
+                "type": "button",
+                "props": {"text": "Continue"}
+            }]
+        }))
+        .unwrap();
+        let state = crate::events::WidgetState::from_tree(&tree);
+        assert_eq!(
+            state.focus_order,
+            vec![
+                "window--dg-window-minimize",
+                "window--dg-window-maximize",
+                "window--dg-window-close",
+                "application-button",
+            ]
+        );
+
+        let titlebar = &tree.children[0];
+        for (control, name) in titlebar.children[1..].iter().zip([
+            "Minimize window",
+            "Maximize window",
+            "Close window",
+        ]) {
+            assert_eq!(control.props.raw_props["accessible_name"], json!(name));
+            assert_eq!(
+                control.props.raw_props["accessibility_role"],
+                json!("button")
+            );
+        }
+    }
+
+    #[test]
+    fn client_decoration_fallback_is_macos_only_and_removes_retained_titlebar() {
+        assert_eq!(
+            client_decoration_fallback_reason(true, "macos"),
+            Some(MACOS_CLIENT_DECORATION_FALLBACK)
+        );
+        assert_eq!(client_decoration_fallback_reason(true, "windows"), None);
+        assert_eq!(client_decoration_fallback_reason(true, "linux"), None);
+        assert_eq!(client_decoration_fallback_reason(false, "macos"), None);
+
+        let mut tree = crate::document::parse_widget_node(&json!({
+            "id": "window",
+            "type": "window",
+            "css_types": ["Window", "Container", "Widget"],
+            "props": {"decorations": "client"},
+            "children": [{
+                "id": "window--dg-window-titlebar",
+                "type": "h_layout",
+                "css_types": ["WindowTitlebar", "Container", "Widget"]
+            }, {
+                "id": "application-content",
+                "type": "label",
+                "props": {"text": "Content"}
+            }]
+        }))
+        .unwrap();
+
+        assert!(apply_native_decoration_fallback(
+            &mut tree,
+            MACOS_CLIENT_DECORATION_FALLBACK
+        ));
+        assert_eq!(tree.children.len(), 1);
+        assert_eq!(tree.children[0].id, "application-content");
+        assert_eq!(tree.props.raw_props["decorations"], json!("native"));
+        assert_eq!(
+            tree.props.raw_props["requested_decorations"],
+            json!("client")
+        );
+        assert_eq!(
+            tree.props.raw_props["decoration_fallback"],
+            json!(MACOS_CLIENT_DECORATION_FALLBACK)
+        );
+    }
+
+    #[test]
+    fn client_system_menu_shortcut_requires_unmodified_alt_space() {
+        let space = Key::Named(NamedKey::Space);
+        assert!(is_client_system_menu_shortcut(true, false, false, &space));
+        assert!(!is_client_system_menu_shortcut(false, false, false, &space));
+        assert!(!is_client_system_menu_shortcut(true, true, false, &space));
+        assert!(!is_client_system_menu_shortcut(true, false, true, &space));
+        assert!(!is_client_system_menu_shortcut(
+            true,
+            false,
+            false,
+            &Key::Named(NamedKey::Enter),
+        ));
+    }
+
+    #[test]
+    fn client_chrome_drag_targets_exclude_control_buttons() {
+        assert!(is_client_chrome_drag_target("main--dg-window-titlebar"));
+        assert!(is_client_chrome_drag_target("main--dg-window-title"));
+        assert!(!is_client_chrome_drag_target("main--dg-window-minimize"));
+        assert!(!is_client_chrome_drag_target("main--dg-window-close"));
+    }
+
+    #[test]
+    fn client_resize_hit_test_classifies_edges_and_corners() {
+        let size = PhysicalSize::new(800, 600);
+        let direction = |x, y| {
+            client_resize_direction(
+                PhysicalPosition::new(x, y),
+                size,
+                1.0,
+                false,
+                CLIENT_RESIZE_BORDER_LP,
+            )
+        };
+        assert_eq!(direction(0.0, 0.0), Some(ResizeDirection::NorthWest));
+        assert_eq!(direction(799.0, 0.0), Some(ResizeDirection::NorthEast));
+        assert_eq!(direction(0.0, 599.0), Some(ResizeDirection::SouthWest));
+        assert_eq!(direction(799.0, 599.0), Some(ResizeDirection::SouthEast));
+        assert_eq!(direction(2.0, 300.0), Some(ResizeDirection::West));
+        assert_eq!(direction(797.0, 300.0), Some(ResizeDirection::East));
+        assert_eq!(direction(400.0, 2.0), Some(ResizeDirection::North));
+        assert_eq!(direction(400.0, 597.0), Some(ResizeDirection::South));
+        assert_eq!(direction(400.0, 300.0), None);
+    }
+
+    #[test]
+    fn client_resize_hit_test_scales_border_and_disables_when_maximized() {
+        let size = PhysicalSize::new(1600, 1200);
+        assert_eq!(
+            client_resize_direction(
+                PhysicalPosition::new(10.0, 600.0),
+                size,
+                2.0,
+                false,
+                CLIENT_RESIZE_BORDER_LP,
+            ),
+            Some(ResizeDirection::West)
+        );
+        assert_eq!(
+            client_resize_direction(
+                PhysicalPosition::new(13.0, 600.0),
+                size,
+                2.0,
+                false,
+                CLIENT_RESIZE_BORDER_LP,
+            ),
+            None
+        );
+        assert_eq!(
+            client_resize_direction(
+                PhysicalPosition::new(1.0, 1.0),
+                size,
+                2.0,
+                true,
+                CLIENT_RESIZE_BORDER_LP,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn client_resize_hit_test_rejects_positions_outside_window() {
+        let size = PhysicalSize::new(800, 600);
+        assert_eq!(
+            client_resize_direction(
+                PhysicalPosition::new(-1.0, 20.0),
+                size,
+                1.0,
+                false,
+                CLIENT_RESIZE_BORDER_LP,
+            ),
+            None
+        );
+        assert_eq!(
+            client_resize_direction(
+                PhysicalPosition::new(801.0, 20.0),
+                size,
+                1.0,
+                false,
+                CLIENT_RESIZE_BORDER_LP,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn client_resize_border_part_controls_and_bounds_hit_width() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "window",
+            "type": "window",
+            "props": {}
+        }))
+        .unwrap();
+        assert_eq!(
+            client_resize_border_lp(Some(&tree)),
+            CLIENT_RESIZE_BORDER_LP
+        );
+
+        tree.style
+            .parts
+            .parts
+            .entry("resize-border".to_string())
+            .or_default()
+            .layout
+            .width = Some(10.0);
+        assert_eq!(client_resize_border_lp(Some(&tree)), 10.0);
+        assert_eq!(
+            client_resize_direction(
+                PhysicalPosition::new(9.0, 300.0),
+                PhysicalSize::new(800, 600),
+                1.0,
+                false,
+                client_resize_border_lp(Some(&tree)),
+            ),
+            Some(ResizeDirection::West)
+        );
+
+        tree.style
+            .parts
+            .parts
+            .get_mut("resize-border")
+            .expect("resize-border part should exist")
+            .layout
+            .width = Some(0.0);
+        assert_eq!(client_resize_border_lp(Some(&tree)), 0.0);
+        assert_eq!(
+            client_resize_direction(
+                PhysicalPosition::new(0.0, 300.0),
+                PhysicalSize::new(800, 600),
+                1.0,
+                false,
+                client_resize_border_lp(Some(&tree)),
+            ),
+            None
+        );
+
+        tree.style
+            .parts
+            .parts
+            .get_mut("resize-border")
+            .expect("resize-border part should exist")
+            .layout
+            .width = Some(100.0);
+        assert_eq!(
+            client_resize_border_lp(Some(&tree)),
+            CLIENT_RESIZE_BORDER_MAX_LP
+        );
+    }
+
+    #[test]
+    fn client_titlebar_double_click_requires_time_and_distance_thresholds() {
+        let now = Instant::now();
+        let position = PhysicalPosition::new(120.0, 18.0);
+        let thresholds = default_client_double_click_thresholds(1.0);
+        assert!(is_client_titlebar_double_click(
+            Some((now - Duration::from_millis(400), position)),
+            now,
+            PhysicalPosition::new(123.0, 20.0),
+            thresholds,
+        ));
+        assert!(!is_client_titlebar_double_click(
+            Some((now - Duration::from_millis(501), position)),
+            now,
+            position,
+            thresholds,
+        ));
+        assert!(!is_client_titlebar_double_click(
+            Some((now - Duration::from_millis(100), position)),
+            now,
+            PhysicalPosition::new(130.0, 18.0),
+            thresholds,
+        ));
+        assert!(!is_client_titlebar_double_click(
+            None, now, position, thresholds,
+        ));
+    }
+
+    #[test]
+    fn client_titlebar_double_click_distance_scales_with_dpi() {
+        let now = Instant::now();
+        let position = PhysicalPosition::new(120.0, 18.0);
+        assert!(is_client_titlebar_double_click(
+            Some((now - Duration::from_millis(100), position)),
+            now,
+            PhysicalPosition::new(127.0, 18.0),
+            default_client_double_click_thresholds(2.0),
+        ));
+    }
+
+    #[test]
+    fn client_titlebar_drag_waits_for_dpi_scaled_pointer_movement() {
+        let start = PhysicalPosition::new(120.0, 18.0);
+        assert!(!should_start_client_titlebar_drag(
+            start,
+            PhysicalPosition::new(121.9, 19.9),
+            1.0,
+        ));
+        assert!(should_start_client_titlebar_drag(
+            start,
+            PhysicalPosition::new(122.0, 18.0),
+            1.0,
+        ));
+        assert!(!should_start_client_titlebar_drag(
+            start,
+            PhysicalPosition::new(123.9, 21.9),
+            2.0,
+        ));
+        assert!(should_start_client_titlebar_drag(
+            start,
+            PhysicalPosition::new(120.0, 22.0),
+            2.0,
+        ));
+    }
+
+    #[test]
+    fn client_titlebar_double_click_honors_rectangular_platform_thresholds() {
+        let now = Instant::now();
+        let position = PhysicalPosition::new(120.0, 18.0);
+        let thresholds = ClientDoubleClickThresholds {
+            interval: Duration::from_millis(750),
+            max_delta_x: 3.0,
+            max_delta_y: 6.0,
+        };
+        assert!(is_client_titlebar_double_click(
+            Some((now - Duration::from_millis(700), position)),
+            now,
+            PhysicalPosition::new(123.0, 24.0),
+            thresholds,
+        ));
+        assert!(!is_client_titlebar_double_click(
+            Some((now - Duration::from_millis(700), position)),
+            now,
+            PhysicalPosition::new(124.0, 24.0),
+            thresholds,
+        ));
+        assert!(!is_client_titlebar_double_click(
+            Some((now - Duration::from_millis(751), position)),
+            now,
+            position,
+            thresholds,
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_client_double_click_thresholds_are_positive_and_bounded() {
+        let thresholds = client_double_click_thresholds(1.0);
+        assert!(thresholds.interval >= Duration::from_millis(CLIENT_TITLEBAR_DOUBLE_CLICK_MIN_MS));
+        assert!(thresholds.interval <= Duration::from_millis(CLIENT_TITLEBAR_DOUBLE_CLICK_MAX_MS));
+        assert!(
+            (1.0..=CLIENT_TITLEBAR_DOUBLE_CLICK_MAX_DISTANCE_PX).contains(&thresholds.max_delta_x)
+        );
+        assert!(
+            (1.0..=CLIENT_TITLEBAR_DOUBLE_CLICK_MAX_DISTANCE_PX).contains(&thresholds.max_delta_y)
+        );
+    }
+
+    #[test]
+    fn font_family_stack_debug_json_preserves_declaration_order() {
+        let family = FontFamily::Stack(vec![
+            FontFamily::Name("Chicago".to_string()),
+            FontFamily::Name("Geneva".to_string()),
+            FontFamily::SansSerif,
+        ]);
+        assert_eq!(
+            font_family_json(&family),
+            json!(["Chicago", "Geneva", "sans_serif"])
+        );
+    }
+
+    #[test]
+    fn theme_change_dirty_distinguishes_visual_layout_and_unchanged_tokens() {
+        let current = Theme::dark();
+        assert_eq!(theme_change_dirty(&current, &current), None);
+
+        let mut visual = current.clone();
+        visual.accent = [0.2, 0.4, 0.8, 1.0];
+        visual.radius += 2.0;
+        assert_eq!(theme_change_dirty(&current, &visual), Some(Dirty::Visual));
+
+        let mut layout = current.clone();
+        layout.spacing += 1.0;
+        assert_eq!(theme_change_dirty(&current, &layout), Some(Dirty::Layout));
+        layout = current.clone();
+        layout.font_size += 1.0;
+        assert_eq!(theme_change_dirty(&current, &layout), Some(Dirty::Layout));
+        layout = current.clone();
+        layout.control_height += 2.0;
+        assert_eq!(theme_change_dirty(&current, &layout), Some(Dirty::Layout));
+        layout = current.clone();
+        layout.font_family = "serif".to_string();
+        assert_eq!(theme_change_dirty(&current, &layout), Some(Dirty::Layout));
+
+        visual = current.clone();
+        visual.focus_offset += 1.0;
+        assert_eq!(theme_change_dirty(&current, &visual), Some(Dirty::Visual));
+    }
+
+    #[test]
+    fn active_stylesheet_snapshot_reports_names_and_stable_source_order() {
+        let mut stylesheets = StylesheetStore::default();
+        stylesheets.install_framework_defaults(&Theme::dark());
+        stylesheets
+            .set_named_stylesheet(
+                StylesheetOrigin::User,
+                "appearance",
+                "Button { color: red; }",
+            )
+            .unwrap();
+        stylesheets
+            .set_named_stylesheet(
+                StylesheetOrigin::User,
+                "application",
+                "Label { color: white; }",
+            )
+            .unwrap();
+        stylesheets
+            .set_named_stylesheet(
+                StylesheetOrigin::User,
+                "appearance",
+                "Button { color: blue; }",
+            )
+            .unwrap();
+
+        let active = active_stylesheets_snapshot(&stylesheets);
+        assert_eq!(active[1]["id"], "appearance");
+        assert_eq!(active[1]["source_order"], 0);
+        assert_eq!(active[2]["id"], "application");
+        assert_eq!(active[2]["source_order"], 1);
+    }
+
+    #[test]
+    fn theme_restyle_and_layout_preserve_interaction_state() {
+        let mut tree = crate::document::parse_widget_node(&json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "field",
+                "type": "text_input",
+                "props": {"value": "selected text"}
+            }, {
+                "id": "pages",
+                "type": "pages",
+                "children": [{
+                    "id": "page-a",
+                    "type": "page",
+                    "props": {"value": "a"}
+                }]
+            }, {
+                "id": "scroll",
+                "type": "scroll_area"
+            }]
+        }))
+        .unwrap();
+        let mut state = WidgetState::default();
+        state.focused = Some("field".to_string());
+        state
+            .text_selection
+            .insert("field".to_string(), (1usize, 8usize));
+        state
+            .active_pages
+            .insert("pages".to_string(), "a".to_string());
+        state.container_scroll_y.insert("scroll".to_string(), 47.0);
+        state.container_scroll_x.insert("scroll".to_string(), 9.0);
+
+        let mut theme = Theme::dark();
+        theme.spacing = 9.0;
+        theme.font_size = 15.0;
+        let mut stylesheets = StylesheetStore::default();
+        stylesheets.install_framework_defaults(&theme);
+        apply_stylesheets_to_tree(&mut tree, &mut stylesheets);
+        let _ = crate::layout::compute_layout(&tree, 640.0, 480.0, 1.0, &theme, Some(&state));
+
+        assert_eq!(state.focused.as_deref(), Some("field"));
+        assert_eq!(state.text_selection.get("field"), Some(&(1, 8)));
+        assert_eq!(
+            state.active_pages.get("pages").map(String::as_str),
+            Some("a")
+        );
+        assert_eq!(state.container_scroll_y.get("scroll"), Some(&47.0));
+        assert_eq!(state.container_scroll_x.get("scroll"), Some(&9.0));
+    }
     use crate::css_style::apply_stylesheets_to_tree;
     use crate::style::TransformStyle;
     use serde_json::json;
+
+    #[test]
+    fn startup_barrier_defers_only_python_task_expansion() {
+        let drain = Command::DrainPythonTasks;
+        let startup_resource = Command::SetProp {
+            id: "table".to_string(),
+            prop: "value".to_string(),
+            value: crate::commands::CommandValue::Float(1.0),
+        };
+
+        for readiness in [
+            StartupReadiness::Initializing,
+            StartupReadiness::LoadingPresented,
+            StartupReadiness::ApplicationFrameRequested,
+        ] {
+            assert!(should_defer_startup_command(readiness, &drain));
+            assert!(!should_defer_startup_command(readiness, &startup_resource));
+        }
+        assert!(!should_defer_startup_command(
+            StartupReadiness::ApplicationFramePresented,
+            &drain
+        ));
+    }
+
+    #[test]
+    fn startup_readiness_labels_distinguish_loading_from_application_frames() {
+        assert_eq!(StartupReadiness::Initializing.label(), "initializing");
+        assert_eq!(
+            StartupReadiness::LoadingPresented.label(),
+            "loading_presented"
+        );
+        assert_eq!(
+            StartupReadiness::ApplicationFrameRequested.label(),
+            "application_frame_requested"
+        );
+        assert_eq!(
+            StartupReadiness::ApplicationFramePresented.label(),
+            "application_frame_presented"
+        );
+        assert!(StartupReadiness::ApplicationFramePresented.application_frame_presented());
+        assert!(!StartupReadiness::LoadingPresented.application_frame_presented());
+    }
 
     #[test]
     fn layout_snapshot_has_versioned_nested_geometry_maps() {
@@ -5501,8 +6646,7 @@ mod style_patch_tests {
             .expect("diagnostic issues");
         assert!(
             issues.iter().all(|issue| {
-                issue["code"] != "empty-paint-clip"
-                    && issue["code"] != "fully-clipped-interactive"
+                issue["code"] != "empty-paint-clip" && issue["code"] != "fully-clipped-interactive"
             }),
             "{issues:?}"
         );
@@ -6096,6 +7240,85 @@ mod style_patch_tests {
     }
 
     #[test]
+    fn command_batch_keeps_latest_extension_display_list() {
+        let mut commands = vec![
+            Command::UpdateExtensionDisplayList {
+                id: "scope".to_string(),
+                display_list_json: r#"[{"cmd":"line","x1":1}]"#.to_string(),
+            },
+            Command::SetProp {
+                id: "status".to_string(),
+                prop: "text".to_string(),
+                value: CommandValue::Text("updated".to_string()),
+            },
+            Command::UpdateExtensionDisplayList {
+                id: "scope".to_string(),
+                display_list_json: r#"[{"cmd":"line","x1":2}]"#.to_string(),
+            },
+        ];
+
+        coalesce_runtime_command_batch(&mut commands);
+
+        assert_eq!(commands.len(), 2);
+        assert!(matches!(&commands[0], Command::SetProp { id, .. } if id == "status"));
+        assert!(matches!(
+            &commands[1],
+            Command::UpdateExtensionDisplayList {
+                id,
+                display_list_json
+            } if id == "scope" && display_list_json.contains("\"x1\":2")
+        ));
+    }
+
+    #[test]
+    fn command_batch_keeps_only_latest_icon_theme() {
+        let mut commands = vec![
+            Command::SetIconTheme {
+                theme: json!({"search": "help"}),
+            },
+            Command::SetProp {
+                id: "action".to_string(),
+                prop: "icon".to_string(),
+                value: CommandValue::Text("search".to_string()),
+            },
+            Command::SetIconTheme {
+                theme: json!({"search": "warning"}),
+            },
+        ];
+
+        coalesce_runtime_command_batch(&mut commands);
+
+        assert_eq!(commands.len(), 2);
+        assert!(matches!(&commands[0], Command::SetProp { id, .. } if id == "action"));
+        assert!(matches!(
+            &commands[1],
+            Command::SetIconTheme { theme } if theme["search"] == "warning"
+        ));
+    }
+
+    #[test]
+    fn command_batch_does_not_coalesce_display_lists_across_structural_replacement() {
+        let mut commands = vec![
+            Command::UpdateExtensionDisplayList {
+                id: "scope".to_string(),
+                display_list_json: "[]".to_string(),
+            },
+            Command::ReplaceNode {
+                id: "scope".to_string(),
+                node_json: r#"{"id":"scope","type":"extension","props":{"extension_type":"paint","display_list":[]}}"#.to_string(),
+            },
+            Command::UpdateExtensionDisplayList {
+                id: "scope".to_string(),
+                display_list_json: r#"[{"cmd":"circle"}]"#.to_string(),
+            },
+        ];
+
+        coalesce_runtime_command_batch(&mut commands);
+
+        assert_eq!(commands.len(), 3);
+    }
+
+    #[test]
     fn scatter_scalar_bar_props_survive_chrome_sync() {
         let mut root = document::parse_widget_node(&serde_json::json!({
             "id": "root",
@@ -6331,6 +7554,349 @@ mod style_patch_tests {
     }
 
     #[test]
+    fn stage_timing_stats_report_recent_percentiles_and_all_time_bounds() {
+        let mut stats = StageTimingStats::default();
+        for value in [1.0, 2.0, 3.0, 4.0, 5.0] {
+            stats.record(value);
+        }
+
+        let snapshot = stats.json_value();
+        assert_eq!(snapshot["count"], 5);
+        assert_eq!(snapshot["min_ms"], 1.0);
+        assert_eq!(snapshot["max_ms"], 5.0);
+        assert_eq!(snapshot["p50_ms"], 3.0);
+        assert_eq!(snapshot["p95_ms"], 5.0);
+        assert_eq!(snapshot["p99_ms"], 5.0);
+        assert_eq!(snapshot["sample_window"], 5);
+    }
+
+    #[test]
+    fn synthetic_input_targets_are_trimmed_and_snapshot_safe() {
+        assert!(SyntheticInputProfile::from_targets(" , ").is_none());
+        let mut profile =
+            SyntheticInputProfile::from_targets(" first,second ,, third ").expect("targets");
+        profile.next_target = 2;
+        profile.resolved = 2;
+        profile.dispatch_timing.record(0.25);
+        profile.widget_hit_timing.record(0.1);
+        profile.rebuild_timing.record(0.12);
+        profile.presentation_latency.record(4.0);
+
+        let snapshot = profile.json_value();
+        assert_eq!(snapshot["kind"], "hover");
+        assert_eq!(snapshot["targets"], json!(["first", "second", "third"]));
+        assert_eq!(snapshot["dispatched"], 2);
+        assert_eq!(snapshot["resolved"], 2);
+        assert_eq!(snapshot["dispatch_timing"]["count"], 1);
+        assert_eq!(snapshot["dispatch_stages"]["widget_hit"]["count"], 1);
+        assert_eq!(snapshot["dispatch_stages"]["rebuild"]["count"], 1);
+        assert_eq!(snapshot["presentation_latency"]["count"], 1);
+    }
+
+    #[test]
+    fn hover_overlay_dependency_distinguishes_plain_simple_and_rich_tooltips() {
+        let tree = crate::document::parse_widget_node(&json!({
+            "id": "root",
+            "type": "v_layout",
+            "children": [
+                {"id": "plain", "type": "button", "text": "Plain"},
+                {
+                    "id": "blank",
+                    "type": "button",
+                    "text": "Blank",
+                    "props": {"tooltip": "  "}
+                },
+                {
+                    "id": "simple",
+                    "type": "button",
+                    "text": "Simple",
+                    "props": {"tooltip": "Details"}
+                },
+                {"id": "rich-target", "type": "button", "text": "Rich"},
+                {
+                    "id": "rich-tooltip",
+                    "type": "tooltip",
+                    "props": {"target": "rich-target"},
+                    "children": [{"id": "rich-copy", "type": "label", "text": "Details"}]
+                }
+            ]
+        }))
+        .expect("tooltip dependency tree");
+
+        let mut targets = HashSet::new();
+        collect_tooltip_overlay_targets(&tree, &mut targets);
+
+        assert!(!targets.contains("plain"));
+        assert!(!targets.contains("blank"));
+        assert!(targets.contains("simple"));
+        assert!(targets.contains("rich-target"));
+        assert!(!targets.contains("missing"));
+    }
+
+    #[test]
+    fn dirty_rebuild_stats_separate_requests_from_executions() {
+        let mut stats = DirtyRebuildStats::default();
+        stats.record_request(Dirty::Visual);
+        stats.record_request(Dirty::Text);
+        stats.record_execution(Dirty::Text);
+        stats.deferred_merges = 1;
+
+        let snapshot = stats.json_value();
+        assert_eq!(snapshot["requested"]["visual"], 1);
+        assert_eq!(snapshot["requested"]["text"], 1);
+        assert_eq!(snapshot["executed"]["visual"], 0);
+        assert_eq!(snapshot["executed"]["text"], 1);
+        assert_eq!(snapshot["deferred_merges"], 1);
+    }
+
+    #[test]
+    fn targeted_text_roots_drop_descendants_of_selected_ancestors() {
+        let tree = crate::document::parse_widget_node(&json!({
+            "id": "root",
+            "type": "v_layout",
+            "children": [
+                {
+                    "id": "panel",
+                    "type": "v_layout",
+                    "children": [
+                        {"id": "label", "type": "label", "text": "one"}
+                    ]
+                },
+                {"id": "peer", "type": "label", "text": "two"}
+            ]
+        }))
+        .unwrap();
+        let targets = HashSet::from(["panel".to_string(), "label".to_string(), "peer".to_string()]);
+
+        let roots = normalize_targeted_text_roots(&tree, &targets).unwrap();
+
+        assert_eq!(
+            roots,
+            HashSet::from(["panel".to_string(), "peer".to_string()])
+        );
+    }
+
+    #[test]
+    fn targeted_text_roots_reject_stale_widget_ids() {
+        let tree = crate::document::parse_widget_node(&json!({
+            "id": "root",
+            "type": "v_layout",
+            "children": [{"id": "label", "type": "label", "text": "one"}]
+        }))
+        .unwrap();
+        let targets = HashSet::from(["label".to_string(), "removed".to_string()]);
+
+        assert!(normalize_targeted_text_roots(&tree, &targets).is_none());
+    }
+
+    #[test]
+    fn targeted_subtree_kind_checks_direct_ancestor_unrelated_and_stale_targets() {
+        let tree = crate::document::parse_widget_node(&json!({
+            "id": "root",
+            "type": "v_layout",
+            "children": [
+                {"id": "label", "type": "label", "text": "one"},
+                {
+                    "id": "plot-panel",
+                    "type": "panel",
+                    "children": [{"id": "plot", "type": "line_plot"}]
+                }
+            ]
+        }))
+        .unwrap();
+
+        assert_eq!(
+            targeted_subtrees_contain_widget_kind(
+                &tree,
+                &HashSet::from(["label".to_string()]),
+                WidgetKind::LinePlot,
+            ),
+            Some(false)
+        );
+        for target in ["plot", "plot-panel"] {
+            assert_eq!(
+                targeted_subtrees_contain_widget_kind(
+                    &tree,
+                    &HashSet::from([target.to_string()]),
+                    WidgetKind::LinePlot,
+                ),
+                Some(true)
+            );
+        }
+        assert_eq!(
+            targeted_subtrees_contain_widget_kind(
+                &tree,
+                &HashSet::from(["removed".to_string()]),
+                WidgetKind::LinePlot,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn mixed_text_and_visual_batches_retain_line_plot_targets() {
+        let mut targets = HashSet::from(["status-label".to_string()]);
+        merge_deferred_visual_targets(&mut targets, HashSet::from(["channel-trace".to_string()]));
+
+        assert_eq!(
+            targets,
+            HashSet::from(["status-label".to_string(), "channel-trace".to_string()])
+        );
+        assert!(can_use_targeted_deferred_rebuild(
+            Dirty::Text,
+            false,
+            false,
+            !targets.is_empty()
+        ));
+    }
+
+    #[test]
+    fn untargeted_visual_work_forces_a_full_mixed_batch_rebuild() {
+        assert!(!can_use_targeted_deferred_rebuild(
+            Dirty::Text,
+            false,
+            true,
+            true
+        ));
+        assert!(!can_use_targeted_deferred_rebuild(
+            Dirty::Visual,
+            false,
+            false,
+            true
+        ));
+    }
+
+    #[test]
+    fn command_text_rebuild_stats_expose_batch_safety_limit() {
+        let stats = CommandTextRebuildStats {
+            targeted_requests: 4,
+            global_requests: 1,
+            overlay_requests: 2,
+            attempted_batches: 2,
+            completed_batches: 1,
+            overlay_batches: 1,
+            fallback_batches: 1,
+            rebuilt_roots: 3,
+        };
+
+        let snapshot = stats.json_value();
+
+        assert_eq!(snapshot["targeted_requests"], 4);
+        assert_eq!(snapshot["global_requests"], 1);
+        assert_eq!(snapshot["overlay_requests"], 2);
+        assert_eq!(snapshot["attempted_batches"], 2);
+        assert_eq!(snapshot["completed_batches"], 1);
+        assert_eq!(snapshot["overlay_batches"], 1);
+        assert_eq!(snapshot["fallback_batches"], 1);
+        assert_eq!(snapshot["rebuilt_roots"], 3);
+        assert_eq!(
+            snapshot["max_roots_per_batch"],
+            MAX_TARGETED_TEXT_ROOTS_PER_BATCH
+        );
+    }
+
+    #[test]
+    fn interaction_text_rebuild_stats_report_target_classes() {
+        let stats = InteractionTextRebuildStats {
+            attempts: 5,
+            completed: 4,
+            fallbacks: 1,
+            widget_roots: 7,
+            table_roots: 2,
+            overlay_passes: 3,
+        };
+
+        let snapshot = stats.json_value();
+
+        assert_eq!(snapshot["attempts"], 5);
+        assert_eq!(snapshot["completed"], 4);
+        assert_eq!(snapshot["fallbacks"], 1);
+        assert_eq!(snapshot["widget_roots"], 7);
+        assert_eq!(snapshot["table_roots"], 2);
+        assert_eq!(snapshot["overlay_passes"], 3);
+    }
+
+    #[test]
+    fn transition_text_invalidation_tracks_only_text_affecting_properties() {
+        assert!(transition_properties_affect_text(None));
+        assert!(!transition_properties_affect_text(Some(&[
+            TransitionProperty::Background,
+            TransitionProperty::BorderColor,
+            TransitionProperty::OutlineOffset,
+        ])));
+        assert!(transition_properties_affect_text(Some(&[
+            TransitionProperty::Background,
+            TransitionProperty::Color,
+        ])));
+        assert!(transition_properties_affect_text(Some(&[
+            TransitionProperty::Opacity,
+        ])));
+        assert!(transition_properties_affect_text(Some(&[
+            TransitionProperty::Transform,
+        ])));
+    }
+
+    #[test]
+    fn animation_text_invalidation_ignores_paint_only_visual_changes() {
+        let background = VisualStyle {
+            background: Some(ColorRef::Rgba([0.2, 0.3, 0.4, 1.0])),
+            ..VisualStyle::default()
+        };
+        assert!(!animation_visual_change_affects_text(
+            None,
+            Some(&background)
+        ));
+
+        let opacity = VisualStyle {
+            opacity: Some(0.5),
+            ..VisualStyle::default()
+        };
+        assert!(animation_visual_change_affects_text(None, Some(&opacity)));
+
+        let foreground = VisualStyle {
+            foreground: Some(ColorRef::Rgba([0.8, 0.7, 0.6, 1.0])),
+            ..VisualStyle::default()
+        };
+        assert!(animation_visual_change_affects_text(
+            Some(&background),
+            Some(&foreground)
+        ));
+    }
+
+    #[test]
+    fn display_list_invalidation_ignores_unchanged_text_commands() {
+        let previous = json!([
+            {"cmd": "text", "x": 4, "y": 6, "text": "STATIC"},
+            {"cmd": "line", "x1": 0, "y1": 1, "x2": 2, "y2": 3}
+        ]);
+        let shape_only_change = json!([
+            {"cmd": "text", "x": 4, "y": 6, "text": "STATIC"},
+            {"cmd": "line", "x1": 0, "y1": 4, "x2": 2, "y2": 5}
+        ]);
+        let text_change = json!([
+            {"cmd": "text", "x": 4, "y": 6, "text": "UPDATED"},
+            {"cmd": "line", "x1": 0, "y1": 4, "x2": 2, "y2": 5}
+        ]);
+
+        assert_eq!(
+            extension_display_list_dirty(Some(&previous), &shape_only_change),
+            Dirty::Visual
+        );
+        assert_eq!(
+            extension_display_list_dirty(Some(&previous), &text_change),
+            Dirty::Text
+        );
+        assert_eq!(
+            extension_display_list_dirty(None, &shape_only_change),
+            Dirty::Text
+        );
+        assert_eq!(
+            extension_display_list_dirty(None, &json!([])),
+            Dirty::Visual
+        );
+    }
+
+    #[test]
     fn runtime_command_record_serializes_debug_fields() {
         let record = RuntimeCommandRecord {
             seq: 7,
@@ -6358,6 +7924,46 @@ mod style_patch_tests {
     }
 
     #[test]
+    fn gradient_debug_snapshot_preserves_length_percentage_stop_components() {
+        let paint = BackgroundPaint::LinearGradient(crate::style::LinearGradient {
+            angle_deg: 90.0,
+            repeating: true,
+            stops: vec![crate::style::GradientStop {
+                color: ColorRef::Token("accent".to_string()),
+                position: Some(crate::style::CalcLength {
+                    percent: 12.5,
+                    px: 3.0,
+                }),
+            }],
+        });
+
+        let snapshot = background_paint_json(&paint).expect("gradient snapshot");
+        assert_eq!(snapshot["stops"][0]["position"]["percent"], 12.5);
+        assert_eq!(snapshot["stops"][0]["position"]["px"], 3.0);
+    }
+
+    #[test]
+    fn background_pattern_debug_snapshot_exposes_bounded_contract() {
+        let paint = BackgroundPaint::Pattern(crate::style::BackgroundPattern {
+            kind: crate::style::BackgroundPatternKind::Dot,
+            foreground: ColorRef::Token("accent".to_string()),
+            background: ColorRef::Rgba([0.1, 0.2, 0.3, 0.4]),
+            tile_size: 10.0,
+        });
+
+        let snapshot = background_paint_json(&paint).expect("pattern snapshot");
+        assert_eq!(snapshot["type"], "pattern");
+        assert_eq!(snapshot["kind"], "dot");
+        assert_eq!(snapshot["foreground"], json!({"token": "accent"}));
+        let rgba = snapshot["background"]["rgba"]
+            .as_array()
+            .expect("rgba background");
+        assert_eq!(rgba.len(), 4);
+        assert!((rgba[3].as_f64().expect("alpha") - 0.4).abs() < 0.0001);
+        assert_eq!(snapshot["tile_size"], 10.0);
+    }
+
+    #[test]
     fn computed_style_snapshot_omits_empty_part_styles() {
         let tree = crate::document::parse_widget_node(&json!({
             "id": "root",
@@ -6376,6 +7982,94 @@ mod style_patch_tests {
 
         assert!(button_style["layout"].is_object());
         assert!(button_style.get("parts").is_none());
+    }
+
+    #[test]
+    fn computed_style_snapshot_exposes_resolved_icon_identity() {
+        let tree = crate::document::parse_widget_node(&json!({
+            "id": "root",
+            "type": "window",
+            "children": [
+                {
+                    "id": "open",
+                    "type": "icon_button",
+                    "props": {"icon": "folder-open"}
+                },
+                {
+                    "id": "custom",
+                    "type": "icon_button",
+                    "props": {"icon": "product-command"}
+                }
+            ]
+        }))
+        .unwrap();
+        let store = StylesheetStore::default();
+
+        let snapshot = computed_styles_snapshot(Some(&tree), &store, None);
+        assert_eq!(
+            snapshot["open"]["icon"],
+            json!({
+                "requested": "folder-open",
+                "resolved": "folder",
+                "recognized": true,
+                "alias": true,
+                "fallback": false,
+                "source": "builtin",
+                "resource_type": null,
+            })
+        );
+        assert_eq!(
+            snapshot["custom"]["icon"],
+            json!({
+                "requested": "product-command",
+                "resolved": "more",
+                "recognized": false,
+                "alias": false,
+                "fallback": true,
+                "source": "builtin",
+                "resource_type": null,
+            })
+        );
+    }
+
+    #[test]
+    fn computed_style_snapshot_exposes_application_icon_resource() {
+        let mut tree = crate::document::parse_widget_node(&json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "search",
+                "type": "icon_button",
+                "props": {"icon": "search"}
+            }]
+        }))
+        .unwrap();
+        crate::icons::apply_icon_theme_to_tree(
+            &mut tree,
+            Some(&json!({
+                "search": {
+                    "type": "stroke",
+                    "view_box": [0, 0, 24, 24],
+                    "stroke_width": 2,
+                    "strokes": [{"points": [[4, 12], [20, 12]]}]
+                }
+            })),
+        )
+        .unwrap();
+
+        let snapshot = computed_styles_snapshot(Some(&tree), &StylesheetStore::default(), None);
+        assert_eq!(
+            snapshot["search"]["icon"],
+            json!({
+                "requested": "search",
+                "resolved": "search",
+                "recognized": true,
+                "alias": false,
+                "fallback": false,
+                "source": "application",
+                "resource_type": "stroke",
+            })
+        );
     }
 
     #[test]
@@ -7732,6 +9426,31 @@ mod style_patch_tests {
     }
 
     #[test]
+    fn set_widget_icon_prop_updates_semantic_identity_without_layout_metadata() {
+        let mut root = crate::document::parse_widget_node(&json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "action",
+                "type": "icon_button",
+                "props": {"icon": "search", "width": 28, "height": 28}
+            }]
+        }))
+        .unwrap();
+
+        assert!(set_widget_icon_prop(
+            &mut root,
+            "action",
+            "folder-open".to_string()
+        ));
+        let action = find_widget(&root, "action").unwrap();
+        assert_eq!(action.props.raw_props["icon"], "folder-open");
+        assert_eq!(action.props.raw_props["width"], 28);
+        assert_eq!(action.props.raw_props["height"], 28);
+        assert!(!set_widget_icon_prop(&mut root, "action", " ".to_string()));
+    }
+
+    #[test]
     fn set_widget_checked_prop_updates_retained_checkbox_state() {
         let mut root = document::parse_widget_node(&json!({
             "id": "window",
@@ -7892,9 +9611,11 @@ struct WgpuState {
     _depth_texture: wgpu::Texture,
     depth_view: wgpu::TextureView,
     theme: Theme,
+    icon_theme: crate::icons::IconThemeRegistry,
     stylesheets: StylesheetStore,
     styles_dirty: bool,
     last_style_media: Option<DgMediaEnvironment>,
+    last_style_containers: Option<DgContainerQueryContext>,
     scale_factor: f32,
     platform_color_scheme: Option<DgMediaColorScheme>,
     /// Per-widget scatter state keyed by widget id.
@@ -7912,6 +9633,7 @@ struct WgpuState {
     html_reports: HtmlReportWebViewManager,
     widget_tree: Option<WidgetNode>,
     widget_kinds: HashMap<String, WidgetKind>,
+    tooltip_overlay_targets: HashSet<String>,
     caret_positions: HashMap<String, [f32; 2]>,
     resources: ResourceRegistry,
     toasts: Vec<RuntimeToast>,
@@ -7937,7 +9659,16 @@ struct WgpuState {
     expanded_state_snapshot: HashSet<String>,
     defer_rebuilds: bool,
     deferred_dirty: Option<Dirty>,
+    deferred_text_targets: HashSet<String>,
+    deferred_visual_targets: HashSet<String>,
+    deferred_table_text_targets: HashSet<String>,
+    deferred_text_requires_full: bool,
+    deferred_visual_requires_full: bool,
+    deferred_overlay_text: bool,
     deferred_scatter_style_sync: bool,
+    dirty_rebuild_stats: DirtyRebuildStats,
+    command_text_rebuild_stats: CommandTextRebuildStats,
+    interaction_text_rebuild_stats: InteractionTextRebuildStats,
     apply_layout_timing: StageTimingStats,
     style_reapply_timing: StageTimingStats,
     transition_sync_timing: StageTimingStats,
@@ -7949,6 +9680,11 @@ struct WgpuState {
     primitive_rebuild_timing: StageTimingStats,
     line_plot_rebuild_timing: StageTimingStats,
     rebuild_text_timing: StageTimingStats,
+    partial_text_rebuild_timing: StageTimingStats,
+    partial_text_rebuild_attempts: u64,
+    partial_text_rebuild_fallbacks: u64,
+    partial_text_entries_removed: u64,
+    partial_text_entries_inserted: u64,
     rebuild_primitives_timing: StageTimingStats,
     rebuild_visuals_timing: StageTimingStats,
     replace_node_parse_timing: StageTimingStats,
@@ -7975,6 +9711,7 @@ struct WgpuState {
     last_primitive_overlay_encode_ms: f64,
     last_line_plot_encode_ms: f64,
     animation_epoch: Instant,
+    css_animations_active: bool,
     loading_screen: LoadingScreenRuntime,
 }
 
@@ -8458,6 +10195,21 @@ fn transition_config(
     ))
 }
 
+fn transition_properties_affect_text(properties: Option<&[TransitionProperty]>) -> bool {
+    properties.is_none_or(|properties| {
+        properties.iter().any(|property| {
+            matches!(
+                property,
+                TransitionProperty::All
+                    | TransitionProperty::Foreground
+                    | TransitionProperty::Opacity
+                    | TransitionProperty::Color
+                    | TransitionProperty::Transform
+            )
+        })
+    })
+}
+
 fn ease_transition(t: f32, timing: TransitionTimingFunction) -> f32 {
     let t = t.clamp(0.0, 1.0);
     match timing {
@@ -8695,6 +10447,23 @@ fn collect_animation_visuals(
     for child in &node.children {
         collect_animation_visuals(child, keyframes, elapsed, theme, out, active);
     }
+}
+
+#[derive(Default)]
+struct CssAnimationTick {
+    visual_dirty_ids: HashSet<String>,
+    text_dirty_ids: HashSet<String>,
+}
+
+fn animation_visual_change_affects_text(
+    previous: Option<&VisualStyle>,
+    current: Option<&VisualStyle>,
+) -> bool {
+    previous.and_then(|visual| visual.foreground.as_ref())
+        != current.and_then(|visual| visual.foreground.as_ref())
+        || previous.and_then(|visual| visual.opacity) != current.and_then(|visual| visual.opacity)
+        || previous.and_then(|visual| visual.transform.as_ref())
+            != current.and_then(|visual| visual.transform.as_ref())
 }
 
 fn node_animation_visual(
@@ -9507,8 +11276,10 @@ impl WgpuState {
             collect_expanded_widget_ids(tree, widget_state.as_ref(), &mut expanded_state_snapshot);
         }
         let mut widget_kinds = HashMap::new();
+        let mut tooltip_overlay_targets = HashSet::new();
         if let Some(tree) = &spec.widget_tree {
             collect_widget_kinds(tree, &mut widget_kinds);
+            collect_tooltip_overlay_targets(tree, &mut tooltip_overlay_targets);
         }
 
         let mut state = Self {
@@ -9521,9 +11292,11 @@ impl WgpuState {
             _depth_texture: depth_texture,
             depth_view,
             theme,
+            icon_theme: spec.icon_theme,
             stylesheets: spec.stylesheets,
             styles_dirty: true,
             last_style_media: None,
+            last_style_containers: None,
             scale_factor,
             platform_color_scheme: window.theme().map(winit_theme_color_scheme),
             scatters,
@@ -9537,6 +11310,7 @@ impl WgpuState {
             html_reports: HtmlReportWebViewManager::new(window.as_ref(), wake_proxy),
             widget_tree: spec.widget_tree,
             widget_kinds,
+            tooltip_overlay_targets,
             caret_positions: HashMap::new(),
             resources,
             toasts: Vec::new(),
@@ -9559,7 +11333,16 @@ impl WgpuState {
             expanded_state_snapshot,
             defer_rebuilds: false,
             deferred_dirty: None,
+            deferred_text_targets: HashSet::new(),
+            deferred_visual_targets: HashSet::new(),
+            deferred_table_text_targets: HashSet::new(),
+            deferred_text_requires_full: false,
+            deferred_visual_requires_full: false,
+            deferred_overlay_text: false,
             deferred_scatter_style_sync: false,
+            dirty_rebuild_stats: DirtyRebuildStats::default(),
+            command_text_rebuild_stats: CommandTextRebuildStats::default(),
+            interaction_text_rebuild_stats: InteractionTextRebuildStats::default(),
             apply_layout_timing: StageTimingStats::default(),
             style_reapply_timing: StageTimingStats::default(),
             transition_sync_timing: StageTimingStats::default(),
@@ -9571,6 +11354,11 @@ impl WgpuState {
             primitive_rebuild_timing: StageTimingStats::default(),
             line_plot_rebuild_timing: StageTimingStats::default(),
             rebuild_text_timing: StageTimingStats::default(),
+            partial_text_rebuild_timing: StageTimingStats::default(),
+            partial_text_rebuild_attempts: 0,
+            partial_text_rebuild_fallbacks: 0,
+            partial_text_entries_removed: 0,
+            partial_text_entries_inserted: 0,
             rebuild_primitives_timing: StageTimingStats::default(),
             rebuild_visuals_timing: StageTimingStats::default(),
             replace_node_parse_timing: StageTimingStats::default(),
@@ -9597,6 +11385,7 @@ impl WgpuState {
             last_primitive_overlay_encode_ms: 0.0,
             last_line_plot_encode_ms: 0.0,
             animation_epoch: Instant::now(),
+            css_animations_active: false,
             loading_screen,
         };
 
@@ -9628,13 +11417,13 @@ impl WgpuState {
 
     fn reapply_stylesheets_for_current_viewport(&mut self) {
         let media = self.media_environment();
+        let containers = self.container_query_context();
         if !self.styles_dirty
             && self.last_style_media == Some(media)
-            && !self.stylesheets.has_container_rules()
+            && (!self.stylesheets.has_container_rules() || self.last_style_containers == containers)
         {
             return;
         }
-        let containers = self.container_query_context();
         if let Some(tree) = &mut self.widget_tree {
             apply_stylesheets_to_tree_for_media_and_containers(
                 tree,
@@ -9645,6 +11434,7 @@ impl WgpuState {
         }
         self.styles_dirty = false;
         self.last_style_media = Some(media);
+        self.last_style_containers = containers;
     }
 
     fn mark_styles_dirty(&mut self) {
@@ -9695,6 +11485,7 @@ impl WgpuState {
             theme,
             scale_factor,
             stylesheets,
+            last_style_containers,
             line_plots,
             apply_layout_timing,
             style_reapply_timing,
@@ -9726,15 +11517,19 @@ impl WgpuState {
         let layout_compute_ms = layout_t0.elapsed().as_secs_f64() * 1000.0;
 
         let container_t0 = Instant::now();
-        if current_layout.is_none() && stylesheets.has_container_rules() {
+        if stylesheets.has_container_rules() {
             let containers = container_query_context_from_layout(Some(&layout), *scale_factor);
-            if let (Some(tree), Some(containers)) = (widget_tree.as_mut(), containers.as_ref()) {
+            if containers.is_some() && *last_style_containers != containers {
+                let tree = widget_tree
+                    .as_mut()
+                    .expect("widget tree exists while computing container styles");
                 apply_stylesheets_to_tree_for_media_and_containers(
                     tree,
                     stylesheets,
                     media,
-                    Some(containers),
+                    containers.as_ref(),
                 );
+                *last_style_containers = containers;
                 layout = compute_layout(tree, w, h, *scale_factor, theme, widget_state.as_ref());
             }
         }
@@ -9829,6 +11624,7 @@ impl WgpuState {
                 theme,
                 *scale_factor,
                 widget_state.as_ref(),
+                resources,
             );
         }
         let image_rebuild_ms = image_t0.elapsed().as_secs_f64() * 1000.0;
@@ -10021,6 +11817,144 @@ impl WgpuState {
         rebuild_primitives_timing.record(total_t0.elapsed().as_secs_f64() * 1000.0);
     }
 
+    fn rebuild_overlay_primitives(&mut self) {
+        let total_t0 = Instant::now();
+        let media = self.media_environment();
+        let WgpuState {
+            widget_tree,
+            current_layout,
+            widget_state,
+            primitives,
+            device,
+            queue,
+            theme,
+            scale_factor,
+            caret_positions,
+            toast_overlays,
+            stylesheets,
+            primitive_rebuild_timing,
+            rebuild_primitives_timing,
+            ..
+        } = self;
+
+        let primitive_t0 = Instant::now();
+        if let (Some(tree), Some(layout), Some(state), Some(prims)) = (
+            widget_tree.as_ref(),
+            current_layout.as_ref(),
+            widget_state.as_ref(),
+            primitives.as_mut(),
+        ) {
+            prims.rebuild_overlays(
+                device,
+                queue,
+                tree,
+                layout,
+                theme,
+                *scale_factor,
+                state,
+                caret_positions,
+                toast_overlays,
+                stylesheets,
+                media,
+            );
+        }
+        primitive_rebuild_timing.record(primitive_t0.elapsed().as_secs_f64() * 1000.0);
+        rebuild_primitives_timing.record(total_t0.elapsed().as_secs_f64() * 1000.0);
+    }
+
+    fn rebuild_targeted_primitives(
+        &mut self,
+        widget_ids: &HashSet<String>,
+        table_widget_ids: &HashSet<String>,
+        rebuild_overlays: bool,
+    ) -> bool {
+        let mut requested_ids = widget_ids.clone();
+        requested_ids.extend(table_widget_ids.iter().cloned());
+        if requested_ids.is_empty() {
+            return false;
+        }
+        let Some(primitive_ids) = self
+            .widget_tree
+            .as_ref()
+            .and_then(|tree| normalize_targeted_text_roots(tree, &requested_ids))
+        else {
+            return false;
+        };
+        let rebuild_line_plots = self
+            .widget_tree
+            .as_ref()
+            .and_then(|tree| {
+                targeted_subtrees_contain_widget_kind(tree, &primitive_ids, WidgetKind::LinePlot)
+            })
+            .unwrap_or(true);
+        let total_t0 = Instant::now();
+        let media = self.media_environment();
+        let WgpuState {
+            widget_tree,
+            current_layout,
+            widget_state,
+            primitives,
+            line_plots,
+            device,
+            queue,
+            theme,
+            scale_factor,
+            caret_positions,
+            toast_overlays,
+            stylesheets,
+            primitive_rebuild_timing,
+            line_plot_rebuild_timing,
+            rebuild_primitives_timing,
+            ..
+        } = self;
+        let primitive_t0 = Instant::now();
+        let rebuilt = if let (Some(tree), Some(layout), Some(state), Some(prims)) = (
+            widget_tree.as_ref(),
+            current_layout.as_ref(),
+            widget_state.as_ref(),
+            primitives.as_mut(),
+        ) {
+            prims.rebuild_base_subtrees(
+                device,
+                queue,
+                tree,
+                layout,
+                theme,
+                *scale_factor,
+                state,
+                caret_positions,
+                toast_overlays,
+                stylesheets,
+                media,
+                &primitive_ids,
+                rebuild_overlays,
+            )
+        } else {
+            false
+        };
+        primitive_rebuild_timing.record(primitive_t0.elapsed().as_secs_f64() * 1000.0);
+        if !rebuilt {
+            return false;
+        }
+        if let Some(prims) = primitives.as_mut() {
+            prims.record_targeted_line_plot_rebuild(rebuild_line_plots);
+        }
+
+        if rebuild_line_plots {
+            let line_plot_t0 = Instant::now();
+            if let (Some(tree), Some(layout), Some(line_plots)) = (
+                widget_tree.as_ref(),
+                current_layout.as_ref(),
+                line_plots.as_mut(),
+            ) {
+                line_plots.rebuild(device, queue, tree, layout, theme, *scale_factor);
+            }
+            line_plot_rebuild_timing.record(line_plot_t0.elapsed().as_secs_f64() * 1000.0);
+        }
+        rebuild_primitives_timing.record(total_t0.elapsed().as_secs_f64() * 1000.0);
+        true
+    }
+
     fn rebuild_text(&mut self) {
         let total_t0 = Instant::now();
         let media = self.media_environment();
@@ -10065,6 +11999,115 @@ impl WgpuState {
         rebuild_text_timing.record(total_ms);
     }
 
+    fn rebuild_text_subtrees(&mut self, widget_ids: &HashSet<String>, table_only: bool) -> bool {
+        if widget_ids.is_empty() {
+            return true;
+        }
+        let total_t0 = Instant::now();
+        let WgpuState {
+            widget_tree,
+            current_layout,
+            widget_state,
+            text,
+            theme,
+            scale_factor,
+            caret_positions,
+            resources,
+            stylesheets,
+            partial_text_rebuild_timing,
+            partial_text_rebuild_attempts,
+            partial_text_rebuild_fallbacks,
+            partial_text_entries_removed,
+            partial_text_entries_inserted,
+            ..
+        } = self;
+        *partial_text_rebuild_attempts += 1;
+        let (Some(tree), Some(layout), Some(state), Some(text)) = (
+            widget_tree.as_ref(),
+            current_layout.as_ref(),
+            widget_state.as_ref(),
+            text.as_mut(),
+        ) else {
+            *partial_text_rebuild_fallbacks += 1;
+            return false;
+        };
+
+        let mut ordered_ids = widget_ids.iter().collect::<Vec<_>>();
+        ordered_ids.sort_unstable();
+        for widget_id in ordered_ids {
+            let Some(result) = text.rebuild_widget_subtree(
+                tree,
+                layout,
+                theme,
+                *scale_factor,
+                state,
+                resources,
+                stylesheets,
+                widget_id,
+                table_only,
+            ) else {
+                *partial_text_rebuild_fallbacks += 1;
+                return false;
+            };
+            caret_positions.retain(|owner, _| !result.owners.contains(owner));
+            caret_positions.extend(result.caret_positions);
+            *partial_text_entries_removed += result.removed_entries as u64;
+            *partial_text_entries_inserted += result.inserted_entries as u64;
+        }
+        partial_text_rebuild_timing.record(total_t0.elapsed().as_secs_f64() * 1000.0);
+        true
+    }
+
+    fn rebuild_overlay_text(&mut self) -> bool {
+        let total_t0 = Instant::now();
+        let media = self.media_environment();
+        let WgpuState {
+            widget_tree,
+            current_layout,
+            widget_state,
+            text,
+            theme,
+            scale_factor,
+            caret_positions,
+            resources,
+            toast_overlays,
+            stylesheets,
+            partial_text_rebuild_timing,
+            partial_text_rebuild_attempts,
+            partial_text_rebuild_fallbacks,
+            partial_text_entries_removed,
+            partial_text_entries_inserted,
+            ..
+        } = self;
+        *partial_text_rebuild_attempts += 1;
+        let (Some(tree), Some(layout), Some(state), Some(text)) = (
+            widget_tree.as_ref(),
+            current_layout.as_ref(),
+            widget_state.as_ref(),
+            text.as_mut(),
+        ) else {
+            *partial_text_rebuild_fallbacks += 1;
+            return false;
+        };
+        let result = text.rebuild_overlays(
+            tree,
+            layout,
+            theme,
+            *scale_factor,
+            state,
+            resources,
+            toast_overlays,
+            stylesheets,
+            media,
+        );
+        caret_positions.retain(|owner, _| !result.owners.contains(owner));
+        caret_positions.extend(result.caret_positions);
+        *partial_text_entries_removed += result.removed_entries as u64;
+        *partial_text_entries_inserted += result.inserted_entries as u64;
+        partial_text_rebuild_timing.record(total_t0.elapsed().as_secs_f64() * 1000.0);
+        true
+    }
+
     /// Rebuild state-dependent primitive and text buffers without recomputing layout.
     fn rebuild_visuals(&mut self) {
         let total_t0 = Instant::now();
@@ -10078,6 +12121,192 @@ impl WgpuState {
         self.rebuild_primitives();
         self.rebuild_visuals_timing
             .record(total_t0.elapsed().as_secs_f64() * 1000.0);
+    }
+
+    fn rebuild_targeted_visuals(
+        &mut self,
+        widget_ids: &HashSet<String>,
+        table_widget_ids: &HashSet<String>,
+        rebuild_overlays: bool,
+    ) -> bool {
+        self.rebuild_targeted_visuals_with_transition_sync(
+            widget_ids,
+            table_widget_ids,
+            rebuild_overlays,
+            true,
+        )
+    }
+
+    fn rebuild_targeted_visuals_with_transition_sync(
+        &mut self,
+        widget_ids: &HashSet<String>,
+        table_widget_ids: &HashSet<String>,
+        rebuild_overlays: bool,
+        sync_state_transitions: bool,
+    ) -> bool {
+        let total_t0 = Instant::now();
+        if sync_state_transitions {
+            self.sync_focus_transitions();
+            self.sync_checked_transitions();
+            self.sync_active_transitions();
+            self.sync_open_transitions();
+            self.sync_expanded_transitions();
+        }
+        if !widget_ids.is_empty() && !self.rebuild_text_subtrees(widget_ids, false) {
+            return false;
+        }
+        if !table_widget_ids.is_empty() && !self.rebuild_text_subtrees(table_widget_ids, true) {
+            return false;
+        }
+        if rebuild_overlays && !self.rebuild_overlay_text() {
+            return false;
+        }
+        if widget_ids.is_empty() && table_widget_ids.is_empty() && rebuild_overlays {
+            self.rebuild_overlay_primitives();
+        } else if !self.rebuild_targeted_primitives(widget_ids, table_widget_ids, rebuild_overlays)
+        {
+            self.rebuild_primitives();
+        }
+        self.rebuild_visuals_timing
+            .record(total_t0.elapsed().as_secs_f64() * 1000.0);
+        true
+    }
+
+    fn rebuild_animation_visuals(
+        &mut self,
+        visual_widget_ids: &HashSet<String>,
+        text_widget_ids: &HashSet<String>,
+        rebuild_overlays: bool,
+    ) -> bool {
+        if !text_widget_ids.is_empty() && !self.rebuild_text_subtrees(text_widget_ids, false) {
+            return false;
+        }
+        if rebuild_overlays && !self.rebuild_overlay_text() {
+            return false;
+        }
+        if visual_widget_ids.is_empty() {
+            if rebuild_overlays {
+                self.rebuild_overlay_primitives();
+            }
+        } else if !self.rebuild_targeted_primitives(
+            visual_widget_ids,
+            &HashSet::new(),
+            rebuild_overlays,
+        ) {
+            self.rebuild_primitives();
+        }
+        true
+    }
+
+    fn rebuild_interaction_visuals(
+        &mut self,
+        widget_ids: &HashSet<String>,
+        table_widget_ids: &HashSet<String>,
+        rebuild_overlays: bool,
+    ) {
+        self.rebuild_interaction_visuals_with_transition_sync(
+            widget_ids,
+            table_widget_ids,
+            rebuild_overlays,
+            true,
+        );
+    }
+
+    fn rebuild_hover_visuals(&mut self, widget_ids: &HashSet<String>, rebuild_overlays: bool) {
+        self.rebuild_interaction_visuals_with_transition_sync(
+            widget_ids,
+            &HashSet::new(),
+            rebuild_overlays,
+            false,
+        );
+    }
+
+    fn rebuild_interaction_visuals_with_transition_sync(
+        &mut self,
+        widget_ids: &HashSet<String>,
+        table_widget_ids: &HashSet<String>,
+        rebuild_overlays: bool,
+        sync_state_transitions: bool,
+    ) {
+        self.interaction_text_rebuild_stats.attempts = self
+            .interaction_text_rebuild_stats
+            .attempts
+            .saturating_add(1);
+        let normalized = if widget_ids.is_empty() {
+            Some(HashSet::new())
+        } else {
+            self.widget_tree
+                .as_ref()
+                .and_then(|tree| normalize_targeted_text_roots(tree, widget_ids))
+        };
+        let Some(roots) = normalized.filter(|roots| {
+            roots.len() + table_widget_ids.len() <= MAX_TARGETED_TEXT_ROOTS_PER_BATCH
+        }) else {
+            self.interaction_text_rebuild_stats.fallbacks = self
+                .interaction_text_rebuild_stats
+                .fallbacks
+                .saturating_add(1);
+            self.rebuild_visuals();
+            return;
+        };
+        if self.rebuild_targeted_visuals_with_transition_sync(
+            &roots,
+            table_widget_ids,
+            rebuild_overlays,
+            sync_state_transitions,
+        ) {
+            self.interaction_text_rebuild_stats.completed = self
+                .interaction_text_rebuild_stats
+                .completed
+                .saturating_add(1);
+            self.interaction_text_rebuild_stats.widget_roots = self
+                .interaction_text_rebuild_stats
+                .widget_roots
+                .saturating_add(roots.len() as u64);
+            self.interaction_text_rebuild_stats.table_roots = self
+                .interaction_text_rebuild_stats
+                .table_roots
+                .saturating_add(table_widget_ids.len() as u64);
+            if rebuild_overlays {
+                self.interaction_text_rebuild_stats.overlay_passes = self
+                    .interaction_text_rebuild_stats
+                    .overlay_passes
+                    .saturating_add(1);
+            }
+        } else {
+            self.interaction_text_rebuild_stats.fallbacks = self
+                .interaction_text_rebuild_stats
+                .fallbacks
+                .saturating_add(1);
+            self.rebuild_visuals();
+        }
+    }
+
+    fn rebuild_widget_interaction(&mut self, widget_id: &str, rebuild_overlays: bool) {
+        self.rebuild_interaction_visuals(
+            &HashSet::from([widget_id.to_string()]),
+            &HashSet::new(),
+            rebuild_overlays,
+        );
+    }
+
+    fn rebuild_table_interaction(&mut self, widget_id: &str) {
+        self.rebuild_interaction_visuals(
+            &HashSet::new(),
+            &HashSet::from([widget_id.to_string()]),
+            false,
+        );
+    }
+
+    fn rebuild_text_edit_interaction(&mut self, widget_id: &str, multiline: bool) {
+        if multiline {
+            let ids = HashSet::from([widget_id.to_string()]);
+            if !self.rebuild_text_subtrees(&ids, false) {
+                self.rebuild_text();
+            }
+            self.ensure_text_area_cursor_visible(widget_id);
+        }
+        self.rebuild_widget_interaction(widget_id, false);
     }
 
     fn current_focused_widget_ids(&self) -> HashSet<String> {
@@ -10269,6 +12498,21 @@ impl WgpuState {
             .into_iter()
             .chain(new_hover)
             .any(|id| has_rich_tooltip_for_target(tree, id))
+    }
+
+    fn hover_change_requires_overlay_rebuild(
+        &self,
+        old_hover: Option<&str>,
+        new_hover: Option<&str>,
+        dropdown_hover_changed: bool,
+    ) -> bool {
+        if dropdown_hover_changed || self.has_open_popup() {
+            return true;
+        }
+        old_hover
+            .into_iter()
+            .chain(new_hover)
+            .any(|id| self.tooltip_overlay_targets.contains(id))
     }
 
     fn current_hover_id(&self) -> Option<String> {
@@ -10850,16 +13094,28 @@ impl WgpuState {
         changed
     }
 
-    fn tick_css_animations(&mut self) -> bool {
+    fn tick_css_animations(&mut self) -> CssAnimationTick {
         let Some(tree) = self.widget_tree.as_ref() else {
-            return false;
+            self.css_animations_active = false;
+            return CssAnimationTick::default();
         };
         let keyframes = self.stylesheets.keyframes();
         if keyframes.is_empty() {
+            self.css_animations_active = false;
             if let Some(state) = &mut self.widget_state {
-                return !std::mem::take(&mut state.animation_visuals).is_empty();
+                let previous = std::mem::take(&mut state.animation_visuals);
+                let visual_dirty_ids = previous.keys().cloned().collect();
+                return CssAnimationTick {
+                    visual_dirty_ids,
+                    text_dirty_ids: previous
+                        .into_iter()
+                        .filter_map(|(id, visual)| {
+                            animation_visual_change_affects_text(Some(&visual), None).then_some(id)
+                        })
+                        .collect(),
+                };
             }
-            return false;
+            return CssAnimationTick::default();
         }
         let now = Instant::now();
         let elapsed = now.saturating_duration_since(self.animation_epoch);
@@ -10874,12 +13130,28 @@ impl WgpuState {
             &mut active,
         );
         let Some(state) = &mut self.widget_state else {
-            return false;
+            self.css_animations_active = false;
+            return CssAnimationTick::default();
         };
-        let had_visuals = !state.animation_visuals.is_empty();
-        let has_visuals = !visuals.is_empty();
+        let mut tick = CssAnimationTick::default();
+        for id in state
+            .animation_visuals
+            .keys()
+            .chain(visuals.keys())
+            .collect::<HashSet<_>>()
+        {
+            let previous = state.animation_visuals.get(id);
+            let current = visuals.get(id);
+            if previous != current {
+                tick.visual_dirty_ids.insert((*id).clone());
+                if animation_visual_change_affects_text(previous, current) {
+                    tick.text_dirty_ids.insert((*id).clone());
+                }
+            }
+        }
         state.animation_visuals = visuals;
-        had_visuals || has_visuals || active
+        self.css_animations_active = active;
+        tick
     }
 
     fn cancel_hover_transitions(&mut self) -> bool {
@@ -10905,10 +13177,28 @@ impl WgpuState {
             || !self.expanded_transitions.is_empty()
     }
 
+    fn active_style_transitions_affect_text(&self) -> bool {
+        let Some(tree) = self.widget_tree.as_ref() else {
+            return false;
+        };
+        self.hover_transitions
+            .keys()
+            .chain(self.focus_transitions.keys())
+            .chain(self.checked_transitions.keys())
+            .chain(self.active_transitions.keys())
+            .chain(self.open_transitions.keys())
+            .chain(self.selected_transitions.keys())
+            .chain(self.expanded_transitions.keys())
+            .any(|id| {
+                let Some(node) = find_node(tree, id) else {
+                    return true;
+                };
+                transition_properties_affect_text(node.style.transition.properties.as_deref())
+            })
+    }
+
     fn has_css_animations(&self) -> bool {
-        self.widget_state
-            .as_ref()
-            .is_some_and(|state| !state.animation_visuals.is_empty())
+        self.css_animations_active
     }
 
     fn resize(&mut self, width: u32, height: u32) {
@@ -11046,7 +13336,7 @@ impl WgpuState {
             _ => return None,
         };
         let state = self.widget_state.as_ref()?;
-        hit_test_hover(tree, layout, pos)
+        hit_test_hover_with_targets(tree, layout, pos, &self.tooltip_overlay_targets)
             .filter(|(id, kind)| {
                 kind != &WidgetKind::Collapsible || self.collapsible_header_contains(id, pos)
             })
@@ -11091,16 +13381,31 @@ impl WgpuState {
         let Some(state) = self.widget_state.as_mut() else {
             return false;
         };
-        let changed = state.drag_source != source
+        let widget_state_changed = state.drag_source != source
             || state.drag_hover_target != target
-            || state.drag_kind != kind
-            || state.drag_pos != pos;
+            || state.drag_kind != kind;
+        let changed = widget_state_changed || state.drag_pos != pos;
         if changed {
+            let dirty_ids = state
+                .drag_source
+                .clone()
+                .into_iter()
+                .chain(state.drag_hover_target.clone())
+                .chain(source.clone())
+                .chain(target.clone())
+                .collect::<HashSet<_>>();
             state.drag_source = source;
             state.drag_hover_target = target;
             state.drag_kind = kind;
             state.drag_pos = pos;
-            self.rebuild_visuals();
+            if widget_state_changed && !dirty_ids.is_empty() {
+                self.rebuild_interaction_visuals(&dirty_ids, &HashSet::new(), false);
+            }
+            // The cursor-following drag chip is a global primitive overlay,
+            // not part of either targeted widget subtree. Rebuild it for every
+            // pointer-position change without rebuilding overlay text or the
+            // complete widget visual tree.
+            self.rebuild_overlay_primitives();
         }
         changed
     }
@@ -11353,6 +13658,23 @@ impl WgpuState {
 
     fn apply_set_prop(&mut self, id: &str, prop: &str, value: CommandValue) -> Option<Dirty> {
         let kind = self.widget_kind(id)?;
+        if kind == WidgetKind::IconButton && prop == "icon" {
+            let CommandValue::Text(icon) = value else {
+                eprintln!("DragonGUI: ignoring unsupported live icon value for widget {id:?}");
+                return None;
+            };
+            let normalized = icon.trim().to_ascii_lowercase().replace('_', "-");
+            let tree = self.widget_tree.as_mut()?;
+            if !set_widget_icon_prop(tree, id, normalized) {
+                return None;
+            }
+            let node = find_widget_mut(tree, id)?;
+            if let Err(error) = self.icon_theme.apply_to_subtree(node) {
+                eprintln!("DragonGUI: failed to reconcile live icon {id:?}: {error}");
+                return None;
+            }
+            return Some(Dirty::Text);
+        }
         if matches!(prop, "scroll_x" | "scroll_y") {
             let CommandValue::Float(target_scroll) = value else {
                 eprintln!(
@@ -11407,7 +13729,7 @@ impl WgpuState {
             };
             if let Some(tree) = self.widget_tree.as_mut() {
                 if set_widget_class_prop(tree, id, class_name) {
-                    self.reapply_stylesheets();
+                    self.mark_styles_dirty();
                     return Some(Dirty::Full);
                 }
             }
@@ -11435,7 +13757,7 @@ impl WgpuState {
                             widget_state,
                         );
                     }
-                    self.reapply_stylesheets();
+                    self.mark_styles_dirty();
                     return Some(Dirty::Full);
                 }
             }
@@ -11495,7 +13817,7 @@ impl WgpuState {
             };
             if let Some(tree) = self.widget_tree.as_mut() {
                 if set_widget_level_prop(tree, id, level) {
-                    self.reapply_stylesheets();
+                    self.mark_styles_dirty();
                     return Some(Dirty::Full);
                 }
             }
@@ -11504,10 +13826,16 @@ impl WgpuState {
         if kind == WidgetKind::Led {
             match (prop, value) {
                 ("state", CommandValue::Text(state_name)) => {
+                    let state_affects_styles = self
+                        .stylesheets
+                        .references_attribute_for_kind("state", WidgetKind::Led);
                     if let Some(tree) = self.widget_tree.as_mut() {
                         if set_widget_led_state_prop(tree, id, state_name) {
-                            self.reapply_stylesheets();
-                            return Some(Dirty::Full);
+                            if state_affects_styles {
+                                self.mark_styles_dirty();
+                                return Some(Dirty::Full);
+                            }
+                            return Some(Dirty::Visual);
                         }
                     }
                     return None;
@@ -12271,11 +14599,13 @@ impl WgpuState {
     fn rebuild_retained_maps(&mut self) {
         let total_t0 = Instant::now();
         let mut widget_kinds = HashMap::new();
+        let mut tooltip_overlay_targets = HashSet::new();
         let previous_state = self.widget_state.as_ref();
         let mut widget_state = None;
         if let Some(tree) = self.widget_tree.as_ref() {
             let kinds_t0 = Instant::now();
             collect_widget_kinds(tree, &mut widget_kinds);
+            collect_tooltip_overlay_targets(tree, &mut tooltip_overlay_targets);
             self.retained_widget_kinds_timing
                 .record(kinds_t0.elapsed().as_secs_f64() * 1000.0);
 
@@ -12454,6 +14784,7 @@ impl WgpuState {
         self.retained_line_plot_sync_timing
             .record(line_plot_t0.elapsed().as_secs_f64() * 1000.0);
         self.widget_kinds = widget_kinds;
+        self.tooltip_overlay_targets = tooltip_overlay_targets;
         self.widget_state = widget_state;
         self.retained_maps_timing
             .record(total_t0.elapsed().as_secs_f64() * 1000.0);
@@ -12478,6 +14809,9 @@ impl WgpuState {
         if !replace_widget_children(tree, id, children) {
             return Ok(false);
         }
+        self.icon_theme
+            .apply_to_tree(tree)
+            .map_err(DragonError::Runtime)?;
         self.replace_children_swap_timing
             .record(swap_t0.elapsed().as_secs_f64() * 1000.0);
 
@@ -12503,6 +14837,9 @@ impl WgpuState {
         if !replace_widget_node(tree, id, replacement) {
             return Ok(false);
         }
+        self.icon_theme
+            .apply_to_tree(tree)
+            .map_err(DragonError::Runtime)?;
         self.replace_node_swap_timing
             .record(swap_t0.elapsed().as_secs_f64() * 1000.0);
 
@@ -12511,6 +14848,43 @@ impl WgpuState {
         self.replace_node_maps_timing
             .record(maps_t0.elapsed().as_secs_f64() * 1000.0);
         Ok(true)
+    }
+
+    fn apply_update_extension_display_list(
+        &mut self,
+        id: &str,
+        display_list_json: &str,
+    ) -> Result<Option<Dirty>, DragonError> {
+        if self.widget_kind(id) != Some(WidgetKind::Extension) {
+            return Ok(None);
+        }
+        let display_list: serde_json::Value = serde_json::from_str(display_list_json)
+            .map_err(|error| DragonError::Runtime(format!("invalid display-list JSON: {error}")))?;
+        let Some(commands) = display_list.as_array() else {
+            return Err(DragonError::Runtime(
+                "extension display list must be a JSON array".to_string(),
+            ));
+        };
+        if commands
+            .iter()
+            .any(|command| command.get("cmd").and_then(serde_json::Value::as_str) == Some("image"))
+        {
+            return Err(DragonError::Runtime(
+                "paint-only display-list updates cannot change image resources".to_string(),
+            ));
+        }
+        let Some(tree) = self.widget_tree.as_mut() else {
+            return Ok(None);
+        };
+        let Some(node) = find_widget_mut(tree, id) else {
+            return Ok(None);
+        };
+        let dirty =
+            extension_display_list_dirty(node.props.raw_props.get("display_list"), &display_list);
+        node.props
+            .raw_props
+            .insert("display_list".to_string(), display_list);
+        Ok(Some(dirty))
     }
 
     fn apply_set_table_data(&mut self, id: &str, table_json: &str) -> Result<bool, DragonError> {
@@ -13292,7 +15666,7 @@ impl WgpuState {
         node.props.histogram.x_max = Some(bounds.x_max);
         node.props.histogram.y_min = Some(bounds.y_min.max(0.0));
         node.props.histogram.y_max = Some(bounds.y_max);
-        self.rebuild_visuals();
+        self.rebuild_widget_interaction(id, false);
         true
     }
 
@@ -13312,7 +15686,7 @@ impl WgpuState {
             return false;
         }
         node.props.histogram.selection_rect = Some([start[0], start[1], current[0], current[1]]);
-        self.rebuild_visuals();
+        self.rebuild_widget_interaction(id, false);
         true
     }
 
@@ -13361,7 +15735,7 @@ impl WgpuState {
             return false;
         }
         node.props.histogram.selection_rect = None;
-        self.rebuild_visuals();
+        self.rebuild_widget_interaction(id, false);
         true
     }
 
@@ -13441,7 +15815,7 @@ impl WgpuState {
         node.props.line_plot_x_max = Some(bounds.x_max);
         node.props.line_plot_y_min = Some(bounds.y_min);
         node.props.line_plot_y_max = Some(bounds.y_max);
-        self.rebuild_visuals();
+        self.rebuild_widget_interaction(id, false);
         true
     }
 
@@ -13461,7 +15835,7 @@ impl WgpuState {
             return false;
         }
         node.props.line_plot_selection_rect = Some([start[0], start[1], current[0], current[1]]);
-        self.rebuild_visuals();
+        self.rebuild_widget_interaction(id, false);
         true
     }
 
@@ -13510,7 +15884,7 @@ impl WgpuState {
             return false;
         }
         node.props.line_plot_selection_rect = None;
-        self.rebuild_visuals();
+        self.rebuild_widget_interaction(id, false);
         true
     }
 
@@ -13524,10 +15898,16 @@ impl WgpuState {
                 .flatten()
         });
         let mut changed = false;
+        let mut dirty_ids = Vec::new();
         let Some(tree) = self.widget_tree.as_mut() else {
             return false;
         };
-        clear_line_plot_hover_except(tree, hit.as_ref().map(|(id, _)| id.as_str()), &mut changed);
+        clear_line_plot_hover_except(
+            tree,
+            hit.as_ref().map(|(id, _)| id.as_str()),
+            &mut changed,
+            &mut dirty_ids,
+        );
         if let Some((id, hover)) = hit {
             if let Some(node) = find_widget_mut(tree, &id) {
                 let should_update = node.props.line_plot_hover.as_ref().is_none_or(|current| {
@@ -13539,12 +15919,17 @@ impl WgpuState {
                 });
                 if should_update {
                     node.props.line_plot_hover = Some(hover);
+                    dirty_ids.push(id);
                     changed = true;
                 }
             }
         }
         if changed {
-            self.rebuild_visuals();
+            self.rebuild_interaction_visuals(
+                &dirty_ids.into_iter().collect(),
+                &HashSet::new(),
+                false,
+            );
         }
         changed
     }
@@ -13554,9 +15939,14 @@ impl WgpuState {
             return false;
         };
         let mut changed = false;
-        clear_line_plot_hover_except(tree, None, &mut changed);
+        let mut cleared_ids = Vec::new();
+        clear_line_plot_hover_except(tree, None, &mut changed, &mut cleared_ids);
         if changed {
-            self.rebuild_visuals();
+            self.rebuild_interaction_visuals(
+                &cleared_ids.into_iter().collect(),
+                &HashSet::new(),
+                false,
+            );
         }
         changed
     }
@@ -13568,12 +15958,14 @@ impl WgpuState {
         let keep_id = hit.as_ref().map(|(id, _)| id.clone());
         let mut changed = false;
         let mut cleared_ids = Vec::new();
+        let mut dirty_ids = HashSet::new();
         let mut payloads = Vec::new();
         let Some(tree) = self.widget_tree.as_mut() else {
             return (false, payloads);
         };
         clear_heatmap_hover_except(tree, keep_id.as_deref(), &mut changed, &mut cleared_ids);
         for id in cleared_ids {
+            dirty_ids.insert(id.clone());
             payloads.push((
                 id.clone(),
                 json!({"event":"hover_changed","widget_id": id}).to_string(),
@@ -13590,12 +15982,13 @@ impl WgpuState {
                     let payload = heatmap_hover_payload(&id, &hover);
                     node.props.heatmap.hover = Some(hover);
                     changed = true;
+                    dirty_ids.insert(id.clone());
                     payloads.push((id, payload));
                 }
             }
         }
         if changed {
-            self.rebuild_visuals();
+            self.rebuild_interaction_visuals(&dirty_ids, &HashSet::new(), false);
         }
         (changed, payloads)
     }
@@ -13608,7 +16001,11 @@ impl WgpuState {
         let mut cleared_ids = Vec::new();
         clear_heatmap_hover_except(tree, None, &mut changed, &mut cleared_ids);
         if changed {
-            self.rebuild_visuals();
+            self.rebuild_interaction_visuals(
+                &cleared_ids.iter().cloned().collect(),
+                &HashSet::new(),
+                false,
+            );
         }
         let payloads = cleared_ids
             .into_iter()
@@ -13629,12 +16026,14 @@ impl WgpuState {
         let keep_id = hit.as_ref().map(|(id, _)| id.clone());
         let mut changed = false;
         let mut cleared_ids = Vec::new();
+        let mut dirty_ids = HashSet::new();
         let mut payloads = Vec::new();
         let Some(tree) = self.widget_tree.as_mut() else {
             return (false, payloads);
         };
         clear_bar_chart_hover_except(tree, keep_id.as_deref(), &mut changed, &mut cleared_ids);
         for id in cleared_ids {
+            dirty_ids.insert(id.clone());
             payloads.push((
                 id.clone(),
                 json!({"event":"hover_changed","widget_id": id}).to_string(),
@@ -13651,12 +16050,13 @@ impl WgpuState {
                     let payload = bar_chart_hover_payload(&id, &hover);
                     node.props.bar_chart.hover = Some(hover);
                     changed = true;
+                    dirty_ids.insert(id.clone());
                     payloads.push((id, payload));
                 }
             }
         }
         if changed {
-            self.rebuild_visuals();
+            self.rebuild_interaction_visuals(&dirty_ids, &HashSet::new(), false);
         }
         (changed, payloads)
     }
@@ -13669,7 +16069,11 @@ impl WgpuState {
         let mut cleared_ids = Vec::new();
         clear_bar_chart_hover_except(tree, None, &mut changed, &mut cleared_ids);
         if changed {
-            self.rebuild_visuals();
+            self.rebuild_interaction_visuals(
+                &cleared_ids.iter().cloned().collect(),
+                &HashSet::new(),
+                false,
+            );
         }
         let payloads = cleared_ids
             .into_iter()
@@ -14308,11 +16712,25 @@ impl WgpuState {
     }
 
     fn begin_deferred_rebuilds(&mut self) {
+        debug_assert!(self.deferred_dirty.is_none());
+        self.deferred_text_targets.clear();
+        self.deferred_visual_targets.clear();
+        self.deferred_table_text_targets.clear();
+        self.deferred_text_requires_full = false;
+        self.deferred_visual_requires_full = false;
+        self.deferred_overlay_text = false;
         self.defer_rebuilds = true;
     }
 
     fn flush_deferred_rebuilds(&mut self) -> bool {
         self.defer_rebuilds = false;
+        let mut text_targets = std::mem::take(&mut self.deferred_text_targets);
+        let visual_targets = std::mem::take(&mut self.deferred_visual_targets);
+        merge_deferred_visual_targets(&mut text_targets, visual_targets);
+        let table_text_targets = std::mem::take(&mut self.deferred_table_text_targets);
+        let text_requires_full = std::mem::take(&mut self.deferred_text_requires_full);
+        let visual_requires_full = std::mem::take(&mut self.deferred_visual_requires_full);
+        let overlay_text = std::mem::take(&mut self.deferred_overlay_text);
         let Some(dirty) = self.deferred_dirty.take() else {
             self.deferred_scatter_style_sync = false;
             return false;
@@ -14321,18 +16739,146 @@ impl WgpuState {
         if scatter_style_sync && matches!(dirty, Dirty::Text) {
             self.sync_scatter_style_overrides();
         }
-        self.rebuild_for_dirty(dirty);
+        if can_use_targeted_deferred_rebuild(
+            dirty,
+            text_requires_full,
+            visual_requires_full,
+            !text_targets.is_empty() || !table_text_targets.is_empty() || overlay_text,
+        ) {
+            self.command_text_rebuild_stats.attempted_batches = self
+                .command_text_rebuild_stats
+                .attempted_batches
+                .saturating_add(1);
+            let roots = if text_targets.is_empty() {
+                Some(HashSet::new())
+            } else {
+                self.widget_tree
+                    .as_ref()
+                    .and_then(|tree| normalize_targeted_text_roots(tree, &text_targets))
+            };
+            if let Some(roots) = roots.filter(|roots| {
+                roots.len() + table_text_targets.len() <= MAX_TARGETED_TEXT_ROOTS_PER_BATCH
+            }) {
+                self.dirty_rebuild_stats.record_execution(Dirty::Text);
+                if self.rebuild_targeted_visuals(&roots, &table_text_targets, overlay_text) {
+                    self.command_text_rebuild_stats.completed_batches = self
+                        .command_text_rebuild_stats
+                        .completed_batches
+                        .saturating_add(1);
+                    self.command_text_rebuild_stats.rebuilt_roots = self
+                        .command_text_rebuild_stats
+                        .rebuilt_roots
+                        .saturating_add((roots.len() + table_text_targets.len()) as u64);
+                    if overlay_text {
+                        self.command_text_rebuild_stats.overlay_batches = self
+                            .command_text_rebuild_stats
+                            .overlay_batches
+                            .saturating_add(1);
+                    }
+                    return true;
+                }
+                self.command_text_rebuild_stats.fallback_batches = self
+                    .command_text_rebuild_stats
+                    .fallback_batches
+                    .saturating_add(1);
+                self.rebuild_visuals();
+                return true;
+            }
+            self.command_text_rebuild_stats.fallback_batches = self
+                .command_text_rebuild_stats
+                .fallback_batches
+                .saturating_add(1);
+        }
+        self.execute_rebuild_for_dirty(dirty);
         true
     }
 
     fn rebuild_for_dirty(&mut self, dirty: Dirty) {
+        self.rebuild_for_widget_dirty(dirty, None);
+    }
+
+    fn rebuild_for_overlay_text(&mut self) {
+        self.dirty_rebuild_stats.record_request(Dirty::Text);
+        self.command_text_rebuild_stats.overlay_requests = self
+            .command_text_rebuild_stats
+            .overlay_requests
+            .saturating_add(1);
         if self.defer_rebuilds {
+            self.deferred_overlay_text = true;
+            if self.deferred_dirty.is_some() {
+                self.dirty_rebuild_stats.deferred_merges =
+                    self.dirty_rebuild_stats.deferred_merges.saturating_add(1);
+            }
+            self.deferred_dirty = Some(merge_dirty(self.deferred_dirty, Dirty::Text));
+            return;
+        }
+        self.dirty_rebuild_stats.record_execution(Dirty::Text);
+        if !self.rebuild_targeted_visuals(&HashSet::new(), &HashSet::new(), true) {
+            self.rebuild_visuals();
+        }
+    }
+
+    fn rebuild_for_table_text(&mut self, widget_id: &str) {
+        self.dirty_rebuild_stats.record_request(Dirty::Text);
+        self.command_text_rebuild_stats.targeted_requests = self
+            .command_text_rebuild_stats
+            .targeted_requests
+            .saturating_add(1);
+        if self.defer_rebuilds {
+            self.deferred_table_text_targets
+                .insert(widget_id.to_string());
+            if self.deferred_dirty.is_some() {
+                self.dirty_rebuild_stats.deferred_merges =
+                    self.dirty_rebuild_stats.deferred_merges.saturating_add(1);
+            }
+            self.deferred_dirty = Some(merge_dirty(self.deferred_dirty, Dirty::Text));
+            return;
+        }
+        self.dirty_rebuild_stats.record_execution(Dirty::Text);
+        let table_ids = HashSet::from([widget_id.to_string()]);
+        if !self.rebuild_targeted_visuals(&HashSet::new(), &table_ids, false) {
+            self.rebuild_visuals();
+        }
+    }
+
+    fn rebuild_for_widget_dirty(&mut self, dirty: Dirty, widget_id: Option<&str>) {
+        self.dirty_rebuild_stats.record_request(dirty);
+        if self.defer_rebuilds {
+            if matches!(dirty, Dirty::Text) {
+                if let Some(widget_id) = widget_id {
+                    self.deferred_text_targets.insert(widget_id.to_string());
+                    self.command_text_rebuild_stats.targeted_requests = self
+                        .command_text_rebuild_stats
+                        .targeted_requests
+                        .saturating_add(1);
+                } else {
+                    self.deferred_text_requires_full = true;
+                    self.command_text_rebuild_stats.global_requests = self
+                        .command_text_rebuild_stats
+                        .global_requests
+                        .saturating_add(1);
+                }
+            }
             if matches!(dirty, Dirty::Visual) {
                 self.deferred_scatter_style_sync = true;
+                if let Some(widget_id) = widget_id {
+                    self.deferred_visual_targets.insert(widget_id.to_string());
+                } else {
+                    self.deferred_visual_requires_full = true;
+                }
+            }
+            if self.deferred_dirty.is_some() {
+                self.dirty_rebuild_stats.deferred_merges =
+                    self.dirty_rebuild_stats.deferred_merges.saturating_add(1);
             }
             self.deferred_dirty = Some(merge_dirty(self.deferred_dirty, dirty));
             return;
         }
+        self.execute_rebuild_for_dirty(dirty);
+    }
+
+    fn execute_rebuild_for_dirty(&mut self, dirty: Dirty) {
+        self.dirty_rebuild_stats.record_execution(dirty);
         if matches!(dirty, Dirty::Layout | Dirty::Full) {
             self.cancel_hover_transitions();
         }
@@ -14353,13 +16899,56 @@ impl WgpuState {
         self.reapply_stylesheets_for_current_viewport();
     }
 
-    fn set_stylesheet(&mut self, origin: StylesheetOrigin, css: &str) -> Result<(), String> {
-        self.stylesheets
-            .set_stylesheet(origin, css)
-            .map_err(|error| error.to_string())?;
+    fn set_stylesheet(
+        &mut self,
+        origin: StylesheetOrigin,
+        id: Option<&str>,
+        css: &str,
+    ) -> Result<(), String> {
+        match id {
+            Some(id) => self.stylesheets.set_named_stylesheet(origin, id, css),
+            None => self.stylesheets.set_stylesheet(origin, css),
+        }
+        .map_err(|error| error.to_string())?;
         self.reapply_stylesheets();
         self.apply_layout();
         Ok(())
+    }
+
+    fn remove_stylesheet(&mut self, origin: StylesheetOrigin, id: &str) -> bool {
+        if !self.stylesheets.remove_stylesheet(origin, id) {
+            return false;
+        }
+        self.reapply_stylesheets();
+        self.apply_layout();
+        true
+    }
+
+    fn set_theme(&mut self, theme: Theme) -> Dirty {
+        let dirty = theme_change_dirty(&self.theme, &theme).unwrap_or(Dirty::Visual);
+        self.theme = theme;
+        self.stylesheets.install_framework_defaults(&self.theme);
+        self.reapply_stylesheets();
+        if dirty == Dirty::Layout {
+            self.apply_layout();
+        } else {
+            self.rebuild_visuals();
+        }
+        dirty
+    }
+
+    fn set_icon_theme(
+        &mut self,
+        icon_theme: crate::icons::IconThemeRegistry,
+    ) -> Result<bool, String> {
+        if self.icon_theme == icon_theme {
+            return Ok(false);
+        }
+        if let Some(tree) = &mut self.widget_tree {
+            icon_theme.apply_to_tree(tree)?;
+        }
+        self.icon_theme = icon_theme;
+        Ok(true)
     }
 
     fn clear_stylesheets(&mut self, origin: StylesheetOrigin) {
@@ -14734,6 +17323,7 @@ impl WgpuState {
 
     fn debug_snapshot_value(&self) -> Value {
         let media = Some(self.media_environment());
+        let cascade_metrics = self.stylesheets.last_cascade_metrics();
         let user_selector_matches = self
             .widget_tree
             .as_ref()
@@ -14802,8 +17392,29 @@ impl WgpuState {
             "primitive_rebuild": self.primitive_rebuild_timing.json_value(),
             "line_plot_rebuild": self.line_plot_rebuild_timing.json_value(),
             "rebuild_text": self.rebuild_text_timing.json_value(),
+            "partial_text_rebuild": self.partial_text_rebuild_timing.json_value(),
+            "partial_text_rebuilds": {
+                "attempts": self.partial_text_rebuild_attempts,
+                "fallbacks": self.partial_text_rebuild_fallbacks,
+                "entries_removed": self.partial_text_entries_removed,
+                "entries_inserted": self.partial_text_entries_inserted,
+            },
             "rebuild_primitives": self.rebuild_primitives_timing.json_value(),
             "rebuild_visuals": self.rebuild_visuals_timing.json_value(),
+            "dirty_rebuilds": self.dirty_rebuild_stats.json_value(),
+            "command_text_rebuilds": self.command_text_rebuild_stats.json_value(),
+            "interaction_text_rebuilds": self.interaction_text_rebuild_stats.json_value(),
+            "animation_activity": {
+                "css_active": self.css_animations_active,
+                "style_transition_count":
+                    self.hover_transitions.len()
+                    + self.focus_transitions.len()
+                    + self.checked_transitions.len()
+                    + self.active_transitions.len()
+                    + self.open_transitions.len()
+                    + self.selected_transitions.len()
+                    + self.expanded_transitions.len(),
+            },
             "replace_node_parse": self.replace_node_parse_timing.json_value(),
             "replace_node_swap": self.replace_node_swap_timing.json_value(),
             "replace_node_maps": self.replace_node_maps_timing.json_value(),
@@ -14825,6 +17436,7 @@ impl WgpuState {
             "prewarm_scatter_widgets": self.prewarm_scatter_widget_timing.json_value(),
             "retained_line_plot_sync": self.retained_line_plot_sync_timing.json_value(),
         });
+        let layout_text_measurement = crate::text::layout_text_measurement_stats();
         json!({
             "window": {
                 "width": self.config.width,
@@ -14832,10 +17444,16 @@ impl WgpuState {
                 "scale_factor": self.scale_factor,
             },
             "theme": theme_snapshot(&self.theme),
+            "icon_theme": {
+                "override_count": self.icon_theme.len(),
+                "retained": true,
+                "live_replaceable": true,
+            },
             "stylesheets": {
                 "framework_rules": self.stylesheets.rules(crate::css_style::StylesheetOrigin::Framework).len(),
                 "theme_rules": self.stylesheets.rules(crate::css_style::StylesheetOrigin::Theme).len(),
                 "user_rules": self.stylesheets.rules(crate::css_style::StylesheetOrigin::User).len(),
+                "active": active_stylesheets_snapshot(&self.stylesheets),
                 "warning_count": self.stylesheets.warnings().len(),
                 "warnings": self.stylesheets.warnings().into_iter().map(|warning| json!({
                     "property": &warning.property,
@@ -14845,12 +17463,32 @@ impl WgpuState {
                 "user_selector_matches": user_selector_matches,
                 "user_selector_diagnostics": user_selector_diagnostics,
                 "unmatched_user_selectors": unmatched_user_selectors,
+                "last_cascade": {
+                    "nodes_visited": cascade_metrics.nodes_visited,
+                    "candidate_rules_considered": cascade_metrics.candidate_rules_considered,
+                    "matched_declarations": cascade_metrics.matched_declarations,
+                    "provenance_entries": cascade_metrics.provenance_entries,
+                    "attribute_snapshots": cascade_metrics.attribute_snapshots,
+                    "attribute_snapshot_entries": cascade_metrics.attribute_snapshot_entries,
+                    "ancestor_snapshots": cascade_metrics.ancestor_snapshots,
+                    "sibling_snapshots": cascade_metrics.sibling_snapshots,
+                    "selector_match_ms": cascade_metrics.selector_match_ns as f64 / 1_000_000.0,
+                    "declaration_apply_ms": cascade_metrics.declaration_apply_ns as f64 / 1_000_000.0,
+                    "provenance_record_ms": cascade_metrics.provenance_record_ns as f64 / 1_000_000.0,
+                    "property_apply_ms": cascade_metrics.property_apply_ns as f64 / 1_000_000.0,
+                    "style_merge_ms": cascade_metrics.style_merge_ns as f64 / 1_000_000.0,
+                    "part_filter_ms": cascade_metrics.part_filter_ns as f64 / 1_000_000.0,
+                    "native_fallback_ms": cascade_metrics.native_fallback_ns as f64 / 1_000_000.0,
+                    "inheritance_ms": cascade_metrics.inheritance_ns as f64 / 1_000_000.0,
+                    "snapshot_build_ms": cascade_metrics.snapshot_build_ns as f64 / 1_000_000.0,
+                },
             },
-            "computed_styles": computed_styles_snapshot_with_state(
+            "computed_styles": computed_styles_snapshot_with_state_and_containers(
                 self.widget_tree.as_ref(),
                 &self.stylesheets,
                 media,
                 self.widget_state.as_ref(),
+                self.last_style_containers.as_ref(),
             ),
             "tree": self.widget_tree.as_ref().map(node_snapshot),
             "layout": layout_snapshot_with_context(
@@ -14870,7 +17508,7 @@ impl WgpuState {
                 "has_primitives": self.primitives.is_some(),
                 "primitives": self.primitives.as_ref().map(|prims| {
                     let stats = prims.stats();
-                    json!({
+                    let mut snapshot = json!({
                         "split_enabled": stats.split_enabled,
                         "split_collapsed": stats.split_collapsed,
                         "rect_count": stats.rect_count,
@@ -14892,7 +17530,30 @@ impl WgpuState {
                         "last_upload_ms": stats.last_upload_ms,
                         "last_base_encode_ms": self.last_primitive_base_encode_ms,
                         "last_overlay_encode_ms": self.last_primitive_overlay_encode_ms,
-                    })
+                    });
+                    if let Some(snapshot) = snapshot.as_object_mut() {
+                        snapshot.insert(
+                            "icon_geometry_cache".to_string(),
+                            stats.icon_geometry_cache_snapshot(),
+                        );
+                        snapshot.insert("retained_rebuilds".to_string(), json!({
+                            "full": stats.full_rebuilds,
+                            "partial_base_attempts": stats.partial_base_attempts,
+                            "partial_base_completed": stats.partial_base_rebuilds,
+                            "partial_base_fallbacks": stats.partial_base_fallbacks,
+                            "partial_buffer_patches": stats.partial_buffer_patches,
+                            "partial_buffer_patch_fallbacks": stats.partial_buffer_patch_fallbacks,
+                            "partial_upload_bytes": stats.partial_upload_bytes,
+                            "last_partial_upload_bytes": stats.last_partial_upload_bytes,
+                            "overlay": stats.overlay_rebuilds,
+                            "last_partial_base": stats.last_rebuild_partial_base,
+                            "last_overlay_only": stats.last_rebuild_overlay_only,
+                            "targeted_line_plot_checks": stats.targeted_line_plot_checks,
+                            "targeted_line_plot_rebuilds": stats.targeted_line_plot_rebuilds,
+                            "targeted_line_plot_skips": stats.targeted_line_plot_skips,
+                        }));
+                    }
+                    snapshot
                 }),
                 "line_plot_renderer": self.line_plots.as_ref().map(|line_plots| {
                     let stats = line_plots.stats();
@@ -14921,8 +17582,17 @@ impl WgpuState {
                     })
                 }),
                 "has_text": self.text.is_some(),
+                "text": self.text.as_ref().map(|text| text.debug_stats()),
+                "layout_text_measurement": {
+                    "cache_entries": layout_text_measurement.cache_entries,
+                    "cache_limit": layout_text_measurement.cache_limit,
+                    "cache_hits": layout_text_measurement.cache_hits,
+                    "cache_misses": layout_text_measurement.cache_misses,
+                    "capacity_clears": layout_text_measurement.capacity_clears,
+                    "font_sync_clears": layout_text_measurement.font_sync_clears,
+                },
                 "html_reports": self.html_reports.snapshot(),
-                "font_warnings": self.text.as_ref().map(|text| text.font_warnings()).unwrap_or(&[]),
+                "font_warnings": self.text.as_ref().map(|text| text.font_diagnostics()).unwrap_or_default(),
                 "has_scatter": !self.scatters.is_empty(),
                 "scatter_widget_id": self.visible_scatter_order.first().map(|s| s.as_str()),
                 "scatter_count": self.scatters.len(),
@@ -15076,12 +17746,18 @@ impl WgpuState {
         let Some(state) = self.widget_state.as_mut() else {
             return false;
         };
-        let had_popup = state.open_dropdown.is_some()
-            || state.open_menu.is_some()
-            || state.open_context_menu.is_some();
+        let popup_ids = [
+            state.open_dropdown.clone(),
+            state.open_menu.clone(),
+            state.open_context_menu.clone(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<HashSet<_>>();
+        let had_popup = !popup_ids.is_empty();
         state.close_popups();
         if had_popup {
-            self.rebuild_visuals();
+            self.rebuild_interaction_visuals(&popup_ids, &HashSet::new(), true);
         }
         had_popup
     }
@@ -15093,7 +17769,7 @@ impl WgpuState {
             .map(|state| state.open_context_menu(menu_id, pos))
             .unwrap_or(false);
         if opened {
-            self.rebuild_visuals();
+            self.rebuild_widget_interaction(menu_id, true);
         }
         opened
     }
@@ -15450,7 +18126,7 @@ impl WgpuState {
             })
             .unwrap_or(false);
         if changed {
-            self.rebuild_visuals();
+            self.rebuild_widget_interaction(id, false);
         }
         changed
     }
@@ -15656,20 +18332,36 @@ impl WgpuState {
     }
 
     fn focus_widget(&mut self, id: Option<String>) {
+        let previous = self
+            .widget_state
+            .as_ref()
+            .and_then(|state| state.focused.clone());
         let focused = id.clone();
         if let Some(ws) = &mut self.widget_state {
             ws.focus_widget(id);
         }
+        self.rebuild_focus_change(previous, focused);
+    }
+
+    fn rebuild_focus_change(&mut self, previous: Option<String>, focused: Option<String>) {
         if let Some(id) = focused.as_deref() {
             if matches!(
                 self.widget_kind(id),
                 Some(WidgetKind::TextArea | WidgetKind::CodeEditor)
             ) {
-                self.rebuild_text();
+                let ids = HashSet::from([id.to_string()]);
+                if !self.rebuild_text_subtrees(&ids, false) {
+                    self.rebuild_text();
+                }
                 self.ensure_text_area_cursor_visible(id);
             }
         }
-        self.rebuild_visuals();
+        let ids = previous.into_iter().chain(focused).collect::<HashSet<_>>();
+        if ids.is_empty() {
+            self.rebuild_primitives();
+        } else {
+            self.rebuild_interaction_visuals(&ids, &HashSet::new(), false);
+        }
     }
 
     fn focused_kind(&self) -> Option<(String, WidgetKind)> {
@@ -15690,6 +18382,11 @@ impl WgpuState {
             return None;
         }
         self.current_layout.as_ref()?.rects.get(&id).copied()
+    }
+
+    fn visible_widget_center(&self, id: &str) -> Option<[f32; 2]> {
+        let rect = self.current_layout.as_ref()?.visible_rect(id)?;
+        Some([rect.x + rect.w * 0.5, rect.y + rect.h * 0.5])
     }
 
     fn render(
@@ -15822,6 +18519,9 @@ impl WgpuState {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
+            if let Some(images) = &self.images {
+                images.render_backgrounds(&mut pass);
+            }
             if let Some(prims) = &self.primitives {
                 let prim_t0 = Instant::now();
                 prims.render_base(&mut pass);
@@ -15833,7 +18533,7 @@ impl WgpuState {
                 line_plot_encode_ms = line_t0.elapsed().as_secs_f64() * 1000.0;
             }
             if let Some(images) = &self.images {
-                images.render(&mut pass);
+                images.render_content(&mut pass);
             }
         }
 
@@ -16124,6 +18824,9 @@ impl WgpuState {
         };
         let present_t0 = Instant::now();
         texture.present();
+        if let Some(text) = self.text.as_mut() {
+            text.trim_atlas();
+        }
         timings.present_ms = present_t0.elapsed().as_secs_f64() * 1000.0;
         timings.total_ms = frame_t0.elapsed().as_secs_f64() * 1000.0;
 
@@ -16777,8 +19480,91 @@ struct TextSelectionDrag {
     anchor: usize,
 }
 
+const SYNTHETIC_HOVER_IDS_ENV: &str = "DRAGONGUI_SYNTHETIC_HOVER_IDS";
+
+#[derive(Debug)]
+struct PendingSyntheticInput {
+    started: Instant,
+    requested_id: String,
+    resolved_id: Option<String>,
+}
+
+#[derive(Debug, Default)]
+struct HoverDispatchBreakdown {
+    dropdown_hit_ms: f64,
+    widget_hit_ms: f64,
+    state_read_ms: f64,
+    dependency_ms: f64,
+    state_update_ms: f64,
+    rebuild_ms: f64,
+}
+
+#[derive(Debug, Default)]
+struct SyntheticInputProfile {
+    targets: Vec<String>,
+    next_target: usize,
+    pending: Option<PendingSyntheticInput>,
+    dispatch_timing: StageTimingStats,
+    dropdown_hit_timing: StageTimingStats,
+    widget_hit_timing: StageTimingStats,
+    state_read_timing: StageTimingStats,
+    dependency_timing: StageTimingStats,
+    state_update_timing: StageTimingStats,
+    rebuild_timing: StageTimingStats,
+    presentation_latency: StageTimingStats,
+    resolved: u64,
+    missing: u64,
+    mismatched: u64,
+}
+
+impl SyntheticInputProfile {
+    fn from_env() -> Option<Self> {
+        Self::from_targets(&std::env::var(SYNTHETIC_HOVER_IDS_ENV).ok()?)
+    }
+
+    fn from_targets(value: &str) -> Option<Self> {
+        let targets = value
+            .split(',')
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        (!targets.is_empty()).then_some(Self {
+            targets,
+            ..Self::default()
+        })
+    }
+
+    fn json_value(&self) -> Value {
+        json!({
+            "enabled": true,
+            "kind": "hover",
+            "targets": &self.targets,
+            "dispatched": self.next_target,
+            "resolved": self.resolved,
+            "missing": self.missing,
+            "mismatched": self.mismatched,
+            "pending": self.pending.as_ref().map(|pending| json!({
+                "requested_id": &pending.requested_id,
+                "resolved_id": &pending.resolved_id,
+            })),
+            "dispatch_timing": self.dispatch_timing.json_value(),
+            "dispatch_stages": {
+                "dropdown_hit": self.dropdown_hit_timing.json_value(),
+                "widget_hit": self.widget_hit_timing.json_value(),
+                "state_read": self.state_read_timing.json_value(),
+                "dependency": self.dependency_timing.json_value(),
+                "state_update": self.state_update_timing.json_value(),
+                "rebuild": self.rebuild_timing.json_value(),
+            },
+            "presentation_latency": self.presentation_latency.json_value(),
+        })
+    }
+}
+
 struct DragonApp {
     spec: Option<AppSpec>,
+    client_decorations: bool,
     command_bridge: Option<Arc<CommandBridge>>,
     python_runtime: Option<Py<PyAny>>,
     wake_proxy: EventLoopProxy<RuntimeEvent>,
@@ -16802,6 +19588,7 @@ struct DragonApp {
     last_frame_encode_ms: f64,
     last_frame_submit_ms: f64,
     last_frame_present_ms: f64,
+    frame_timing: FrameTimingStats,
     frame_timestamps: VecDeque<Instant>,
     last_mouse_pos: Option<[f32; 2]>,
     orbit_active: bool,
@@ -16856,11 +19643,26 @@ struct DragonApp {
     modifiers: ModifiersState,
     /// Whether a background Python task drain was held while a transient popup was open.
     deferred_python_task_drain: bool,
+    /// Whether Python live tasks are waiting for the first application frame.
+    deferred_startup_python_task_drain: bool,
+    /// Startup presentation state. The loading frame is not an application frame.
+    startup_readiness: StartupReadiness,
+    /// A bounded command slice stopped with work remaining. The next slice must
+    /// wait until an application frame has been presented.
+    command_drain_continuation_pending: bool,
+    /// A wake event was consumed while a continuation was waiting for its frame.
+    /// Keep the bridge wake latched until presentation prevents producer wake chains.
+    command_drain_wake_latched: bool,
+    /// Fairness diagnostics are aggregated so a sustained producer cannot flood stderr.
+    last_command_fairness_warning: Option<Instant>,
+    suppressed_command_fairness_warnings: u64,
+    command_drain_yields: u64,
     /// A coalesced Scatter3D frame upload was applied and should be presented before another one.
     scatter_upload_redraw_pending: bool,
     command_seq: u64,
     command_history: VecDeque<RuntimeCommandRecord>,
     command_timings: HashMap<String, StageTimingStats>,
+    command_dirty_counts: HashMap<String, [u64; 5]>,
     active_command_start: Option<Instant>,
     command_drain_timing: StageTimingStats,
     command_drain_fetch_timing: StageTimingStats,
@@ -16872,9 +19674,340 @@ struct DragonApp {
     last_command_drain_pending: u64,
     startup_real_redraw_deadline: Option<Instant>,
     pending_window_screenshot_requests: Vec<u64>,
+    synthetic_input_profile: Option<SyntheticInputProfile>,
+    client_resize_direction: Option<ResizeDirection>,
+    client_titlebar_drag_pending: Option<PhysicalPosition<f64>>,
+    last_client_titlebar_click: Option<(Instant, PhysicalPosition<f64>)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClientChromeAction {
+    Minimize,
+    Maximize,
+    Close,
+}
+
+fn client_chrome_action(widget_id: &str) -> Option<ClientChromeAction> {
+    if widget_id.ends_with("--dg-window-minimize") {
+        Some(ClientChromeAction::Minimize)
+    } else if widget_id.ends_with("--dg-window-maximize") {
+        Some(ClientChromeAction::Maximize)
+    } else if widget_id.ends_with("--dg-window-close") {
+        Some(ClientChromeAction::Close)
+    } else {
+        None
+    }
+}
+
+fn find_widget_with_css_type_mut<'a>(
+    node: &'a mut WidgetNode,
+    css_type: &str,
+) -> Option<&'a mut WidgetNode> {
+    if node.css_types.iter().any(|name| name == css_type) {
+        return Some(node);
+    }
+    node.children
+        .iter_mut()
+        .find_map(|child| find_widget_with_css_type_mut(child, css_type))
+}
+
+fn sync_client_chrome_maximized_state(tree: &mut WidgetNode, maximized: bool) -> bool {
+    let Some(window) = find_widget_with_css_type_mut(tree, "Window") else {
+        return false;
+    };
+    let state = if maximized { "maximized" } else { "normal" };
+    let mut changed = window
+        .props
+        .raw_props
+        .get("window_state")
+        .and_then(Value::as_str)
+        != Some(state);
+    window
+        .props
+        .raw_props
+        .insert("window_state".to_string(), Value::String(state.to_string()));
+
+    let Some(control) = find_widget_with_css_type_mut(window, "WindowMaximize") else {
+        return changed;
+    };
+    let (glyph, tooltip) = if maximized {
+        ("❐", "Restore window")
+    } else {
+        ("□", "Maximize window")
+    };
+    changed |= control.props.text.as_deref() != Some(glyph)
+        || control.props.tooltip.as_deref() != Some(tooltip)
+        || control
+            .props
+            .raw_props
+            .get("accessible_name")
+            .and_then(Value::as_str)
+            != Some(tooltip);
+    control.props.text = Some(glyph.to_string());
+    control.props.tooltip = Some(tooltip.to_string());
+    control
+        .props
+        .raw_props
+        .insert("text".to_string(), Value::String(glyph.to_string()));
+    control
+        .props
+        .raw_props
+        .insert("tooltip".to_string(), Value::String(tooltip.to_string()));
+    control.props.raw_props.insert(
+        "accessible_name".to_string(),
+        Value::String(tooltip.to_string()),
+    );
+    changed
+}
+
+const MACOS_CLIENT_DECORATION_FALLBACK: &str = "macos-client-resize-unsupported";
+
+fn client_decoration_fallback_reason(requested: bool, target_os: &str) -> Option<&'static str> {
+    (requested && target_os == "macos").then_some(MACOS_CLIENT_DECORATION_FALLBACK)
+}
+
+fn apply_native_decoration_fallback(tree: &mut WidgetNode, reason: &str) -> bool {
+    let Some(window) = find_widget_with_css_type_mut(tree, "Window") else {
+        return false;
+    };
+    let child_count = window.children.len();
+    window.children.retain(|child| {
+        !child
+            .css_types
+            .iter()
+            .any(|css_type| css_type == "WindowTitlebar")
+    });
+    window.props.raw_props.insert(
+        "requested_decorations".to_string(),
+        Value::String("client".to_string()),
+    );
+    window.props.raw_props.insert(
+        "decorations".to_string(),
+        Value::String("native".to_string()),
+    );
+    window.props.raw_props.insert(
+        "decoration_fallback".to_string(),
+        Value::String(reason.to_string()),
+    );
+    child_count != window.children.len()
+}
+
+fn client_chrome_keyboard_action(widget_id: &str, logical_key: &Key) -> Option<ClientChromeAction> {
+    matches!(
+        logical_key,
+        Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Space)
+    )
+    .then(|| client_chrome_action(widget_id))
+    .flatten()
+}
+
+fn is_client_system_menu_shortcut(
+    alt: bool,
+    control: bool,
+    super_key: bool,
+    logical_key: &Key,
+) -> bool {
+    alt && !control && !super_key && matches!(logical_key, Key::Named(NamedKey::Space))
+}
+
+fn is_client_chrome_drag_target(widget_id: &str) -> bool {
+    widget_id.ends_with("--dg-window-titlebar") || widget_id.ends_with("--dg-window-title")
+}
+
+const CLIENT_RESIZE_BORDER_LP: f64 = 6.0;
+const CLIENT_RESIZE_BORDER_MAX_LP: f64 = 24.0;
+
+fn client_resize_border_lp(tree: Option<&WidgetNode>) -> f64 {
+    tree.and_then(|node| node.style.parts.parts.get("resize-border"))
+        .and_then(|part| part.layout.width)
+        .map(f64::from)
+        .unwrap_or(CLIENT_RESIZE_BORDER_LP)
+        .clamp(0.0, CLIENT_RESIZE_BORDER_MAX_LP)
+}
+
+fn client_resize_direction(
+    position: PhysicalPosition<f64>,
+    size: PhysicalSize<u32>,
+    scale_factor: f64,
+    maximized: bool,
+    border_lp: f64,
+) -> Option<ResizeDirection> {
+    if maximized || size.width == 0 || size.height == 0 || border_lp <= 0.0 {
+        return None;
+    }
+    let border = (border_lp.min(CLIENT_RESIZE_BORDER_MAX_LP) * scale_factor.max(0.25)).max(1.0);
+    let width = size.width as f64;
+    let height = size.height as f64;
+    if position.x < 0.0 || position.y < 0.0 || position.x > width || position.y > height {
+        return None;
+    }
+    let left = position.x < border;
+    let right = position.x >= width - border;
+    let top = position.y < border;
+    let bottom = position.y >= height - border;
+    match (left, right, top, bottom) {
+        (true, _, true, _) => Some(ResizeDirection::NorthWest),
+        (_, true, true, _) => Some(ResizeDirection::NorthEast),
+        (true, _, _, true) => Some(ResizeDirection::SouthWest),
+        (_, true, _, true) => Some(ResizeDirection::SouthEast),
+        (true, _, _, _) => Some(ResizeDirection::West),
+        (_, true, _, _) => Some(ResizeDirection::East),
+        (_, _, true, _) => Some(ResizeDirection::North),
+        (_, _, _, true) => Some(ResizeDirection::South),
+        _ => None,
+    }
+}
+
+fn resize_cursor(direction: Option<ResizeDirection>) -> CursorIcon {
+    direction
+        .map(CursorIcon::from)
+        .unwrap_or(CursorIcon::Default)
+}
+
+const CLIENT_TITLEBAR_DOUBLE_CLICK_MS: u64 = 500;
+const CLIENT_TITLEBAR_DOUBLE_CLICK_DISTANCE_LP: f64 = 4.0;
+const CLIENT_TITLEBAR_DOUBLE_CLICK_MIN_MS: u64 = 100;
+const CLIENT_TITLEBAR_DOUBLE_CLICK_MAX_MS: u64 = 2_000;
+const CLIENT_TITLEBAR_DOUBLE_CLICK_MAX_DISTANCE_PX: f64 = 64.0;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ClientDoubleClickThresholds {
+    interval: Duration,
+    max_delta_x: f64,
+    max_delta_y: f64,
+}
+
+fn default_client_double_click_thresholds(scale_factor: f64) -> ClientDoubleClickThresholds {
+    let distance = CLIENT_TITLEBAR_DOUBLE_CLICK_DISTANCE_LP * scale_factor.max(0.25);
+    ClientDoubleClickThresholds {
+        interval: Duration::from_millis(CLIENT_TITLEBAR_DOUBLE_CLICK_MS),
+        max_delta_x: distance,
+        max_delta_y: distance,
+    }
+}
+
+#[cfg(windows)]
+fn client_double_click_thresholds(scale_factor: f64) -> ClientDoubleClickThresholds {
+    let fallback = default_client_double_click_thresholds(scale_factor);
+    let interval_ms = unsafe { GetDoubleClickTime() } as u64;
+    let width = unsafe { GetSystemMetrics(SM_CXDOUBLECLK) };
+    let height = unsafe { GetSystemMetrics(SM_CYDOUBLECLK) };
+    if width <= 0 || height <= 0 {
+        return fallback;
+    }
+    ClientDoubleClickThresholds {
+        interval: Duration::from_millis(interval_ms.clamp(
+            CLIENT_TITLEBAR_DOUBLE_CLICK_MIN_MS,
+            CLIENT_TITLEBAR_DOUBLE_CLICK_MAX_MS,
+        )),
+        max_delta_x: (f64::from(width) * 0.5)
+            .clamp(1.0, CLIENT_TITLEBAR_DOUBLE_CLICK_MAX_DISTANCE_PX),
+        max_delta_y: (f64::from(height) * 0.5)
+            .clamp(1.0, CLIENT_TITLEBAR_DOUBLE_CLICK_MAX_DISTANCE_PX),
+    }
+}
+
+#[cfg(not(windows))]
+fn client_double_click_thresholds(scale_factor: f64) -> ClientDoubleClickThresholds {
+    default_client_double_click_thresholds(scale_factor)
+}
+
+fn is_client_titlebar_double_click(
+    previous: Option<(Instant, PhysicalPosition<f64>)>,
+    now: Instant,
+    position: PhysicalPosition<f64>,
+    thresholds: ClientDoubleClickThresholds,
+) -> bool {
+    let Some((previous_at, previous_position)) = previous else {
+        return false;
+    };
+    if now.saturating_duration_since(previous_at) > thresholds.interval {
+        return false;
+    }
+    (position.x - previous_position.x).abs() <= thresholds.max_delta_x
+        && (position.y - previous_position.y).abs() <= thresholds.max_delta_y
+}
+
+fn should_start_client_titlebar_drag(
+    start: PhysicalPosition<f64>,
+    current: PhysicalPosition<f64>,
+    scale_factor: f64,
+) -> bool {
+    let threshold = 2.0 * scale_factor.max(0.1);
+    (current.x - start.x).abs() >= threshold || (current.y - start.y).abs() >= threshold
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StartupReadiness {
+    Initializing,
+    LoadingPresented,
+    ApplicationFrameRequested,
+    ApplicationFramePresented,
+}
+
+impl StartupReadiness {
+    fn application_frame_presented(self) -> bool {
+        self == Self::ApplicationFramePresented
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Initializing => "initializing",
+            Self::LoadingPresented => "loading_presented",
+            Self::ApplicationFrameRequested => "application_frame_requested",
+            Self::ApplicationFramePresented => "application_frame_presented",
+        }
+    }
+}
+
+fn should_defer_startup_command(readiness: StartupReadiness, command: &Command) -> bool {
+    !readiness.application_frame_presented() && matches!(command, Command::DrainPythonTasks)
 }
 
 impl DragonApp {
+    fn sync_client_chrome_maximized(&mut self, maximized: bool) -> bool {
+        if !self.client_decorations {
+            return false;
+        }
+        let Some(gpu) = &mut self.gpu else {
+            return false;
+        };
+        let changed = gpu
+            .widget_tree
+            .as_mut()
+            .is_some_and(|tree| sync_client_chrome_maximized_state(tree, maximized));
+        if changed {
+            gpu.mark_styles_dirty();
+            gpu.apply_layout();
+        }
+        changed
+    }
+
+    fn activate_client_chrome(&mut self, widget_id: &str, event_loop: &ActiveEventLoop) -> bool {
+        let Some(action) = client_chrome_action(widget_id) else {
+            return false;
+        };
+        match action {
+            ClientChromeAction::Minimize => {
+                if let Some(window) = &self.window {
+                    window.set_minimized(true);
+                }
+            }
+            ClientChromeAction::Maximize => {
+                let next = self.window.as_ref().map(|window| {
+                    let next = !window.is_maximized();
+                    window.set_maximized(next);
+                    next
+                });
+                if let Some(maximized) = next {
+                    self.sync_client_chrome_maximized(maximized);
+                }
+            }
+            ClientChromeAction::Close => event_loop.exit(),
+        }
+        true
+    }
+
     fn new(
         mut spec: AppSpec,
         smoke_frames: Option<u32>,
@@ -16882,8 +20015,10 @@ impl DragonApp {
     ) -> Self {
         let command_bridge = spec.command_bridge.take();
         let python_runtime = spec.python_runtime.take();
+        let client_decorations = spec.client_decorations;
         Self {
             spec: Some(spec),
+            client_decorations,
             command_bridge,
             python_runtime,
             wake_proxy,
@@ -16907,6 +20042,7 @@ impl DragonApp {
             last_frame_encode_ms: 0.0,
             last_frame_submit_ms: 0.0,
             last_frame_present_ms: 0.0,
+            frame_timing: FrameTimingStats::default(),
             frame_timestamps: VecDeque::with_capacity(120),
             last_mouse_pos: None,
             orbit_active: false,
@@ -16937,10 +20073,18 @@ impl DragonApp {
             pressed_id: None,
             modifiers: ModifiersState::empty(),
             deferred_python_task_drain: false,
+            deferred_startup_python_task_drain: false,
+            startup_readiness: StartupReadiness::Initializing,
+            command_drain_continuation_pending: false,
+            command_drain_wake_latched: false,
+            last_command_fairness_warning: None,
+            suppressed_command_fairness_warnings: 0,
+            command_drain_yields: 0,
             scatter_upload_redraw_pending: false,
             command_seq: 0,
             command_history: VecDeque::with_capacity(COMMAND_HISTORY_LIMIT),
             command_timings: HashMap::new(),
+            command_dirty_counts: HashMap::new(),
             active_command_start: None,
             command_drain_timing: StageTimingStats::default(),
             command_drain_fetch_timing: StageTimingStats::default(),
@@ -16952,6 +20096,42 @@ impl DragonApp {
             last_command_drain_pending: 0,
             startup_real_redraw_deadline: None,
             pending_window_screenshot_requests: Vec::new(),
+            synthetic_input_profile: SyntheticInputProfile::from_env(),
+            client_resize_direction: None,
+            client_titlebar_drag_pending: None,
+            last_client_titlebar_click: None,
+        }
+    }
+
+    fn resize_direction_at(&self, position: PhysicalPosition<f64>) -> Option<ResizeDirection> {
+        let window = self.window.as_ref()?;
+        let border_lp =
+            client_resize_border_lp(self.gpu.as_ref().and_then(|gpu| gpu.widget_tree.as_ref()));
+        self.client_decorations.then(|| {
+            client_resize_direction(
+                position,
+                window.inner_size(),
+                window.scale_factor(),
+                window.is_maximized(),
+                border_lp,
+            )
+        })?
+    }
+
+    fn update_client_resize_cursor(&mut self, position: PhysicalPosition<f64>) {
+        let direction = self.resize_direction_at(position);
+        if direction == self.client_resize_direction {
+            return;
+        }
+        self.client_resize_direction = direction;
+        if let Some(window) = &self.window {
+            window.set_cursor(resize_cursor(direction));
+        }
+    }
+
+    fn show_client_system_menu(&self) {
+        if let Some(window) = &self.window {
+            window.show_window_menu(PhysicalPosition::new(0.0, 0.0));
         }
     }
 
@@ -16974,6 +20154,7 @@ impl DragonApp {
 
     fn record_frame_telemetry(&mut self, timings: FrameRenderTimings) {
         let work_ms = timings.work_ms();
+        self.frame_timing.record(timings);
         self.last_frame_ms = timings.total_ms;
         self.last_frame_work_ms = work_ms;
         self.last_frame_prepare_ms = timings.prepare_ms;
@@ -17051,6 +20232,14 @@ impl DragonApp {
                 .or_default()
                 .record(elapsed_ms);
         }
+        if let Some(dirty) = dirty {
+            let counts = self
+                .command_dirty_counts
+                .entry(command.to_string())
+                .or_default();
+            let index = DirtyRebuildStats::index(dirty);
+            counts[index] = counts[index].saturating_add(1);
+        }
         self.command_seq += 1;
         if self.command_history.len() == COMMAND_HISTORY_LIMIT {
             self.command_history.pop_front();
@@ -17119,6 +20308,11 @@ impl DragonApp {
             .command_timings
             .iter()
             .map(|(command, stats)| (command.clone(), stats.json_value()))
+            .collect::<Map<_, _>>();
+        let command_dirty_counts = self
+            .command_dirty_counts
+            .iter()
+            .map(|(command, counts)| (command.clone(), DirtyRebuildStats::counts_json(*counts)))
             .collect::<Map<_, _>>();
         let splitter_drag_snapshot = self.splitter_drag.as_ref().map(|drag| {
             let orientation = match drag.hit.orientation {
@@ -17225,6 +20419,30 @@ impl DragonApp {
         runtime.insert("window_open".to_string(), json!(self.window.is_some()));
         runtime.insert("gpu_ready".to_string(), json!(self.gpu.is_some()));
         runtime.insert("frames_rendered".to_string(), json!(self.frames_rendered));
+        runtime.insert(
+            "startup_readiness".to_string(),
+            json!(self.startup_readiness.label()),
+        );
+        runtime.insert(
+            "deferred_startup_python_task_drain".to_string(),
+            json!(self.deferred_startup_python_task_drain),
+        );
+        runtime.insert(
+            "command_drain_continuation_pending".to_string(),
+            json!(self.command_drain_continuation_pending),
+        );
+        runtime.insert(
+            "command_drain_wake_latched".to_string(),
+            json!(self.command_drain_wake_latched),
+        );
+        runtime.insert(
+            "command_drain_yields".to_string(),
+            json!(self.command_drain_yields),
+        );
+        runtime.insert(
+            "suppressed_command_fairness_warnings".to_string(),
+            json!(self.suppressed_command_fairness_warnings),
+        );
         runtime.insert("upload_ms".to_string(), json!(self.upload_ms));
         runtime.insert("frame_ms".to_string(), json!(frame_ms));
         runtime.insert("frame_ms_avg".to_string(), json!(frame_ms));
@@ -17275,6 +20493,7 @@ impl DragonApp {
             "frame_present_ms_avg".to_string(),
             json!(avg(self.frame_present_ms_total)),
         );
+        runtime.insert("frame_timings".to_string(), self.frame_timing.json_value());
         runtime.insert("wall_fps".to_string(), json!(self.wall_fps()));
         runtime.insert(
             "frame_window_count".to_string(),
@@ -17285,6 +20504,10 @@ impl DragonApp {
         runtime.insert(
             "command_timings".to_string(),
             Value::Object(command_timings),
+        );
+        runtime.insert(
+            "command_dirty_counts".to_string(),
+            Value::Object(command_dirty_counts),
         );
         runtime.insert("loading_screen".to_string(), loading_screen_snapshot);
         runtime.insert("smoke_frames".to_string(), json!(self.smoke_frames));
@@ -17297,6 +20520,13 @@ impl DragonApp {
         );
         runtime.insert("pressed_id".to_string(), json!(self.pressed_id.as_deref()));
         runtime.insert("last_mouse_pos".to_string(), json!(self.last_mouse_pos));
+        runtime.insert(
+            "synthetic_input".to_string(),
+            self.synthetic_input_profile
+                .as_ref()
+                .map(SyntheticInputProfile::json_value)
+                .unwrap_or(Value::Null),
+        );
         runtime.insert("scrollbar_drag".to_string(), json!(scrollbar_drag_snapshot));
         runtime.insert(
             "table_scrollbar_drag".to_string(),
@@ -17339,6 +20569,129 @@ impl DragonApp {
         if let Some(w) = &self.window {
             w.request_redraw();
         }
+    }
+
+    fn update_widget_hover_at(
+        &mut self,
+        new_pos: [f32; 2],
+    ) -> (bool, Option<String>, HoverDispatchBreakdown) {
+        let mut timing = HoverDispatchBreakdown::default();
+        let stage_t0 = Instant::now();
+        let new_dropdown_hover = self
+            .gpu
+            .as_ref()
+            .and_then(|gpu| gpu.dropdown_option_at(new_pos));
+        timing.dropdown_hit_ms = stage_t0.elapsed().as_secs_f64() * 1000.0;
+        let stage_t0 = Instant::now();
+        let new_hover = if new_dropdown_hover.is_some() {
+            None
+        } else {
+            self.gpu
+                .as_ref()
+                .and_then(|gpu| gpu.hit_test_hover(new_pos))
+                .map(|(id, _)| id)
+        };
+        timing.widget_hit_ms = stage_t0.elapsed().as_secs_f64() * 1000.0;
+        let resolved_id = new_hover
+            .clone()
+            .or_else(|| new_dropdown_hover.as_ref().map(|(id, _)| id.clone()));
+        let stage_t0 = Instant::now();
+        let old_hover = self
+            .gpu
+            .as_ref()
+            .and_then(|gpu| gpu.widget_state.as_ref())
+            .and_then(|state| state.hovered.clone());
+        let old_dropdown_hover = self
+            .gpu
+            .as_ref()
+            .and_then(|gpu| gpu.widget_state.as_ref())
+            .and_then(|state| state.dropdown_hover.clone());
+        timing.state_read_ms = stage_t0.elapsed().as_secs_f64() * 1000.0;
+        if new_hover == old_hover && new_dropdown_hover == old_dropdown_hover {
+            return (false, resolved_id, timing);
+        }
+        if let Some(gpu) = &mut self.gpu {
+            let stage_t0 = Instant::now();
+            let requires_layout =
+                gpu.hover_change_requires_layout(old_hover.as_deref(), new_hover.as_deref());
+            let rebuild_overlays = gpu.hover_change_requires_overlay_rebuild(
+                old_hover.as_deref(),
+                new_hover.as_deref(),
+                new_dropdown_hover != old_dropdown_hover,
+            );
+            let dirty_ids = old_hover
+                .into_iter()
+                .chain(new_hover.clone())
+                .chain(old_dropdown_hover.map(|(id, _)| id))
+                .chain(new_dropdown_hover.clone().map(|(id, _)| id))
+                .collect::<HashSet<_>>();
+            timing.dependency_ms = stage_t0.elapsed().as_secs_f64() * 1000.0;
+            let stage_t0 = Instant::now();
+            gpu.update_hover_state(new_hover, new_dropdown_hover);
+            timing.state_update_ms = stage_t0.elapsed().as_secs_f64() * 1000.0;
+            let stage_t0 = Instant::now();
+            if requires_layout {
+                gpu.apply_layout();
+            } else {
+                gpu.rebuild_hover_visuals(&dirty_ids, rebuild_overlays);
+            }
+            timing.rebuild_ms = stage_t0.elapsed().as_secs_f64() * 1000.0;
+        }
+        (true, resolved_id, timing)
+    }
+
+    fn advance_synthetic_input_profile(&mut self) -> bool {
+        if !self.startup_readiness.application_frame_presented() {
+            return false;
+        }
+        let Some(mut profile) = self.synthetic_input_profile.take() else {
+            return false;
+        };
+        if let Some(pending) = profile.pending.take() {
+            profile
+                .presentation_latency
+                .record(pending.started.elapsed().as_secs_f64() * 1000.0);
+        }
+        let Some(requested_id) = profile.targets.get(profile.next_target).cloned() else {
+            self.synthetic_input_profile = Some(profile);
+            return false;
+        };
+        profile.next_target += 1;
+        let Some(position) = self
+            .gpu
+            .as_ref()
+            .and_then(|gpu| gpu.visible_widget_center(&requested_id))
+        else {
+            profile.missing = profile.missing.saturating_add(1);
+            self.synthetic_input_profile = Some(profile);
+            return true;
+        };
+
+        let started = Instant::now();
+        self.last_mouse_pos = Some(position);
+        let (_, resolved_id, timing) = self.update_widget_hover_at(position);
+        profile
+            .dispatch_timing
+            .record(started.elapsed().as_secs_f64() * 1000.0);
+        profile.dropdown_hit_timing.record(timing.dropdown_hit_ms);
+        profile.widget_hit_timing.record(timing.widget_hit_ms);
+        profile.state_read_timing.record(timing.state_read_ms);
+        profile.dependency_timing.record(timing.dependency_ms);
+        profile.state_update_timing.record(timing.state_update_ms);
+        profile.rebuild_timing.record(timing.rebuild_ms);
+        if resolved_id.is_some() {
+            profile.resolved = profile.resolved.saturating_add(1);
+        }
+        if resolved_id.as_deref() != Some(requested_id.as_str()) {
+            profile.mismatched = profile.mismatched.saturating_add(1);
+        }
+        profile.pending = Some(PendingSyntheticInput {
+            started,
+            requested_id,
+            resolved_id,
+        });
+        self.synthetic_input_profile = Some(profile);
+        true
     }
 
     fn request_logical_window_resize(&self, width: u32, height: u32) {
@@ -17429,6 +20782,51 @@ impl DragonApp {
         self.gpu.as_ref().is_some_and(WgpuState::has_open_popup)
     }
 
+    fn defer_python_tasks_until_application_frame(
+        &mut self,
+        command: Command,
+    ) -> Result<bool, Command> {
+        if !should_defer_startup_command(self.startup_readiness, &command) {
+            return Err(command);
+        }
+        match command {
+            Command::DrainPythonTasks => {
+                self.deferred_startup_python_task_drain = true;
+                Ok(self.record_runtime_command(
+                    "DrainPythonTasks",
+                    None,
+                    Some(format!(
+                        "deferred until first application frame; readiness={}",
+                        self.startup_readiness.label()
+                    )),
+                    None,
+                    "deferred_startup_frame",
+                    false,
+                ))
+            }
+            command => Err(command),
+        }
+    }
+
+    fn request_application_frame(&mut self) {
+        if !self.startup_readiness.application_frame_presented() {
+            self.startup_readiness = StartupReadiness::ApplicationFrameRequested;
+        }
+        self.request_redraw();
+    }
+
+    fn mark_application_frame_presented(&mut self) -> bool {
+        if self.startup_readiness.application_frame_presented() {
+            return false;
+        }
+        self.startup_readiness = StartupReadiness::ApplicationFramePresented;
+        if !self.deferred_startup_python_task_drain {
+            return false;
+        }
+        self.deferred_startup_python_task_drain = false;
+        self.apply_runtime_command(Command::DrainPythonTasks)
+    }
+
     fn defer_runtime_command_while_popup_open(
         &mut self,
         command: Command,
@@ -17462,6 +20860,28 @@ impl DragonApp {
             request_redraw |= self.apply_runtime_command(Command::DrainPythonTasks);
         }
         request_redraw
+    }
+
+    fn record_command_fairness_yield(&mut self, pending: usize) {
+        self.command_drain_yields = self.command_drain_yields.saturating_add(1);
+        if pending <= 512 {
+            return;
+        }
+        let now = Instant::now();
+        let should_report = self
+            .last_command_fairness_warning
+            .is_none_or(|last| now.duration_since(last) >= COMMAND_FAIRNESS_WARNING_INTERVAL);
+        if should_report {
+            eprintln!(
+                "DragonGUI: command drain reached fairness limit; deferring {pending} pending commands \
+                 ({} drain yields, {} repeated warnings suppressed)",
+                self.command_drain_yields, self.suppressed_command_fairness_warnings
+            );
+            self.last_command_fairness_warning = Some(now);
+        } else {
+            self.suppressed_command_fairness_warnings =
+                self.suppressed_command_fairness_warnings.saturating_add(1);
+        }
     }
 
     fn drain_runtime_commands(&mut self) {
@@ -17518,20 +20938,17 @@ impl DragonApp {
                 }
                 let pending = bridge.len();
                 if pending > 0 {
-                    bridge.wake();
+                    self.command_drain_yields = self.command_drain_yields.saturating_add(1);
+                    self.command_drain_continuation_pending = true;
                 }
                 break;
             }
             if batches >= MAX_COMMAND_DRAIN_BATCHES || drain_start.elapsed() >= COMMAND_DRAIN_BUDGET
             {
                 let pending = bridge.len();
-                if pending > 512 {
-                    eprintln!(
-                        "DragonGUI: command drain reached fairness limit; deferring {pending} pending commands"
-                    );
-                }
                 if pending > 0 {
-                    bridge.wake();
+                    self.record_command_fairness_yield(pending);
+                    self.command_drain_continuation_pending = true;
                 }
                 break;
             }
@@ -17548,12 +20965,18 @@ impl DragonApp {
         self.last_command_drain_commands = command_count as u64;
         self.last_command_drain_pending = bridge.len() as u64;
 
-        if request_redraw {
-            self.request_redraw();
+        if request_redraw || self.command_drain_continuation_pending {
+            if self.startup_real_redraw_deadline.is_none() {
+                self.request_application_frame();
+            }
         }
     }
 
     fn apply_runtime_command(&mut self, command: Command) -> bool {
+        let command = match self.defer_python_tasks_until_application_frame(command) {
+            Ok(deferred) => return deferred,
+            Err(command) => command,
+        };
         let command = match self.defer_runtime_command_while_popup_open(command) {
             Ok(deferred) => return deferred,
             Err(command) => command,
@@ -17597,7 +21020,7 @@ impl DragonApp {
                         eprintln!("DragonGUI: dropping stale invalidate command for widget {id:?}");
                         ("stale_widget".to_string(), false)
                     } else {
-                        gpu.rebuild_for_dirty(dirty);
+                        gpu.rebuild_for_widget_dirty(dirty, Some(&id));
                         ("applied".to_string(), true)
                     }
                 };
@@ -17625,7 +21048,7 @@ impl DragonApp {
                     };
                     match gpu.apply_set_prop(&id, &prop, value) {
                         Some(dirty) => {
-                            gpu.rebuild_for_dirty(dirty);
+                            gpu.rebuild_for_widget_dirty(dirty, Some(&id));
                             (Some(dirty), "applied".to_string(), true)
                         }
                         None => {
@@ -17657,7 +21080,7 @@ impl DragonApp {
                     };
                     match gpu.apply_set_style_patch(&id, &patch_json) {
                         Ok(Some(dirty)) => {
-                            gpu.rebuild_for_dirty(dirty);
+                            gpu.rebuild_for_widget_dirty(dirty, Some(&id));
                             (Some(dirty), "applied".to_string(), true)
                         }
                         Ok(None) => {
@@ -17695,7 +21118,7 @@ impl DragonApp {
                         Ok(true) => {
                             gpu.cancel_hover_transitions();
                             gpu.mark_styles_dirty();
-                            gpu.apply_layout();
+                            gpu.rebuild_for_dirty(Dirty::Full);
                             (Some(Dirty::Full), "applied".to_string(), true)
                         }
                         Ok(false) => {
@@ -17736,7 +21159,7 @@ impl DragonApp {
                         Ok(true) => {
                             gpu.cancel_hover_transitions();
                             gpu.mark_styles_dirty();
-                            gpu.apply_layout();
+                            gpu.rebuild_for_dirty(Dirty::Full);
                             (Some(Dirty::Full), "applied".to_string(), true)
                         }
                         Ok(false) => {
@@ -17753,6 +21176,48 @@ impl DragonApp {
                 };
                 self.record_runtime_command(
                     "ReplaceNode",
+                    Some(id),
+                    detail,
+                    dirty,
+                    &outcome,
+                    redraw,
+                )
+            }
+            Command::UpdateExtensionDisplayList {
+                id,
+                display_list_json,
+            } => {
+                let detail = Some(format!("display_list_bytes={}", display_list_json.len()));
+                let (dirty, outcome, redraw) = {
+                    let Some(gpu) = &mut self.gpu else {
+                        return self.record_runtime_command(
+                            "UpdateExtensionDisplayList",
+                            Some(id),
+                            detail,
+                            None,
+                            "gpu_not_ready",
+                            false,
+                        );
+                    };
+                    match gpu.apply_update_extension_display_list(&id, &display_list_json) {
+                        Ok(Some(dirty)) => {
+                            gpu.rebuild_for_widget_dirty(dirty, Some(&id));
+                            (Some(dirty), "applied".to_string(), true)
+                        }
+                        Ok(None) => {
+                            eprintln!(
+                                "DragonGUI: dropping stale display-list update for widget {id:?}"
+                            );
+                            (None, "stale_widget".to_string(), false)
+                        }
+                        Err(err) => {
+                            eprintln!("DragonGUI: failed to update extension display list: {err}");
+                            (None, format!("error: {err}"), false)
+                        }
+                    }
+                };
+                self.record_runtime_command(
+                    "UpdateExtensionDisplayList",
                     Some(id),
                     detail,
                     dirty,
@@ -17884,7 +21349,7 @@ impl DragonApp {
                         payload_format,
                     ) {
                         Ok(true) => {
-                            gpu.rebuild_primitives();
+                            gpu.rebuild_for_widget_dirty(Dirty::Visual, Some(&id));
                             (Some(Dirty::Visual), "applied".to_string(), true)
                         }
                         Ok(false) => {
@@ -17941,7 +21406,7 @@ impl DragonApp {
                         auto_fit,
                     ) {
                         Ok(true) => {
-                            gpu.rebuild_visuals();
+                            gpu.rebuild_for_widget_dirty(Dirty::Text, Some(&id));
                             (Some(Dirty::Text), "applied".to_string(), true)
                         }
                         Ok(false) => {
@@ -17995,7 +21460,7 @@ impl DragonApp {
                         payload_format,
                     ) {
                         Ok(true) => {
-                            gpu.rebuild_primitives();
+                            gpu.rebuild_for_widget_dirty(Dirty::Visual, Some(&id));
                             (Some(Dirty::Visual), "applied".to_string(), true)
                         }
                         Ok(false) => {
@@ -18033,7 +21498,7 @@ impl DragonApp {
                         );
                     };
                     if gpu.clear_line_plot_series(&id, series) {
-                        gpu.rebuild_primitives();
+                        gpu.rebuild_for_widget_dirty(Dirty::Visual, Some(&id));
                         (Some(Dirty::Visual), "applied".to_string(), true)
                     } else {
                         (None, "stale_widget".to_string(), false)
@@ -19904,7 +23369,7 @@ impl DragonApp {
                     };
                     match gpu.apply_set_table_data(&id, &table_json) {
                         Ok(true) => {
-                            gpu.rebuild_for_dirty(Dirty::Text);
+                            gpu.rebuild_for_table_text(&id);
                             (Some(Dirty::Text), "applied".to_string(), true)
                         }
                         Ok(false) => {
@@ -19949,7 +23414,7 @@ impl DragonApp {
                     };
                     match gpu.apply_set_table_data_columns(&id, &table_json, columns) {
                         Ok(true) => {
-                            gpu.rebuild_for_dirty(Dirty::Text);
+                            gpu.rebuild_for_table_text(&id);
                             (Some(Dirty::Text), "applied".to_string(), true)
                         }
                         Ok(false) => {
@@ -19996,7 +23461,12 @@ impl DragonApp {
                         );
                     };
                     gpu.apply_set_buffer_resource(&id, &kind, bytes, owner_id);
-                    (Some(Dirty::GpuData), "applied".to_string(), true)
+                    if kind == "image_encoded" {
+                        gpu.rebuild_for_dirty(Dirty::Full);
+                        (Some(Dirty::Full), "applied".to_string(), true)
+                    } else {
+                        (Some(Dirty::GpuData), "applied".to_string(), true)
+                    }
                 };
                 self.record_runtime_command(
                     "SetBufferResource",
@@ -20020,7 +23490,7 @@ impl DragonApp {
                         );
                     };
                     if gpu.apply_release_resource(&id) {
-                        gpu.apply_layout();
+                        gpu.rebuild_for_dirty(Dirty::Full);
                         (Some(Dirty::Full), "released".to_string(), true)
                     } else {
                         eprintln!("DragonGUI: dropping stale resource release for id {id:?}");
@@ -20036,8 +23506,12 @@ impl DragonApp {
                     redraw,
                 )
             }
-            Command::SetStylesheet { origin, css } => {
-                let detail = Some(format!("origin={origin:?}, css_bytes={}", css.len()));
+            Command::SetStylesheet { origin, id, css } => {
+                let detail = Some(format!(
+                    "origin={origin:?}, id={}, css_bytes={}",
+                    id.as_deref().unwrap_or("<anonymous>"),
+                    css.len()
+                ));
                 let (dirty, outcome, redraw) = {
                     let Some(gpu) = &mut self.gpu else {
                         return self.record_runtime_command(
@@ -20049,7 +23523,7 @@ impl DragonApp {
                             false,
                         );
                     };
-                    match gpu.set_stylesheet(origin, &css) {
+                    match gpu.set_stylesheet(origin, id.as_deref(), &css) {
                         Ok(()) => (Some(Dirty::Full), "applied".to_string(), true),
                         Err(err) => {
                             eprintln!("DragonGUI: failed to apply stylesheet: {err}");
@@ -20058,6 +23532,99 @@ impl DragonApp {
                     }
                 };
                 self.record_runtime_command("SetStylesheet", None, detail, dirty, &outcome, redraw)
+            }
+            Command::RemoveStylesheet { origin, id } => {
+                let detail = Some(format!("origin={origin:?}, id={id}"));
+                let (dirty, outcome, redraw) = {
+                    let Some(gpu) = &mut self.gpu else {
+                        return self.record_runtime_command(
+                            "RemoveStylesheet",
+                            None,
+                            detail,
+                            None,
+                            "gpu_not_ready",
+                            false,
+                        );
+                    };
+                    if gpu.remove_stylesheet(origin, &id) {
+                        (Some(Dirty::Full), "removed".to_string(), true)
+                    } else {
+                        (None, "not_found".to_string(), false)
+                    }
+                };
+                self.record_runtime_command(
+                    "RemoveStylesheet",
+                    None,
+                    detail,
+                    dirty,
+                    &outcome,
+                    redraw,
+                )
+            }
+            Command::SetTheme { theme } => {
+                let detail = Some(format!(
+                    "spacing={}, font_size={}, radius={}",
+                    theme.spacing, theme.font_size, theme.radius
+                ));
+                let (dirty, outcome, redraw) = {
+                    let Some(gpu) = &mut self.gpu else {
+                        return self.record_runtime_command(
+                            "SetTheme",
+                            None,
+                            detail,
+                            None,
+                            "gpu_not_ready",
+                            false,
+                        );
+                    };
+                    if gpu.theme == theme {
+                        (None, "unchanged".to_string(), false)
+                    } else {
+                        let dirty = gpu.set_theme(theme);
+                        (Some(dirty), "applied".to_string(), true)
+                    }
+                };
+                self.record_runtime_command("SetTheme", None, detail, dirty, &outcome, redraw)
+            }
+            Command::SetIconTheme { theme } => {
+                let registry = match crate::icons::IconThemeRegistry::from_value(Some(&theme)) {
+                    Ok(registry) => registry,
+                    Err(error) => {
+                        return self.record_runtime_command(
+                            "SetIconTheme",
+                            None,
+                            Some(format!("error={error}")),
+                            None,
+                            "invalid",
+                            false,
+                        );
+                    }
+                };
+                let detail = Some(format!("overrides={}", registry.len()));
+                let (dirty, outcome, redraw) = {
+                    let Some(gpu) = &mut self.gpu else {
+                        return self.record_runtime_command(
+                            "SetIconTheme",
+                            None,
+                            detail,
+                            None,
+                            "gpu_not_ready",
+                            false,
+                        );
+                    };
+                    match gpu.set_icon_theme(registry) {
+                        Ok(true) => {
+                            gpu.rebuild_for_dirty(Dirty::Text);
+                            (Some(Dirty::Text), "applied".to_string(), true)
+                        }
+                        Ok(false) => (None, "unchanged".to_string(), false),
+                        Err(error) => {
+                            eprintln!("DragonGUI: failed to apply icon theme: {error}");
+                            (None, format!("error: {error}"), false)
+                        }
+                    }
+                };
+                self.record_runtime_command("SetIconTheme", None, detail, dirty, &outcome, redraw)
             }
             Command::ClearStylesheets { origin } => {
                 let detail = Some(format!("origin={origin:?}"));
@@ -20140,7 +23707,7 @@ impl DragonApp {
                                 padding,
                                 position,
                             );
-                            gpu.rebuild_visuals();
+                            gpu.rebuild_for_overlay_text();
                             ("applied".to_string(), true)
                         }
                         None => (format!("unknown_level: {level}"), false),
@@ -20161,7 +23728,7 @@ impl DragonApp {
                         );
                     };
                     if gpu.dismiss_toast(&id) {
-                        gpu.rebuild_visuals();
+                        gpu.rebuild_for_overlay_text();
                         ("dismissed".to_string(), true)
                     } else {
                         ("missing".to_string(), false)
@@ -20450,7 +24017,7 @@ impl DragonApp {
                 }
             }
             if changed {
-                gpu.rebuild_for_dirty(Dirty::Text);
+                gpu.rebuild_widget_interaction(&id, false);
             }
         }
 
@@ -20656,7 +24223,7 @@ impl DragonApp {
                 }
             }
             if changed {
-                gpu.rebuild_for_dirty(Dirty::Text);
+                gpu.rebuild_table_interaction(&drag.hit.table_id);
             }
         }
         if changed {
@@ -20683,7 +24250,11 @@ impl DragonApp {
                     set_widget_checked_prop(tree, node_id, node_id == id);
                 }
             }
-            gpu.rebuild_visuals();
+            gpu.rebuild_interaction_visuals(
+                &scope_ids.iter().cloned().collect(),
+                &HashSet::new(),
+                false,
+            );
         }
         self.emit_change(
             id,
@@ -20736,7 +24307,6 @@ impl DragonApp {
     }
 
     fn activate_widget(&mut self, id: &str, kind: WidgetKind) {
-        let mut needs_text_rebuild = matches!(kind, WidgetKind::Dropdown | WidgetKind::Menu);
         let mut needs_layout_rebuild = false;
         let mut navigation_change: Option<(String, String)> = None;
         match kind {
@@ -20873,33 +24443,24 @@ impl DragonApp {
             }
             WidgetKind::LinePlot => {
                 let pos = self.last_mouse_pos.unwrap_or([0.0, 0.0]);
-                if self
+                let _ = self
                     .gpu
                     .as_mut()
-                    .is_some_and(|gpu| gpu.activate_line_plot_toolbar(id, pos))
-                {
-                    needs_text_rebuild = true;
-                }
+                    .is_some_and(|gpu| gpu.activate_line_plot_toolbar(id, pos));
             }
             WidgetKind::Histogram => {
                 let pos = self.last_mouse_pos.unwrap_or([0.0, 0.0]);
-                if self
+                let _ = self
                     .gpu
                     .as_mut()
-                    .is_some_and(|gpu| gpu.activate_histogram_toolbar(id, pos))
-                {
-                    needs_text_rebuild = true;
-                }
+                    .is_some_and(|gpu| gpu.activate_histogram_toolbar(id, pos));
             }
             WidgetKind::BarChart => {
                 let pos = self.last_mouse_pos.unwrap_or([0.0, 0.0]);
-                if self
+                let _ = self
                     .gpu
                     .as_mut()
-                    .is_some_and(|gpu| gpu.activate_bar_chart_toolbar(id, pos))
-                {
-                    needs_text_rebuild = true;
-                }
+                    .is_some_and(|gpu| gpu.activate_bar_chart_toolbar(id, pos));
             }
             _ => {}
         }
@@ -20910,12 +24471,8 @@ impl DragonApp {
         if let Some(gpu) = &mut self.gpu {
             if needs_layout_rebuild {
                 gpu.apply_layout();
-            } else if needs_text_rebuild {
-                gpu.rebuild_visuals();
             } else {
-                // Activation happens while hover/tooltip state may still be visible.
-                // Keep the text layer synchronized with primitive state changes.
-                gpu.rebuild_visuals();
+                gpu.rebuild_widget_interaction(id, true);
             }
         }
         self.request_redraw();
@@ -20931,7 +24488,7 @@ impl DragonApp {
             self.emit_change(id, ChangeValue::Text(value));
         }
         if let Some(gpu) = &mut self.gpu {
-            gpu.rebuild_visuals();
+            gpu.rebuild_widget_interaction(id, true);
         }
         self.request_redraw();
     }
@@ -20955,7 +24512,7 @@ impl DragonApp {
                 ws.select_table_cell(id, row, col);
             }
             payload = gpu.table_selection_payload(id, row, col);
-            gpu.rebuild_visuals();
+            gpu.rebuild_table_interaction(id);
         }
         if let Some(payload) = payload {
             self.emit_change(id, ChangeValue::Text(payload));
@@ -21002,7 +24559,7 @@ impl DragonApp {
                 })
                 .unwrap_or(false);
             if changed {
-                gpu.rebuild_visuals();
+                gpu.rebuild_table_interaction(id);
             }
         }
         if changed {
@@ -21020,7 +24577,7 @@ impl DragonApp {
                 .map(|ws| ws.move_table_selection_to_col_edge(id, end))
                 .unwrap_or(false);
             if changed {
-                gpu.rebuild_visuals();
+                gpu.rebuild_table_interaction(id);
             }
         }
         if changed {
@@ -21049,7 +24606,7 @@ impl DragonApp {
             if changed {
                 gpu.refresh_table_sort(id);
                 payload = gpu.table_sort_payload(id);
-                gpu.rebuild_visuals();
+                gpu.rebuild_table_interaction(id);
             }
         }
         if let Some(payload) = payload {
@@ -21066,7 +24623,7 @@ impl DragonApp {
                 .map(|ws| ws.scroll_table(id, row_delta, col_delta))
                 .unwrap_or(false);
             if changed {
-                gpu.rebuild_visuals();
+                gpu.rebuild_table_interaction(id);
                 self.request_redraw();
             }
         }
@@ -21084,7 +24641,7 @@ impl DragonApp {
                 })
                 .unwrap_or(false);
             if changed {
-                gpu.rebuild_visuals();
+                gpu.rebuild_table_interaction(id);
                 self.request_redraw();
             }
         }
@@ -21206,11 +24763,10 @@ impl DragonApp {
             } else {
                 self.emit_change(&id, ChangeValue::Text(value));
                 if let Some(gpu) = &mut self.gpu {
-                    if matches!(kind, WidgetKind::TextArea | WidgetKind::CodeEditor) {
-                        gpu.rebuild_text();
-                        gpu.ensure_text_area_cursor_visible(&id);
-                    }
-                    gpu.rebuild_visuals();
+                    gpu.rebuild_text_edit_interaction(
+                        &id,
+                        matches!(kind, WidgetKind::TextArea | WidgetKind::CodeEditor),
+                    );
                 }
                 self.request_redraw();
             }
@@ -21252,11 +24808,7 @@ impl DragonApp {
             } else {
                 self.emit_change(&id, ChangeValue::Text(value));
                 if let Some(gpu) = &mut self.gpu {
-                    if multiline {
-                        gpu.rebuild_text();
-                        gpu.ensure_text_area_cursor_visible(&id);
-                    }
-                    gpu.rebuild_visuals();
+                    gpu.rebuild_text_edit_interaction(&id, multiline);
                 }
                 self.request_redraw();
             }
@@ -21287,14 +24839,18 @@ impl DragonApp {
             .is_some_and(|state| state.select_all_text(&id));
         if changed {
             if let Some(gpu) = &mut self.gpu {
-                gpu.rebuild_visuals();
+                gpu.rebuild_widget_interaction(&id, false);
             }
             self.request_redraw();
         }
         changed
     }
 
-    fn handle_keyboard_input(&mut self, event: winit::event::KeyEvent) {
+    fn handle_keyboard_input(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        event: winit::event::KeyEvent,
+    ) {
         if self.modifiers.control_key() && !self.modifiers.alt_key() && !self.modifiers.super_key()
         {
             match event.physical_key {
@@ -21361,12 +24917,20 @@ impl DragonApp {
 
         if matches!(&event.logical_key, Key::Named(NamedKey::Tab)) {
             if let Some(gpu) = &mut self.gpu {
+                let previous = gpu
+                    .widget_state
+                    .as_ref()
+                    .and_then(|state| state.focused.clone());
                 if let (Some(ws), Some(layout)) =
                     (gpu.widget_state.as_mut(), gpu.current_layout.as_ref())
                 {
                     ws.focus_next_visible(layout, self.modifiers.shift_key());
                 }
-                gpu.rebuild_visuals();
+                let focused = gpu
+                    .widget_state
+                    .as_ref()
+                    .and_then(|state| state.focused.clone());
+                gpu.rebuild_focus_change(previous, focused);
             }
             self.request_redraw();
             return;
@@ -21467,7 +25031,7 @@ impl DragonApp {
                             if let Some(ws) = &mut gpu.widget_state {
                                 ws.set_dropdown_open(None);
                             }
-                            gpu.rebuild_visuals();
+                            gpu.rebuild_widget_interaction(&id, true);
                         }
                         self.request_redraw();
                         return;
@@ -21491,7 +25055,7 @@ impl DragonApp {
                             self.emit_change(&id, ChangeValue::Text(value));
                         }
                         if let Some(gpu) = &mut self.gpu {
-                            gpu.rebuild_visuals();
+                            gpu.rebuild_widget_interaction(&id, true);
                         }
                         self.request_redraw();
                         return;
@@ -21531,6 +25095,11 @@ impl DragonApp {
                 | WidgetKind::Checkbox
                 | WidgetKind::ToggleSwitch
                 | WidgetKind::Collapsible => {
+                    if client_chrome_keyboard_action(&id, &event.logical_key).is_some() {
+                        self.activate_client_chrome(&id, event_loop);
+                        self.request_redraw();
+                        return;
+                    }
                     if matches!(
                         &event.logical_key,
                         Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Space)
@@ -21828,7 +25397,7 @@ impl DragonApp {
             self.emit_change(id, ChangeValue::Float(value));
         }
         if let Some(gpu) = &mut self.gpu {
-            gpu.rebuild_visuals();
+            gpu.rebuild_widget_interaction(id, false);
         }
         self.request_redraw();
     }
@@ -21850,7 +25419,7 @@ impl DragonApp {
             self.emit_change(id, ChangeValue::Float(value));
         }
         if let Some(gpu) = &mut self.gpu {
-            gpu.rebuild_visuals();
+            gpu.rebuild_widget_interaction(id, false);
         }
         self.request_redraw();
     }
@@ -21880,7 +25449,7 @@ impl DragonApp {
                     self.emit_change(id, ChangeValue::Float(value));
                 }
                 if let Some(gpu) = &mut self.gpu {
-                    gpu.rebuild_visuals();
+                    gpu.rebuild_widget_interaction(id, false);
                 }
                 self.request_redraw();
                 return true;
@@ -21958,7 +25527,7 @@ impl DragonApp {
             self.process_number_text_change(id);
         } else if handled {
             if let Some(gpu) = &mut self.gpu {
-                gpu.rebuild_visuals();
+                gpu.rebuild_widget_interaction(id, false);
             }
             self.request_redraw();
         }
@@ -22073,11 +25642,7 @@ impl DragonApp {
         }
         if handled {
             if let Some(gpu) = &mut self.gpu {
-                if multiline {
-                    gpu.rebuild_text();
-                    gpu.ensure_text_area_cursor_visible(id);
-                }
-                gpu.rebuild_visuals();
+                gpu.rebuild_text_edit_interaction(id, multiline);
             }
             self.request_redraw();
         }
@@ -22195,6 +25760,20 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
         self.click_cbs = std::mem::take(&mut spec.click_callbacks);
         self.change_cbs = std::mem::take(&mut spec.change_callbacks);
 
+        if let Some(reason) =
+            client_decoration_fallback_reason(spec.client_decorations, std::env::consts::OS)
+        {
+            if let Some(tree) = &mut spec.widget_tree {
+                apply_native_decoration_fallback(tree, reason);
+            }
+            spec.client_decorations = false;
+            self.client_decorations = false;
+            eprintln!(
+                "DragonGUI: client window decorations requested, but {reason}; \
+                 using native decorations"
+            );
+        }
+
         let hide_until_loading_frame = spec.loading_screen.enabled;
         let (startup_size, startup_position) =
             startup_window_placement(event_loop, spec.width, spec.height);
@@ -22207,6 +25786,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
         });
         let mut attrs = Window::default_attributes()
             .with_title(&spec.title)
+            .with_decorations(!spec.client_decorations)
             .with_visible(!hide_until_loading_frame);
         attrs = if let Some(size) = audit_size {
             attrs.with_inner_size(size)
@@ -22233,9 +25813,18 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
         )) {
             Ok((gpu, upload_ms)) => {
                 self.upload_ms = upload_ms;
+                self.startup_readiness = if gpu.loading_screen.shown {
+                    StartupReadiness::LoadingPresented
+                } else {
+                    StartupReadiness::Initializing
+                };
                 self.gpu = Some(gpu);
                 self.window = Some(window);
-                self.drain_runtime_commands();
+                let maximized = self
+                    .window
+                    .as_ref()
+                    .is_some_and(|window| window.is_maximized());
+                self.sync_client_chrome_maximized(maximized);
                 let delay = self.gpu.as_ref().and_then(|gpu| {
                     let loading = &gpu.loading_screen;
                     let shown_at = loading.presented_at?;
@@ -22249,8 +25838,10 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                 if let Some(deadline) = delay {
                     self.startup_real_redraw_deadline = Some(deadline);
                     event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
-                } else {
-                    self.request_redraw();
+                }
+                self.drain_runtime_commands();
+                if delay.is_none() {
+                    self.request_application_frame();
                 }
             }
             Err(e) => {
@@ -22263,10 +25854,19 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: RuntimeEvent) {
         match event {
             RuntimeEvent::Wake => {
+                if self.command_drain_continuation_pending {
+                    self.command_drain_wake_latched = true;
+                    self.request_application_frame();
+                    return;
+                }
                 self.drain_runtime_commands();
-                self.drain_html_report_messages();
-                self.drain_runtime_commands();
-                self.request_redraw();
+                if !self.command_drain_continuation_pending {
+                    self.drain_html_report_messages();
+                    self.drain_runtime_commands();
+                }
+                if self.startup_real_redraw_deadline.is_none() {
+                    self.request_application_frame();
+                }
             }
             RuntimeEvent::ResizeLogical { width, height } => {
                 self.request_logical_window_resize(width, height);
@@ -22280,7 +25880,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
             if now >= deadline {
                 self.startup_real_redraw_deadline = None;
                 event_loop.set_control_flow(ControlFlow::Wait);
-                self.request_redraw();
+                self.request_application_frame();
             } else {
                 event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
             }
@@ -22289,17 +25889,39 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
         let mut request_redraw = self.flush_deferred_popup_commands();
         let mut next_deadline = None;
         if let Some(gpu) = &mut self.gpu {
-            let visual_dirty = gpu.expire_toasts()
-                | gpu.tick_hover_transitions()
+            let transition_text_dirty = gpu.active_style_transitions_affect_text();
+            let toast_dirty = gpu.expire_toasts();
+            let transition_dirty = gpu.tick_hover_transitions()
                 | gpu.tick_focus_transitions()
                 | gpu.tick_checked_transitions()
                 | gpu.tick_active_transitions()
                 | gpu.tick_open_transitions()
                 | gpu.tick_selected_transitions()
-                | gpu.tick_expanded_transitions()
-                | gpu.tick_css_animations();
-            if visual_dirty {
+                | gpu.tick_expanded_transitions();
+            let animation_tick = gpu.tick_css_animations();
+            if transition_dirty && transition_text_dirty {
                 gpu.rebuild_visuals();
+                request_redraw = true;
+            } else if toast_dirty {
+                if !gpu.rebuild_animation_visuals(
+                    &animation_tick.visual_dirty_ids,
+                    &animation_tick.text_dirty_ids,
+                    true,
+                ) {
+                    gpu.rebuild_visuals();
+                }
+                request_redraw = true;
+            } else if !animation_tick.visual_dirty_ids.is_empty() {
+                if !gpu.rebuild_animation_visuals(
+                    &animation_tick.visual_dirty_ids,
+                    &animation_tick.text_dirty_ids,
+                    false,
+                ) {
+                    gpu.rebuild_visuals();
+                }
+                request_redraw = true;
+            } else if transition_dirty {
+                gpu.rebuild_primitives();
                 request_redraw = true;
             }
             next_deadline = gpu.next_toast_deadline();
@@ -22342,6 +25964,14 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                 if let Some(gpu) = &mut self.gpu {
                     gpu.resize(size.width, size.height);
                 }
+                let maximized = self
+                    .window
+                    .as_ref()
+                    .is_some_and(|window| window.is_maximized());
+                self.sync_client_chrome_maximized(maximized);
+                if let Some([x, y]) = self.last_mouse_pos {
+                    self.update_client_resize_cursor(PhysicalPosition::new(x as f64, y as f64));
+                }
                 self.request_redraw();
             }
 
@@ -22371,6 +26001,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
             }
 
             WindowEvent::Focused(false) => {
+                self.client_titlebar_drag_pending = None;
                 if self.cancel_scatter_interaction() {
                     self.request_redraw();
                 }
@@ -22383,6 +26014,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                     MouseButton::Left => {
                         if !pressed {
                             // ── release ───────────────────────────────────────
+                            self.client_titlebar_drag_pending = None;
                             let was_orbiting = self.orbit_active;
                             let was_rect_select = self.rect_select_active;
                             let scatter_press = self.scatter_press_pos.take();
@@ -22588,6 +26220,10 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                     .and_then(|g| g.hit_test_ui(pos))
                                     .map(|(id, _)| id);
                                 if over.as_deref() == Some(pid.as_str()) {
+                                    if self.activate_client_chrome(&pid, event_loop) {
+                                        self.request_redraw();
+                                        return;
+                                    }
                                     if let Some(kind) =
                                         self.gpu.as_ref().and_then(|g| g.widget_kind(&pid))
                                     {
@@ -22619,13 +26255,23 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                 }
                                 // Rebuild to clear pressed / update checkbox.
                                 if let Some(gpu) = &mut self.gpu {
-                                    gpu.rebuild_visuals();
+                                    gpu.rebuild_widget_interaction(&pid, true);
                                 }
                                 self.request_redraw();
                             }
                         } else {
                             // ── press ─────────────────────────────────────────
                             let pos = self.last_mouse_pos.unwrap_or([0.0, 0.0]);
+                            let resize_direction = self.resize_direction_at(PhysicalPosition::new(
+                                pos[0] as f64,
+                                pos[1] as f64,
+                            ));
+                            if let Some(direction) = resize_direction {
+                                if let Some(window) = &self.window {
+                                    let _ = window.drag_resize_window(direction);
+                                }
+                                return;
+                            }
                             if let Some(close_id) =
                                 self.gpu.as_ref().and_then(|g| g.modal_close_button_at(pos))
                             {
@@ -22668,6 +26314,48 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                 .as_ref()
                                 .map(WgpuState::has_active_modal)
                                 .unwrap_or(false);
+                            if !modal_active {
+                                let chrome_drag_target = self
+                                    .gpu
+                                    .as_ref()
+                                    .and_then(|g| g.hit_test_ui(pos))
+                                    .map(|(id, _)| id)
+                                    .filter(|id| is_client_chrome_drag_target(id));
+                                if chrome_drag_target.is_some() {
+                                    self.set_focus(None);
+                                    let position =
+                                        PhysicalPosition::new(pos[0] as f64, pos[1] as f64);
+                                    let now = Instant::now();
+                                    let scale_factor = self
+                                        .window
+                                        .as_ref()
+                                        .map(|window| window.scale_factor())
+                                        .unwrap_or(1.0);
+                                    let double_click = is_client_titlebar_double_click(
+                                        self.last_client_titlebar_click,
+                                        now,
+                                        position,
+                                        client_double_click_thresholds(scale_factor),
+                                    );
+                                    self.last_client_titlebar_click =
+                                        (!double_click).then_some((now, position));
+                                    if double_click {
+                                        self.client_titlebar_drag_pending = None;
+                                        let next = self.window.as_ref().map(|window| {
+                                            let next = !window.is_maximized();
+                                            window.set_maximized(next);
+                                            next
+                                        });
+                                        if let Some(maximized) = next {
+                                            self.sync_client_chrome_maximized(maximized);
+                                        }
+                                    } else {
+                                        self.client_titlebar_drag_pending = Some(position);
+                                    }
+                                    return;
+                                }
+                                self.last_client_titlebar_click = None;
+                            }
                             if !modal_active {
                                 if let Some(item_id) =
                                     self.gpu.as_ref().and_then(|g| g.menu_item_at(pos))
@@ -22896,7 +26584,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                         ) {
                                             gpu.ensure_text_area_cursor_visible(&id);
                                         }
-                                        gpu.rebuild_visuals();
+                                        gpu.rebuild_widget_interaction(&id, false);
                                     }
                                     self.request_redraw();
                                     return;
@@ -22932,7 +26620,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                         self.drag_number_drag =
                                             gpu.create_drag_number_drag(&id, pos[0]);
                                     }
-                                    gpu.rebuild_visuals();
+                                    gpu.rebuild_widget_interaction(&id, true);
                                 }
                                 if kind == WidgetKind::Slider {
                                     self.update_slider_drag(pos[0], true);
@@ -23046,6 +26734,21 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                 return;
                             }
                             if button == MouseButton::Right {
+                                let chrome_target = self
+                                    .gpu
+                                    .as_ref()
+                                    .and_then(|g| g.hit_test_ui(pos))
+                                    .map(|(id, _)| id)
+                                    .filter(|id| is_client_chrome_drag_target(id));
+                                if chrome_target.is_some() {
+                                    if let Some(window) = &self.window {
+                                        window.show_window_menu(PhysicalPosition::new(
+                                            pos[0] as f64,
+                                            pos[1] as f64,
+                                        ));
+                                    }
+                                    return;
+                                }
                                 if let Some(menu_id) =
                                     self.gpu.as_ref().and_then(|g| g.context_menu_for_pos(pos))
                                 {
@@ -23078,25 +26781,44 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                     self.request_redraw();
                 }
                 self.last_mouse_pos = None;
+                self.client_resize_direction = None;
+                self.client_titlebar_drag_pending = None;
+                if self.client_decorations {
+                    if let Some(window) = &self.window {
+                        window.set_cursor(CursorIcon::Default);
+                    }
+                }
                 if let Some(gpu) = &mut self.gpu {
                     let old_hover = gpu.current_hover_id();
                     let requires_layout =
                         gpu.hover_change_requires_layout(old_hover.as_deref(), None);
+                    let rebuild_overlays = gpu.hover_change_requires_overlay_rebuild(
+                        old_hover.as_deref(),
+                        None,
+                        false,
+                    );
                     let cleared = gpu.update_hover_state(None, None);
                     let cleared_line_plot_hover = gpu.clear_line_plot_hover_all();
                     let (cleared_heatmap_hover, heatmap_payloads) = gpu.clear_heatmap_hover_all();
                     let (cleared_bar_chart_hover, bar_chart_payloads) =
                         gpu.clear_bar_chart_hover_all();
+                    if cleared {
+                        if requires_layout {
+                            gpu.apply_layout();
+                        } else {
+                            let dirty_ids = old_hover.into_iter().collect::<HashSet<_>>();
+                            gpu.rebuild_interaction_visuals(
+                                &dirty_ids,
+                                &HashSet::new(),
+                                rebuild_overlays,
+                            );
+                        }
+                    }
                     if cleared
                         || cleared_line_plot_hover
                         || cleared_heatmap_hover
                         || cleared_bar_chart_hover
                     {
-                        if requires_layout {
-                            gpu.apply_layout();
-                        } else {
-                            gpu.rebuild_visuals();
-                        }
                         self.request_redraw();
                     }
                     for (id, payload) in heatmap_payloads {
@@ -23128,7 +26850,23 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
             }
 
             WindowEvent::CursorMoved { position, .. } => {
+                self.update_client_resize_cursor(position);
                 let new_pos = [position.x as f32, position.y as f32];
+                if let Some(start) = self.client_titlebar_drag_pending {
+                    let scale_factor = self
+                        .window
+                        .as_ref()
+                        .map(|window| window.scale_factor())
+                        .unwrap_or(1.0);
+                    if should_start_client_titlebar_drag(start, position, scale_factor) {
+                        self.client_titlebar_drag_pending = None;
+                        self.last_mouse_pos = Some(new_pos);
+                        if let Some(window) = &self.window {
+                            let _ = window.drag_window();
+                        }
+                        return;
+                    }
+                }
 
                 // Drag interactions take priority.
                 if self.scrollbar_drag.is_some() {
@@ -23160,7 +26898,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                             ) {
                                 gpu.ensure_text_area_cursor_visible(&drag.widget_id);
                             }
-                            gpu.rebuild_visuals();
+                            gpu.rebuild_widget_interaction(&drag.widget_id, false);
                         }
                         self.request_redraw();
                     }
@@ -23288,43 +27026,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                     && !self.pan_active
                     && !self.rect_select_active
                 {
-                    let new_dropdown_hover = self
-                        .gpu
-                        .as_ref()
-                        .and_then(|g| g.dropdown_option_at(new_pos));
-                    let new_hover = if new_dropdown_hover.is_some() {
-                        None
-                    } else {
-                        self.gpu
-                            .as_ref()
-                            .and_then(|g| g.hit_test_hover(new_pos))
-                            .map(|(id, _)| id)
-                    };
-                    let old_hover = self
-                        .gpu
-                        .as_ref()
-                        .and_then(|g| g.widget_state.as_ref())
-                        .and_then(|ws| ws.hovered.clone());
-                    let old_dropdown_hover = self
-                        .gpu
-                        .as_ref()
-                        .and_then(|g| g.widget_state.as_ref())
-                        .and_then(|ws| ws.dropdown_hover.clone());
-                    if new_hover != old_hover || new_dropdown_hover != old_dropdown_hover {
-                        if let Some(gpu) = &mut self.gpu {
-                            let requires_layout = gpu.hover_change_requires_layout(
-                                old_hover.as_deref(),
-                                new_hover.as_deref(),
-                            );
-                            gpu.update_hover_state(new_hover, new_dropdown_hover);
-                            if requires_layout {
-                                // Rich tooltip content participates in overlay layout, so those
-                                // hover changes can affect rects as well as paint/text state.
-                                gpu.apply_layout();
-                            } else {
-                                gpu.rebuild_visuals();
-                            }
-                        }
+                    if self.update_widget_hover_at(new_pos).0 {
                         self.request_redraw();
                     }
 
@@ -23695,7 +27397,18 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
             }
 
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
-                self.handle_keyboard_input(event);
+                if self.client_decorations
+                    && is_client_system_menu_shortcut(
+                        self.modifiers.alt_key(),
+                        self.modifiers.control_key(),
+                        self.modifiers.super_key(),
+                        &event.logical_key,
+                    )
+                {
+                    self.show_client_system_menu();
+                    return;
+                }
+                self.handle_keyboard_input(event_loop, event);
             }
 
             WindowEvent::ModifiersChanged(modifiers) => {
@@ -23724,7 +27437,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                     self.emit_change(&id, ChangeValue::Text(value));
                                 }
                                 if let Some(gpu) = &mut self.gpu {
-                                    gpu.rebuild_visuals();
+                                    gpu.rebuild_widget_interaction(&id, false);
                                 }
                                 self.request_redraw();
                             }
@@ -23733,9 +27446,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                     self.emit_change(&id, ChangeValue::Text(value));
                                 }
                                 if let Some(gpu) = &mut self.gpu {
-                                    gpu.rebuild_text();
-                                    gpu.ensure_text_area_cursor_visible(&id);
-                                    gpu.rebuild_visuals();
+                                    gpu.rebuild_text_edit_interaction(&id, true);
                                 }
                                 self.request_redraw();
                             }
@@ -23771,14 +27482,27 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                         self.request_redraw();
                     }
                     self.scatter_upload_redraw_pending = false;
-                    if self
-                        .command_bridge
-                        .as_ref()
-                        .is_some_and(|bridge| !bridge.is_empty())
-                    {
-                        if let Some(bridge) = &self.command_bridge {
-                            bridge.wake();
-                        }
+                }
+                if self.mark_application_frame_presented() {
+                    self.request_redraw();
+                }
+                if self.advance_synthetic_input_profile() {
+                    self.request_redraw();
+                }
+                self.command_drain_continuation_pending = false;
+                if self.command_drain_wake_latched {
+                    self.command_drain_wake_latched = false;
+                    if let Some(bridge) = &self.command_bridge {
+                        bridge.clear_wake_pending();
+                    }
+                }
+                if self
+                    .command_bridge
+                    .as_ref()
+                    .is_some_and(|bridge| !bridge.is_empty())
+                {
+                    if let Some(bridge) = &self.command_bridge {
+                        bridge.wake();
                     }
                 }
                 if let Some(bridge) = &self.command_bridge {

@@ -376,6 +376,52 @@ fn hash_noise(p: vec2<f32>) -> f32 {
     return fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715))));
 }
 
+fn positive_mod(value: f32, period: f32) -> f32 {
+    return value - floor(value / period) * period;
+}
+
+fn background_pattern_color(in: VertOut) -> vec4<f32> {
+    let tile = max(in.paint.z, 2.0);
+    let kind = in.paint.y;
+    var mask = 0.0;
+    if (kind < 0.5) {
+        let cell_size = tile * 0.5;
+        let cell = floor(in.local_px / vec2<f32>(cell_size, cell_size));
+        mask = step(0.5, positive_mod(cell.x + cell.y, 2.0));
+    } else if (kind < 1.5) {
+        let stripe = positive_mod(in.local_px.x, tile);
+        mask = 1.0 - smoothstep(tile * 0.24, tile * 0.24 + 1.0, stripe);
+    } else if (kind < 2.5) {
+        let cell = in.local_px - floor(in.local_px / vec2<f32>(tile, tile)) * tile;
+        let distance = length(cell - vec2<f32>(tile * 0.5, tile * 0.5));
+        mask = 1.0 - smoothstep(tile * 0.16, tile * 0.16 + 1.0, distance);
+    } else {
+        let diagonal = abs(positive_mod(in.local_px.x + in.local_px.y, tile) - tile * 0.5);
+        mask = 1.0 - smoothstep(tile * 0.10, tile * 0.10 + 1.0, diagonal);
+    }
+    return mix(in.color2, in.color, clamp(mask, 0.0, 1.0));
+}
+
+fn rectangular_perimeter_coordinate(local_px: vec2<f32>, size: vec2<f32>) -> f32 {
+    let distances = vec4<f32>(
+        abs(local_px.y),
+        abs(size.x - local_px.x),
+        abs(size.y - local_px.y),
+        abs(local_px.x),
+    );
+    let closest = min(min(distances.x, distances.y), min(distances.z, distances.w));
+    if (closest == distances.x) {
+        return clamp(local_px.x, 0.0, size.x);
+    }
+    if (closest == distances.y) {
+        return size.x + clamp(local_px.y, 0.0, size.y);
+    }
+    if (closest == distances.z) {
+        return size.x + size.y + (size.x - clamp(local_px.x, 0.0, size.x));
+    }
+    return size.x * 2.0 + size.y + (size.y - clamp(local_px.y, 0.0, size.y));
+}
+
 @fragment
 fn fs_main(in: VertOut) -> @location(0) vec4<f32> {
     if (
@@ -389,6 +435,37 @@ fn fs_main(in: VertOut) -> @location(0) vec4<f32> {
     let shape_inset = max(in.params.y, 0.0);
     let shape_half_size = max(in.half_size - vec2<f32>(shape_inset, shape_inset), vec2<f32>(0.5, 0.5));
     let p = in.local_px - in.half_size; // centered coords
+    if (in.params.w > 5.5 && in.params.w < 6.5) {
+        let shape_sdf = rounded_rect_sdf(p, shape_half_size, in.radii);
+        let shape_mask = 1.0 - smoothstep(0.0, 1.0, shape_sdf);
+        let horizontal = in.paint.y > 0.5;
+        let along = select(in.local_px.y, in.local_px.x, horizontal);
+        let cross = select(in.local_px.x, in.local_px.y, horizontal);
+        let thickness = max(select(in.half_size.x, in.half_size.y, horizontal) * 2.0, 0.001);
+        var pattern_mask = 1.0;
+        if (in.paint.x > 9.5 && in.paint.x < 10.5) {
+            let period = max(thickness * 2.0, 2.0);
+            let longitudinal = abs(positive_mod(along, period) - period * 0.5);
+            let radial = abs(cross - thickness * 0.5);
+            let dot_sdf = length(vec2<f32>(longitudinal, radial)) - thickness * 0.5;
+            pattern_mask = 1.0 - smoothstep(0.0, 1.0, dot_sdf);
+        } else if (in.paint.x > 10.5 && in.paint.x < 11.5) {
+            let period = max(thickness * 4.0, 4.0);
+            let phase = positive_mod(along, period);
+            let dash_length = period * 0.625;
+            pattern_mask = 1.0 - smoothstep(dash_length - 1.0, dash_length, phase);
+        } else if (in.paint.x > 11.5 && in.paint.x < 12.5) {
+            let third = thickness / 3.0;
+            let outer_band = 1.0 - smoothstep(third - 1.0, third, cross);
+            let inner_band = smoothstep(third * 2.0 - 1.0, third * 2.0, cross);
+            pattern_mask = max(outer_band, inner_band);
+        }
+        let a = shape_mask * pattern_mask * in.color.a;
+        if (a < 0.001) {
+            discard;
+        }
+        return vec4<f32>(in.color.rgb, a);
+    }
     if (in.params.w > 3.5 && in.params.w < 4.5) {
         let radius = min(shape_half_size.x, shape_half_size.y);
         let dist = length(p);
@@ -514,6 +591,8 @@ fn fs_main(in: VertOut) -> @location(0) vec4<f32> {
         color = blob_color_at(in);
     } else if (in.paint.x > 3.5 && in.paint.x < 4.5 && in.params.z < 0.5) {
         color = mesh_color_at(in);
+    } else if (in.paint.x > 4.5 && in.paint.x < 5.5 && in.params.z < 0.5) {
+        color = background_pattern_color(in);
     }
     if (in.noise > 0.0001 && in.params.z < 0.5) {
         let n = hash_noise(floor(in.local_px + in.clip_bounds.xy * 0.173)) - 0.5;
@@ -530,7 +609,33 @@ fn fs_main(in: VertOut) -> @location(0) vec4<f32> {
         let inner_radii = max(in.radii - vec4<f32>(thickness, thickness, thickness, thickness), vec4<f32>(0.0, 0.0, 0.0, 0.0));
         let inner_sdf = rounded_rect_sdf(p, inner_half_size, inner_radii);
         let inner_mask = 1.0 - smoothstep(0.0, 1.0, inner_sdf);
-        a = max(outer_mask - inner_mask, 0.0) * color.a;
+        let ring_mask = max(outer_mask - inner_mask, 0.0);
+        if (in.paint.x > 9.5 && in.paint.x < 10.5) {
+            let size = max(in.half_size * 2.0, vec2<f32>(1.0, 1.0));
+            let along = rectangular_perimeter_coordinate(in.local_px, size);
+            let period = max(thickness * 2.0, 2.0);
+            let longitudinal = abs(positive_mod(along, period) - period * 0.5);
+            let radial = abs(sdf + thickness * 0.5);
+            let dot_sdf = length(vec2<f32>(longitudinal, radial)) - thickness * 0.5;
+            a = (1.0 - smoothstep(0.0, 1.0, dot_sdf)) * outer_mask * color.a;
+        } else if (in.paint.x > 10.5 && in.paint.x < 11.5) {
+            let size = max(in.half_size * 2.0, vec2<f32>(1.0, 1.0));
+            let along = rectangular_perimeter_coordinate(in.local_px, size);
+            let period = max(thickness * 4.0, 4.0);
+            let phase = positive_mod(along, period);
+            let dash_length = period * 0.625;
+            let dash_mask = 1.0 - smoothstep(dash_length - 1.0, dash_length, phase);
+            a = ring_mask * dash_mask * color.a;
+        } else if (in.paint.x > 11.5 && in.paint.x < 12.5) {
+            let depth = -sdf;
+            let third = thickness / 3.0;
+            let outer_band_sdf = abs(depth - third * 0.5) - third * 0.5;
+            let inner_band_sdf = abs(depth - third * 2.5) - third * 0.5;
+            let double_mask = 1.0 - smoothstep(0.0, 1.0, min(outer_band_sdf, inner_band_sdf));
+            a = double_mask * outer_mask * color.a;
+        } else {
+            a = ring_mask * color.a;
+        }
     } else if (in.params.z > 1.5 && in.params.z < 2.5) {
         let softness = max(in.params.x, 1.0);
         let spread = in.paint.w;

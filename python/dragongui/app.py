@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
+import re
 import time
 from typing import Any
 
 from ._backend import native_event_loop_available, run_document
 from .components import ComponentInstance, render_component_window
+from .icons import IconThemeValue, serialize_icon_theme
 from .runtime import AppHandle, ToastHandle, _collect_runtime_callbacks, _set_active_app_handle
 from .theme import Theme
 from .widgets import (
@@ -17,6 +19,43 @@ from .widgets import (
     _startup_resource_payload_scope,
     _walk_widget_tree,
 )
+
+_IMAGE_RESOURCE_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+_IMAGE_RESOURCE_MAX_ENCODED_BYTES = 16 * 1024 * 1024
+
+
+def _image_resource_id(value: object) -> str:
+    if not isinstance(value, str):
+        raise TypeError("image resource id must be a string")
+    resource_id = value.strip()
+    if not _IMAGE_RESOURCE_ID_RE.fullmatch(resource_id):
+        raise ValueError(
+            "image resource id must contain 1..128 ASCII letters, digits, '.', '_', or '-'"
+        )
+    return resource_id
+
+
+def _image_resource_data(value: object) -> bytes:
+    if isinstance(value, (str, Path)):
+        path = Path(value)
+        if not path.is_file():
+            raise ValueError(f"image resource path is not a file: {path}")
+        data = path.read_bytes()
+    elif isinstance(value, bytes):
+        data = value
+    elif isinstance(value, (bytearray, memoryview)):
+        data = bytes(value)
+    else:
+        raise TypeError("image resource must be PNG/JPEG bytes or a filesystem path")
+    if not data:
+        raise ValueError("image resource data cannot be empty")
+    if len(data) > _IMAGE_RESOURCE_MAX_ENCODED_BYTES:
+        raise ValueError("encoded image resource cannot exceed 16 MiB")
+    is_png = data.startswith(b"\x89PNG\r\n\x1a\n")
+    is_jpeg = data.startswith(b"\xff\xd8\xff")
+    if not (is_png or is_jpeg):
+        raise ValueError("image resource must contain encoded PNG or JPEG data")
+    return data
 
 
 @dataclass(slots=True)
@@ -71,6 +110,15 @@ def _loading_color_value(
     return (channels[0], channels[1], channels[2], alpha)
 
 
+def _stylesheet_identifier(value: object) -> str:
+    if not isinstance(value, str):
+        raise TypeError("stylesheet_id must be a string")
+    value = value.strip()
+    if not value:
+        raise ValueError("stylesheet_id must be a non-empty string")
+    return value
+
+
 @dataclass(slots=True)
 class App:
     """Top-level application object."""
@@ -80,7 +128,11 @@ class App:
     metadata: dict[str, Any] = field(default_factory=dict)
     loading_screen: bool | LoadingScreen | None = None
     _handle: AppHandle | None = field(default=None, init=False, repr=False)
-    _stylesheets: list[str] = field(default_factory=list, init=False, repr=False)
+    _stylesheets: list[tuple[str | None, str]] = field(
+        default_factory=list, init=False, repr=False
+    )
+    _icon_theme: dict[str, object] = field(default_factory=dict, init=False, repr=False)
+    _image_resources: dict[str, bytes] = field(default_factory=dict, init=False, repr=False)
 
     def document(
         self,
@@ -102,9 +154,62 @@ class App:
         doc["loading_screen"] = _loading_screen_to_dict(self.loading_screen)
         if self._stylesheets:
             doc["stylesheets"] = [
-                {"origin": "user", "source": css} for css in self._stylesheets
+                {
+                    "origin": "user",
+                    "source": css,
+                    **({"id": stylesheet_id} if stylesheet_id is not None else {}),
+                }
+                for stylesheet_id, css in self._stylesheets
             ]
+        if self._icon_theme:
+            doc["icon_theme"] = dict(self._icon_theme)
         return doc
+
+    def set_icon_theme(self, overrides: Mapping[str, IconThemeValue]) -> None:
+        """Replace semantic icon overrides used when the application starts.
+
+        Live replacement is atomic; existing icon widgets are reconciled and
+        their text/paint data is refreshed without changing layout.
+        """
+
+        if not isinstance(overrides, Mapping):
+            raise TypeError("icon theme overrides must be a mapping")
+        self._icon_theme = serialize_icon_theme(overrides)
+        if self._handle is not None:
+            self._handle.enqueue_set_icon_theme(self._icon_theme)
+
+    def set_image_resource(self, resource_id: str, source: object) -> None:
+        """Register or replace an application-owned PNG/JPEG image resource.
+
+        ``source`` may be encoded bytes or an explicit filesystem path. CSS
+        refers to the retained identifier; CSS never opens the path itself.
+        """
+
+        resource_id = _image_resource_id(resource_id)
+        data = _image_resource_data(source)
+        self._image_resources[resource_id] = data
+        if self._handle is not None:
+            self._handle.enqueue_set_buffer_resource(
+                resource_id,
+                data,
+                kind="image_encoded",
+            )
+
+    def release_image_resource(self, resource_id: str) -> None:
+        """Release a managed image from startup and live native retention."""
+
+        resource_id = _image_resource_id(resource_id)
+        self._image_resources.pop(resource_id, None)
+        if self._handle is not None:
+            self._handle.release_resource(resource_id)
+
+    def _queue_image_resources(self, handle: AppHandle) -> None:
+        for resource_id, data in self._image_resources.items():
+            handle.enqueue_set_buffer_resource(
+                resource_id,
+                data,
+                kind="image_encoded",
+            )
 
     def stylesheet(self, css: str) -> None:
         if not isinstance(css, str):
@@ -114,7 +219,51 @@ class App:
         if self._handle is not None:
             self._handle.enqueue_set_stylesheet(css)
             return
-        self._stylesheets.append(css)
+        self._stylesheets.append((None, css))
+
+    def set_stylesheet(self, stylesheet_id: str, css: str) -> None:
+        """Add or atomically replace a named user stylesheet.
+
+        Replacing a name preserves its position in the user cascade.
+        """
+        stylesheet_id = _stylesheet_identifier(stylesheet_id)
+        if not isinstance(css, str):
+            raise TypeError("css must be a string")
+        if not css.strip():
+            raise ValueError("css must be a non-empty string")
+        if self._handle is not None:
+            self._handle.enqueue_set_named_stylesheet(stylesheet_id, css)
+            return
+        for index, (existing_id, _) in enumerate(self._stylesheets):
+            if existing_id == stylesheet_id:
+                self._stylesheets[index] = (stylesheet_id, css)
+                break
+        else:
+            self._stylesheets.append((stylesheet_id, css))
+
+    def remove_stylesheet(self, stylesheet_id: str) -> bool | None:
+        """Remove a named user stylesheet.
+
+        Before startup this returns whether the name existed. During runtime
+        removal is asynchronous and returns ``None``.
+        """
+        stylesheet_id = _stylesheet_identifier(stylesheet_id)
+        if self._handle is not None:
+            self._handle.enqueue_remove_stylesheet(stylesheet_id)
+            return None
+        for index, (existing_id, _) in enumerate(self._stylesheets):
+            if existing_id == stylesheet_id:
+                self._stylesheets.pop(index)
+                return True
+        return False
+
+    def set_theme(self, theme: Theme) -> None:
+        """Atomically replace the active design-token theme."""
+        if not isinstance(theme, Theme):
+            raise TypeError("theme must be a DragonGUI Theme")
+        self.theme = theme
+        if self._handle is not None:
+            self._handle.enqueue_set_theme(theme.to_dict())
 
     def load_stylesheet(self, path: str | Path) -> None:
         """Load a user stylesheet from disk."""
@@ -150,6 +299,7 @@ class App:
         widgets = _walk_widget_tree(window)
         if bind_live:
             self._handle = handle
+            self._queue_image_resources(handle)
             if component_runtime is not None and component_runtime.app_handle is not handle:
                 component_runtime.attach(handle)
             handle.register_widget_callbacks(window)
@@ -161,12 +311,19 @@ class App:
         try:
             native_click_cbs = {} if component_runtime is not None and bind_live else click_cbs
             native_change_cbs = {} if component_runtime is not None and bind_live else change_cbs
-            return run_document(
+            result = run_document(
                 self.document(window, include_startup_resource_payloads=not bind_live),
                 native_click_cbs,
                 native_change_cbs,
                 app_handle=handle if bind_live else None,
             )
+            if bind_live and isinstance(result, dict):
+                snapshot = result.get("debug_snapshot")
+                if isinstance(snapshot, dict):
+                    runtime = snapshot.setdefault("runtime", {})
+                    if isinstance(runtime, dict):
+                        runtime["python"] = handle._python_debug_snapshot()
+            return result
         finally:
             if bind_live:
                 if component_runtime is not None:
@@ -312,6 +469,7 @@ class App:
 
         handle.call_soon_threadsafe(build_and_replace)
         self._handle = handle
+        self._queue_image_resources(handle)
         _set_active_app_handle(handle)
         try:
             result = run_document(
@@ -336,11 +494,14 @@ class App:
             handle._close()
             self._handle = None
 
-    def call_soon_threadsafe(self, fn: Any) -> None:
-        """Schedule a callable on the DragonGUI runtime when the app is live."""
+    def call_soon_threadsafe(self, fn: Any, *, coalesce_key: object | None = None) -> None:
+        """Schedule a callable, optionally replacing pending work with the same key."""
         if self._handle is None:
             raise RuntimeError("DragonGUI app is not running")
-        self._handle.call_soon_threadsafe(fn)
+        if coalesce_key is None:
+            self._handle.call_soon_threadsafe(fn)
+        else:
+            self._handle.call_soon_threadsafe(fn, coalesce_key=coalesce_key)
 
     def toast(
         self,

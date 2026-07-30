@@ -812,6 +812,7 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
+ "smallvec",
  "taffy",
  "thiserror 2.0.18",
  "webview2-com",

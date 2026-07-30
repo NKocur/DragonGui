@@ -364,6 +364,21 @@ WINDOWS_311_CSS = """
             inset -1px -1px 0 var(--win-light);
     }
 
+    SearchBox::field {
+        background: var(--win-field);
+        border: 1px solid var(--win-shadow);
+        border-radius: 0;
+        color: var(--win-text);
+    }
+
+    SearchBox::icon,
+    SearchBox::clear {
+        background: var(--win-face);
+        border: 1px solid var(--win-shadow);
+        border-radius: 0;
+        color: var(--win-text);
+    }
+
     Dropdown::field {
         background: var(--win-field);
         border-radius: 0;
@@ -874,12 +889,13 @@ MAC_OS_90S_CSS = WINDOWS_311_CSS + """
         gap: 5px;
     }
 
-    SearchBox TextInput {
+    SearchBox::field {
         border: 1px solid #777777;
         box-shadow: inset 1px 1px 0 #aaaaaa;
     }
 
-    SearchBox IconButton {
+    SearchBox::icon,
+    SearchBox::clear {
         background: #dedede;
         border: 1px solid #777777;
         border-radius: 2px;

@@ -52,6 +52,21 @@ While an app is running, `app.stylesheet(...)`, `app.load_stylesheet(...)`, and
 `app.clear_stylesheets()` enqueue native stylesheet commands and restyle the
 retained widget tree without rebuilding the Python document.
 
+For live appearance switching, use a stable name:
+
+```python
+app.set_stylesheet("appearance", windows_311_css)
+app.set_stylesheet("appearance", mac_os_css)  # replaces in place
+app.remove_stylesheet("appearance")
+app.set_theme(dg.Theme.light())
+```
+
+Named replacement preserves source order and keeps the cascade bounded.
+Theme changes preserve widget interaction state and distinguish layout-token
+changes from paint-only changes. Active names and source order are visible in
+runtime debug snapshots. A complete example is available in
+`examples/runtime_theme_switching_demo.py`.
+
 ## Cascade
 
 DragonGUI resolves style sources in this order, lowest to highest precedence:
@@ -159,32 +174,57 @@ Checkbox:checked::indicator {
 
 Frequently used parts:
 
-| Widget | Parts |
-| --- | --- |
-| `Panel` | `accent`, `scrollbar-track`, `scrollbar-thumb` |
-| `Collapsible` | `header`, `indicator`, `body`, `scrollbar-track`, `scrollbar-thumb` |
-| `Modal` | `scrim`, `scrollbar-track`, `scrollbar-thumb` |
-| `Menu`, `ContextMenu` | `menu`, `item`, `item-hover`, `item-disabled` |
-| `Button`, `SmallButton` | `badge` |
-| `IconButton`, `ArrowButton` | `icon` |
-| `ImageButton` | `image` |
-| `NumberInput` | `field`, `stepper`, `stepper-up`, `stepper-down`, `stepper-divider`, `divider`, `caret` |
-| `DragNumber` | `field`, `value`, `grip` |
-| `Dropdown` | `field`, `chevron`, `menu`, `item`, `item-selected`, `item-hover` |
-| `Checkbox` | `row`, `box`, `indicator`, `label` |
-| `ToggleSwitch` | `row`, `track`, `thumb`, `label` |
-| `Slider` | `track`, `fill`, `thumb` |
-| `RangeSlider` | `track`, `range`, `thumb-min`, `thumb-max`, `label` |
-| `ProgressBar` | `track`, `fill`, `label` |
-| `LoadingSpinner` | `track`, `arc`, `label` |
-| `LED` | `dot`, `glow`, `highlight` |
-| `Tabs` | `header` |
-| `Tab` | `tab`, `accent`, `badge` |
-| `NavItem` | `item`, `accent`, `badge` |
-| `TreeNode` | `row`, `indicator`, `label`, `guide` |
-| `DataFrameTable` | `header`, `row`, `row-selected`, `grid-line`, `scrollbar-track`, `scrollbar-thumb` |
-| `Heatmap` | `cell`, `grid`, `hover`, `scalar-bar`, `label` |
-| `BarChart` | `label`, `value-label` |
+<!-- BEGIN GENERATED WIDGET CSS CAPABILITIES -->
+
+_Generated from `python/dragongui/widget_css_capabilities.json`. Do not edit this table manually._
+
+Global generated-content hooks: `::before`, `::after` (text renderer).
+
+| Widget | Supported states | Parts and renderer support |
+| --- | --- | --- |
+| `ArrowButton` | `:hover`, `:active`, `:focus`, `:disabled` | `icon` (paint) |
+| `BarChart` | `:hover`, `:active`, `:focus`, `:disabled` | `label` (text), `value-label` (text) |
+| `Button` | `:hover`, `:active`, `:focus`, `:disabled` | `badge` (paint) |
+| `Checkbox` | `:hover`, `:active`, `:focus`, `:disabled`, `:checked` | `box` (paint), `indicator` (paint), `row` (paint), `label` (text) |
+| `CodeEditor` | `:hover`, `:active`, `:focus`, `:disabled` | `caret` (paint), `field` (paint), `gutter` (paint), `line-number` (text) |
+| `Collapsible` | `:hover`, `:active`, `:focus`, `:disabled`, `:open`, `:expanded`, `:collapsed` | `header` (paint), `indicator` (paint), `scrollbar-thumb` (paint), `scrollbar-track` (paint), `body` (structural) |
+| `ContextMenu` | `:hover`, `:active`, `:focus`, `:disabled`, `:open`, `:expanded`, `:collapsed` | `item` (paint), `item-disabled` (paint), `item-hover` (paint), `menu` (paint) |
+| `DataFrameTable` | `:hover`, `:active`, `:focus`, `:disabled`, `:selected` | `grid-line` (paint), `header` (paint), `row` (paint), `row-selected` (paint), `scrollbar-thumb` (paint), `scrollbar-track` (paint) |
+| `DragNumber` | `:hover`, `:active`, `:focus`, `:disabled` | `field` (paint), `grip` (paint), `value` (text) |
+| `Dropdown` | `:hover`, `:active`, `:focus`, `:disabled`, `:open`, `:expanded`, `:collapsed` | `chevron` (paint), `field` (paint), `item` (paint), `item-hover` (paint), `item-selected` (paint), `menu` (paint) |
+| `HLayout` | `:hover`, `:active`, `:focus`, `:disabled` | `scrollbar-thumb` (paint), `scrollbar-track` (paint) |
+| `Heatmap` | `:hover`, `:active`, `:focus`, `:disabled` | `cell` (paint), `grid` (paint), `hover` (paint), `scalar-bar` (paint), `label` (text) |
+| `IconButton` | `:hover`, `:active`, `:focus`, `:disabled` | `icon` (paint) |
+| `LED` | `:hover`, `:active`, `:focus`, `:disabled` | `dot` (paint), `glow` (paint), `highlight` (paint) |
+| `LoadingSpinner` | `:hover`, `:active`, `:focus`, `:disabled` | `arc` (paint), `track` (paint), `label` (text) |
+| `LogView` | `:hover`, `:active`, `:focus`, `:disabled` | `debug` (text), `error` (text), `info` (text), `line` (text), `warning` (text) |
+| `Menu` | `:hover`, `:active`, `:focus`, `:disabled`, `:open`, `:expanded`, `:collapsed` | `item` (paint), `item-disabled` (paint), `item-hover` (paint), `menu` (paint) |
+| `Modal` | `:hover`, `:active`, `:focus`, `:disabled`, `:open`, `:expanded`, `:collapsed` | `body` (paint), `header` (paint), `scrim` (paint), `scrollbar-thumb` (paint), `scrollbar-track` (paint), `title` (text) |
+| `NavItem` | `:hover`, `:active`, `:focus`, `:disabled`, `:selected` | `accent` (paint), `badge` (paint), `item` (paint) |
+| `NumberInput` | `:hover`, `:active`, `:focus`, `:disabled` | `caret` (paint), `divider` (paint), `field` (paint), `stepper` (paint), `stepper-divider` (paint), `stepper-down` (paint), `stepper-up` (paint) |
+| `Page` | `:hover`, `:active`, `:focus`, `:disabled` | `scrollbar-thumb` (paint), `scrollbar-track` (paint) |
+| `Pages` | `:hover`, `:active`, `:focus`, `:disabled` | `scrollbar-thumb` (paint), `scrollbar-track` (paint) |
+| `Pane` | `:hover`, `:active`, `:focus`, `:disabled` | `pane` (structural) |
+| `Panel` | `:hover`, `:active`, `:focus`, `:disabled` | `accent` (paint), `body` (paint), `header` (paint), `scrollbar-thumb` (paint), `scrollbar-track` (paint), `title` (text) |
+| `PieChart` | `:hover`, `:active`, `:focus`, `:disabled` | `label` (text) |
+| `ProgressBar` | `:hover`, `:active`, `:focus`, `:disabled` | `fill` (paint), `track` (paint), `label` (text) |
+| `RadioButton` | `:hover`, `:active`, `:focus`, `:disabled`, `:checked` | `dot` (paint), `indicator` (paint), `label` (text) |
+| `RangeSlider` | `:hover`, `:active`, `:focus`, `:disabled` | `range` (paint), `thumb-max` (paint), `thumb-min` (paint), `track` (paint), `label` (text) |
+| `ScrollArea` | `:hover`, `:active`, `:focus`, `:disabled` | `scrollbar-thumb` (paint), `scrollbar-track` (paint) |
+| `SearchBox` | `:hover`, `:active`, `:focus`, `:disabled` | `clear` (forwarded), `field` (forwarded), `icon` (forwarded) |
+| `Selectable` | `:hover`, `:active`, `:focus`, `:disabled`, `:selected` | `indicator` (paint), `row` (paint), `label` (text) |
+| `Sidebar` | `:hover`, `:active`, `:focus`, `:disabled` | `body` (paint), `header` (paint), `scrollbar-thumb` (paint), `scrollbar-track` (paint), `title` (text) |
+| `Slider` | `:hover`, `:active`, `:focus`, `:disabled` | `fill` (paint), `thumb` (paint), `track` (paint) |
+| `SmallButton` | `:hover`, `:active`, `:focus`, `:disabled` | `badge` (paint) |
+| `Splitter` | `:hover`, `:active`, `:focus`, `:disabled` | `gutter` (paint) |
+| `Tab` | `:hover`, `:active`, `:focus`, `:disabled`, `:selected` | `accent` (paint), `badge` (paint), `tab` (paint) |
+| `Tabs` | `:hover`, `:active`, `:focus`, `:disabled` | `header` (paint) |
+| `ToggleSwitch` | `:hover`, `:active`, `:focus`, `:disabled`, `:checked` | `row` (paint), `thumb` (paint), `track` (paint), `label` (text) |
+| `TreeNode` | `:hover`, `:active`, `:focus`, `:disabled`, `:open`, `:expanded`, `:collapsed` | `guide` (paint), `indicator` (paint), `row` (paint), `label` (text) |
+| `VLayout` | `:hover`, `:active`, `:focus`, `:disabled` | `scrollbar-thumb` (paint), `scrollbar-track` (paint) |
+| `Window` | `:hover`, `:active`, `:focus`, `:disabled` | `close` (forwarded), `maximize` (forwarded), `minimize` (forwarded), `title` (forwarded), `titlebar` (forwarded), `resize-border` (structural) |
+
+<!-- END GENERATED WIDGET CSS CAPABILITIES -->
 
 Most rendered widgets also support `::before` and `::after` for first-slice
 generated text content:
@@ -245,7 +285,7 @@ The most common user-facing properties are:
 | --- | --- |
 | Layout | `display`, `flex-direction`, `flex-wrap`, `flex`, `width`, `height`, `min-width`, `max-height`, `padding`, `margin`, `gap`, `overflow`, `position`, `top`, `right`, `bottom`, `left`, `z-index` |
 | Grid | `grid-template-columns`, `grid-template-rows`, `grid-template-areas`, `grid-auto-flow`, `grid-area`, `grid-column`, `grid-row` |
-| Visual | `background`, `background-color`, `background-image`, `border`, `border-color`, `border-width`, `border-radius`, `outline`, `box-shadow`, `opacity`, `accent`, `track-color`, `thumb-color`, `transform`, `translate`, `scale`, `rotate` |
+| Visual | `background`, `background-color`, `background-image` (gradients, `dg-pattern`, managed `app-resource`), `border`, side-specific border shorthands/longhands, `border-color`, `border-width`, `border-style`, `border-radius`, `outline`, `outline-style`, `box-shadow`, `opacity`, `accent`, `track-color`, `thumb-color`, `transform`, `translate`, `scale`, `rotate` |
 | Text | `font-size`, `font-family`, `font-weight`, `font-style`, `color`, `text-align` |
 | Tables | `table-row-height`, `table-header-height`, `table-column-width`, `table-index-width` |
 | Scatter3D | `scatter-point-size`, `scatter-point-style`, `scatter-grid-visible`, `scatter-grid-planes`, `scatter-legend-position`, `scatter-orientation-axes` |
@@ -266,6 +306,11 @@ Panel.card {
     border-color: rgba(255, 255, 255, 0.18);
 }
 ```
+
+Gradient stops accept percentages, logical pixels, and mixed
+`calc()` length-percentage values. Repeating gradients preserve logical-pixel
+stripe widths as widgets resize and scale them with display DPI. Two-position
+hard stops such as `red 1px 2px` are also supported.
 
 Useful theme tokens include `background`, `surface`, `surface_alt`, `text`,
 `foreground`, `muted_text`, `muted`, `accent`, `border`, `danger`, `warning`,
@@ -356,6 +401,18 @@ Label.title {
 }
 ```
 
+Ordered fallback stacks are supported:
+
+```css
+Label {
+    font-family: "Chicago", "Geneva", Arial, system-ui, sans-serif;
+}
+```
+
+DragonGUI selects the first available family, including `@font-face` aliases,
+and uses platform font-database mappings for generic families. Missing named
+families are available through diagnostics without per-frame console warnings.
+
 Remote font URLs and WOFF2 loading are not supported yet.
 
 Static `@supports` rules can gate declarations or selectors supported by the
@@ -408,11 +465,34 @@ print(dg.help("reference.css_properties"))
 Keep these boundaries in mind:
 
 - Browser-only features are not automatically supported.
-- Remote fonts, WOFF2, and `background-image: url(...)` are not supported.
+- Remote fonts, WOFF2, and arbitrary `background-image: url(...)` sources are
+  not supported.
 - CSS-created layout nodes, hit-test regions, and arbitrary pseudo-elements are
   not supported.
 - `::before` and `::after` generated content is text-only and paint-only.
 - Container queries are width-only.
+
+For texture-free surfaces, use
+`dg-pattern(checker, foreground, background, 8px)` in `background` or
+`background-image`. The supported kinds are `checker`, `pinstripe`,
+`dot`/`stipple`, and `diagonal-hatch`; tile sizes are bounded to `2px..128px`.
+Patterns retain rounded clipping, opacity, transforms, layering, and DPI-aware
+logical sizing.
+
+For packaged PNG/JPEG surfaces, register bytes or a path in Python and refer to
+the semantic ID from CSS:
+
+```python
+app.set_image_resource("linen", Path("assets/linen.png"))
+```
+
+```css
+Panel { background-image: app-resource("linen", cover); }
+```
+
+Fits are `contain`, `cover`, `stretch`, and `repeat`. Registration is bounded
+to 16 MiB encoded data; native decode is bounded to 4096×4096 and 16 million
+pixels. CSS never receives filesystem or remote-loading authority.
 - Animations and transitions are first-slice visual features.
 - `transform` is paint-only and does not affect layout or hit testing.
 - Scatter3D data, colormaps, scalar bars, and axis labels remain API-driven.

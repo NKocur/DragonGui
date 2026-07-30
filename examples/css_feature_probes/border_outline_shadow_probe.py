@@ -122,6 +122,27 @@ app.stylesheet(
         border-radius: 26px;
     }
 
+    Panel.dotted-border {
+        border: 3px dotted rgba(255, 211, 106, 0.90);
+        border-radius: 18px;
+    }
+
+    Panel.dashed-border {
+        border: 3px dashed rgba(90, 169, 255, 0.90);
+        border-radius: 18px;
+    }
+
+    Panel.double-border {
+        border: 6px double rgba(116, 221, 176, 0.90);
+        border-radius: 18px;
+    }
+
+    Panel.side-border {
+        border: 0;
+        border-left: 5px double rgba(255, 101, 132, 0.92);
+        border-bottom: 3px dashed rgba(255, 211, 106, 0.90);
+    }
+
     Panel.outline-solid {
         outline: 3px solid rgba(90, 169, 255, 0.78);
         outline-offset: 4px;
@@ -140,6 +161,16 @@ app.stylesheet(
         outline: 4px solid rgba(255, 101, 132, 0.90);
         outline-style: none;
         border-color: rgba(255, 101, 132, 0.45);
+    }
+
+    Panel.outline-dotted {
+        outline: 3px dotted rgba(255, 211, 106, 0.90);
+        outline-offset: 4px;
+    }
+
+    Panel.outline-dashed {
+        outline: 3px dashed rgba(116, 221, 176, 0.90);
+        outline-offset: 4px;
     }
 
     Panel.outset-shadow {
@@ -194,7 +225,7 @@ app.stylesheet(
 )
 
 
-win = dg.Window("CSS Border Outline Shadow Probe", width=850, height=700)
+win = dg.Window("CSS Border Outline Shadow Probe", width=900, height=780)
 
 
 def sample(class_name: str, label: str) -> None:
@@ -205,8 +236,8 @@ def sample(class_name: str, label: str) -> None:
 with dg.VLayout(class_="scroll-root"):
     dg.Label("Border, outline, and shadow paint", class_="title")
     dg.Label(
-        "This probe isolates uniform border styles, paint-only outlines, inset/outset shadows, "
-        "multi-layer shadows, and shadow clipping inside scroll containers.",
+        "This probe isolates uniform and per-edge border styles, paint-only outlines, "
+        "inset/outset shadows, multi-layer shadows, and shadow clipping inside scroll containers.",
         class_="caption",
     )
 
@@ -219,7 +250,13 @@ with dg.VLayout(class_="scroll-root"):
             with dg.HLayout(style={"gap": 10}):
                 sample("no-border", "none")
                 sample("hidden-border", "hidden")
-            dg.Label("PASS: none/hidden remove the border ring.", class_="pass")
+            with dg.HLayout(style={"gap": 10}):
+                sample("dotted-border", "dotted")
+                sample("dashed-border", "dashed")
+            with dg.HLayout(style={"gap": 10}):
+                sample("double-border", "double")
+                sample("side-border", "left + bottom")
+            dg.Label("PASS: patterns remain bounded and side borders stay independent.", class_="pass")
 
         with dg.Panel("Outlines", class_="case"):
             dg.Label("outline and outline-offset", class_="case-title")
@@ -228,7 +265,10 @@ with dg.VLayout(class_="scroll-root"):
                 sample("outline-tight", "tight")
             with dg.HLayout(style={"gap": 10}):
                 sample("outline-none", "none")
-            dg.Label("PASS: outlines follow rounded corners cleanly.", class_="pass")
+                sample("outline-dotted", "dotted")
+            with dg.HLayout(style={"gap": 10}):
+                sample("outline-dashed", "dashed")
+            dg.Label("PASS: patterned outlines follow rounded corners without changing layout.", class_="pass")
 
     with dg.HLayout(style={"gap": 12}):
         with dg.Panel("Shadows", class_="case shadow-case"):

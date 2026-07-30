@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import base64
-from collections import deque
+from collections import deque, OrderedDict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 import inspect
 import json
@@ -16,6 +16,7 @@ from .diagnostics import record_task_failure as _record_task_failure
 
 
 _MAX_PYTHON_TASKS_PER_DRAIN = 100
+_PYTHON_TASK_DRAIN_BUDGET_MS = 6.0
 _TOAST_LEVELS = {"info", "success", "warning", "error"}
 _TOAST_POSITIONS = {"top-right", "top-left", "bottom-right", "bottom-left"}
 _active_app_handle: AppHandle | None = None
@@ -41,17 +42,21 @@ def _record_timing_stat(bucket: dict[str, Any], elapsed_ms: float) -> None:
 
 
 class _ScheduledPythonTask:
-    __slots__ = ("fn", "origin", "diagnostics")
+    __slots__ = ("fn", "origin", "diagnostics", "coalesce_key", "sequence")
 
     def __init__(
         self,
         fn: Callable[[], None],
         origin: Any | None,
         diagnostics: bool,
+        coalesce_key: object | None,
+        sequence: int,
     ) -> None:
         self.fn = fn
         self.origin = origin
         self.diagnostics = diagnostics
+        self.coalesce_key = coalesce_key
+        self.sequence = sequence
 
 
 class ToastHandle:
@@ -137,6 +142,10 @@ class LiveWidgetHandle:
     def enqueue_replace_node(self, node: object) -> None:
         self.ensure_open()
         self.app.enqueue_replace_node(self.id, node)
+
+    def enqueue_update_extension_display_list(self, display_list: object) -> bool:
+        self.ensure_open()
+        return self.app.enqueue_update_extension_display_list(self.id, display_list)
 
     def enqueue_set_scatter_points_packed(
         self,
@@ -604,7 +613,13 @@ class AppHandle:
 
     def __init__(self) -> None:
         self._lock = RLock()
-        self._tasks: deque[_ScheduledPythonTask] = deque()
+        self._tasks: OrderedDict[int, _ScheduledPythonTask] = OrderedDict()
+        self._pending_task_keys: dict[object, int] = {}
+        self._task_sequence = 0
+        self._python_tasks_enqueued = 0
+        self._python_tasks_executed = 0
+        self._python_tasks_coalesced = 0
+        self._python_task_queue_high_water = 0
         self._pending_native: deque[tuple[str, tuple[object, ...]]] = deque()
         self._click_callbacks: dict[str, Callable[[], None]] = {}
         self._change_callbacks: dict[str, Callable[[object], None]] = {}
@@ -643,21 +658,44 @@ class AppHandle:
         self,
         fn: Callable[[], None],
         *,
+        coalesce_key: object | None = None,
         _diagnostics: bool = True,
     ) -> None:
         if not callable(fn):
             raise TypeError("call_soon_threadsafe expects a callable")
+        if coalesce_key is not None:
+            try:
+                hash(coalesce_key)
+            except TypeError:
+                raise TypeError("coalesce_key must be hashable") from None
         collector = None
         try:
             if _diagnostics:
                 collector = _diagnostics_collector()
         except Exception:
             collector = None
-        scheduled = _ScheduledPythonTask(fn, None, _diagnostics)
         with self._lock:
             if self._closed:
                 raise RuntimeError("DragonGUI app handle is closed")
-            self._tasks.append(scheduled)
+            self._task_sequence += 1
+            scheduled = _ScheduledPythonTask(
+                fn,
+                None,
+                _diagnostics,
+                coalesce_key,
+                self._task_sequence,
+            )
+            if coalesce_key is not None:
+                replaced_sequence = self._pending_task_keys.get(coalesce_key)
+                if replaced_sequence is not None and self._tasks.pop(replaced_sequence, None):
+                    self._python_tasks_coalesced += 1
+                self._pending_task_keys[coalesce_key] = scheduled.sequence
+            self._tasks[scheduled.sequence] = scheduled
+            self._python_tasks_enqueued += 1
+            self._python_task_queue_high_water = max(
+                self._python_task_queue_high_water,
+                len(self._tasks),
+            )
             sender = self._native_sender
             should_request_drain = sender is not None and not self._drain_requested
             if should_request_drain:
@@ -693,6 +731,15 @@ class AppHandle:
 
     def enqueue_replace_node(self, widget_id: str, node: object) -> None:
         self._send_or_queue_native("enqueue_replace_node", widget_id, _node_json(node))
+
+    def enqueue_update_extension_display_list(
+        self, widget_id: str, display_list: object
+    ) -> bool:
+        method = "enqueue_update_extension_display_list"
+        if not self._native_method_available(method):
+            return False
+        self._send_or_queue_native(method, widget_id, json.dumps(display_list))
+        return True
 
     def enqueue_prewarm_scatter_widgets(self, count: int) -> None:
         if count <= 0 or not self._native_method_available("enqueue_prewarm_scatter_widgets"):
@@ -1244,6 +1291,35 @@ class AppHandle:
     def enqueue_set_stylesheet(self, css: str) -> None:
         self._send_or_queue_native("enqueue_set_stylesheet", "user", _stylesheet_css(css))
 
+    def enqueue_set_named_stylesheet(self, stylesheet_id: str, css: str) -> None:
+        self._send_or_queue_native(
+            "enqueue_set_named_stylesheet",
+            "user",
+            _stylesheet_id(stylesheet_id),
+            _stylesheet_css(css),
+        )
+
+    def enqueue_remove_stylesheet(self, stylesheet_id: str) -> None:
+        self._send_or_queue_native(
+            "enqueue_remove_stylesheet", "user", _stylesheet_id(stylesheet_id)
+        )
+
+    def enqueue_set_theme(self, theme: Mapping[str, object]) -> None:
+        if not isinstance(theme, Mapping):
+            raise TypeError("theme must be a mapping")
+        self._send_or_queue_native(
+            "enqueue_set_theme",
+            json.dumps(dict(theme), separators=(",", ":"), sort_keys=True),
+        )
+
+    def enqueue_set_icon_theme(self, theme: Mapping[str, object]) -> None:
+        if not isinstance(theme, Mapping):
+            raise TypeError("icon theme must be a mapping")
+        self._send_or_queue_native(
+            "enqueue_set_icon_theme",
+            json.dumps(dict(theme), separators=(",", ":"), sort_keys=True),
+        )
+
     def enqueue_clear_stylesheets(self) -> None:
         self._send_or_queue_native("enqueue_clear_stylesheets", "user")
 
@@ -1336,6 +1412,11 @@ class AppHandle:
                 "queued_tasks": queued_tasks,
                 "pending_native_commands": pending_native,
                 "drain_requested": self._drain_requested,
+                "tasks_enqueued": self._python_tasks_enqueued,
+                "tasks_executed": self._python_tasks_executed,
+                "tasks_coalesced": self._python_tasks_coalesced,
+                "task_queue_high_water": self._python_task_queue_high_water,
+                "task_drain_budget_ms": _PYTHON_TASK_DRAIN_BUDGET_MS,
                 "task_drain_timing": dict(self._python_task_drain_timing),
                 "last_task_drain": (
                     dict(self._last_python_task_drain)
@@ -1612,7 +1693,11 @@ class AppHandle:
                     if not self._tasks:
                         self._drain_requested = False
                         return
-                    scheduled = self._tasks.popleft()
+                    _, scheduled = self._tasks.popitem(last=False)
+                    if scheduled.coalesce_key is not None:
+                        pending_sequence = self._pending_task_keys.get(scheduled.coalesce_key)
+                        if pending_sequence == scheduled.sequence:
+                            self._pending_task_keys.pop(scheduled.coalesce_key, None)
                 task = scheduled.fn
                 task_label = _callable_label(task)
                 task_t0 = time.perf_counter()
@@ -1637,7 +1722,10 @@ class AppHandle:
                             "elapsed_ms": task_ms,
                             "outcome": outcome,
                         }
+                        self._python_tasks_executed += 1
                 processed += 1
+                if (time.perf_counter() - drain_t0) * 1000.0 >= _PYTHON_TASK_DRAIN_BUDGET_MS:
+                    break
 
             with self._lock:
                 sender = self._native_sender if self._tasks and not self._closed else None
@@ -1692,6 +1780,7 @@ class AppHandle:
             self._native_sender = None
             self._drain_requested = False
             self._tasks.clear()
+            self._pending_task_keys.clear()
             self._pending_native.clear()
             self._click_callbacks.clear()
             self._change_callbacks.clear()
@@ -1729,6 +1818,15 @@ def _stylesheet_css(css: object) -> str:
     if not css.strip():
         raise ValueError("css must be a non-empty string")
     return css
+
+
+def _stylesheet_id(value: object) -> str:
+    if not isinstance(value, str):
+        raise TypeError("stylesheet_id must be a string")
+    value = value.strip()
+    if not value:
+        raise ValueError("stylesheet_id must be a non-empty string")
+    return value
 
 
 def _toast_id(value: object) -> str:

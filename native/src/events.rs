@@ -1812,10 +1812,11 @@ pub fn hit_test(
     hit_test_with(tree, layout, pos, is_interactive_node)
 }
 
-pub fn hit_test_hover(
+pub fn hit_test_hover_with_targets(
     tree: &WidgetNode,
     layout: &LayoutResult,
     pos: [f32; 2],
+    tooltip_targets: &HashSet<String>,
 ) -> Option<(String, WidgetKind)> {
     if let Some(modal) = active_modal(tree) {
         let r = layout.rects.get(&modal.id)?;
@@ -1824,15 +1825,13 @@ pub fn hit_test_hover(
         }
         return hit_test_with(modal, layout, pos, |node| {
             is_interactive_node(node)
-                || node.props.tooltip.is_some()
-                || has_rich_tooltip_target(tree, &node.id)
+                || tooltip_targets.contains(&node.id)
                 || has_hover_visual(&node.style.hover)
         });
     }
     hit_test_with(tree, layout, pos, |node| {
         is_interactive_node(node)
-            || node.props.tooltip.is_some()
-            || has_rich_tooltip_target(tree, &node.id)
+            || tooltip_targets.contains(&node.id)
             || has_hover_visual(&node.style.hover)
     })
 }
@@ -1876,14 +1875,6 @@ fn active_modal(node: &WidgetNode) -> Option<&WidgetNode> {
         }
     }
     (node.kind == WidgetKind::Modal && node.props.open.unwrap_or(false)).then_some(node)
-}
-
-fn has_rich_tooltip_target(node: &WidgetNode, target: &str) -> bool {
-    (node.kind == WidgetKind::Tooltip && node.props.target.as_deref() == Some(target))
-        || node
-            .children
-            .iter()
-            .any(|child| has_rich_tooltip_target(child, target))
 }
 
 fn has_hover_visual(visual: &VisualStyle) -> bool {
@@ -2314,9 +2305,17 @@ mod tests {
         );
         layout.rects.insert("tip".to_string(), Rect::default());
 
-        let hit = hit_test_hover(&root, &layout, [30.0, 30.0]);
+        let hit = hit_test_hover_with_targets(
+            &root,
+            &layout,
+            [30.0, 30.0],
+            &HashSet::from(["progress".to_string()]),
+        );
+        let without_cached_target =
+            hit_test_hover_with_targets(&root, &layout, [30.0, 30.0], &HashSet::new());
 
         assert_eq!(hit, Some(("progress".to_string(), WidgetKind::ProgressBar)));
+        assert_eq!(without_cached_target, None);
     }
 
     #[test]
@@ -2349,7 +2348,7 @@ mod tests {
             },
         );
 
-        let hit = hit_test_hover(&root, &layout, [30.0, 30.0]);
+        let hit = hit_test_hover_with_targets(&root, &layout, [30.0, 30.0], &HashSet::new());
 
         assert_eq!(hit, Some(("card".to_string(), WidgetKind::Panel)));
     }

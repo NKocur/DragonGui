@@ -9,10 +9,12 @@ use pyo3::buffer::PyBuffer;
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
+use serde_json::Value;
 use winit::event_loop::EventLoopProxy;
 
 use crate::css_style::{parse_stylesheet, StylesheetOrigin};
 use crate::document::{LinePlotPayloadFormat, ScatterPayloadFormat};
+use crate::theme::Theme;
 
 /// User event sent into the winit loop when the Python/Rust runtime bridge has
 /// work waiting or a small event-loop-owned window operation is requested.
@@ -73,6 +75,10 @@ pub enum Command {
     ReplaceNode {
         id: String,
         node_json: String,
+    },
+    UpdateExtensionDisplayList {
+        id: String,
+        display_list_json: String,
     },
     PrewarmScatterWidgets {
         count: usize,
@@ -158,7 +164,18 @@ pub enum Command {
     },
     SetStylesheet {
         origin: StylesheetOrigin,
+        id: Option<String>,
         css: String,
+    },
+    RemoveStylesheet {
+        origin: StylesheetOrigin,
+        id: String,
+    },
+    SetTheme {
+        theme: Theme,
+    },
+    SetIconTheme {
+        theme: Value,
     },
     ClearStylesheets {
         origin: StylesheetOrigin,
@@ -1034,6 +1051,24 @@ impl NativeCommandSender {
             ));
         }
         self.enqueue(Command::ReplaceNode { id, node_json })
+    }
+
+    fn enqueue_update_extension_display_list(
+        &self,
+        id: String,
+        display_list_json: String,
+    ) -> PyResult<()> {
+        let parsed: serde_json::Value = serde_json::from_str(&display_list_json)
+            .map_err(|e| PyValueError::new_err(format!("invalid display-list JSON: {e}")))?;
+        if !parsed.is_array() {
+            return Err(PyTypeError::new_err(
+                "extension display list must serialize to a JSON array",
+            ));
+        }
+        self.enqueue(Command::UpdateExtensionDisplayList {
+            id,
+            display_list_json,
+        })
     }
 
     fn enqueue_prewarm_scatter_widgets(&self, count: usize) -> PyResult<()> {
@@ -2091,6 +2126,9 @@ impl NativeCommandSender {
             ));
         }
         let bytes = byte_buffer_from_py(data, "buffer resource payload")?;
+        if kind == "image_encoded" {
+            validate_managed_image_resource(&id, &bytes, owner_id.as_deref())?;
+        }
         self.enqueue(Command::SetBufferResource {
             id,
             kind,
@@ -2113,7 +2151,63 @@ impl NativeCommandSender {
         }
         parse_stylesheet(&css, origin)
             .map_err(|err| PyValueError::new_err(format!("invalid DragonGUI stylesheet: {err}")))?;
-        self.enqueue(Command::SetStylesheet { origin, css })
+        self.enqueue(Command::SetStylesheet {
+            origin,
+            id: None,
+            css,
+        })
+    }
+
+    fn enqueue_set_named_stylesheet(
+        &self,
+        origin: String,
+        id: String,
+        css: String,
+    ) -> PyResult<()> {
+        let origin = stylesheet_origin_from_py(&origin)?;
+        if id.trim().is_empty() {
+            return Err(PyValueError::new_err(
+                "stylesheet identifier cannot be empty",
+            ));
+        }
+        if css.trim().is_empty() {
+            return Err(PyValueError::new_err("stylesheet CSS cannot be empty"));
+        }
+        parse_stylesheet(&css, origin)
+            .map_err(|err| PyValueError::new_err(format!("invalid DragonGUI stylesheet: {err}")))?;
+        self.enqueue(Command::SetStylesheet {
+            origin,
+            id: Some(id),
+            css,
+        })
+    }
+
+    fn enqueue_remove_stylesheet(&self, origin: String, id: String) -> PyResult<()> {
+        let origin = stylesheet_origin_from_py(&origin)?;
+        if id.trim().is_empty() {
+            return Err(PyValueError::new_err(
+                "stylesheet identifier cannot be empty",
+            ));
+        }
+        self.enqueue(Command::RemoveStylesheet { origin, id })
+    }
+
+    fn enqueue_set_theme(&self, theme_json: String) -> PyResult<()> {
+        let theme_value: serde_json::Value = serde_json::from_str(&theme_json)
+            .map_err(|err| PyValueError::new_err(format!("invalid theme JSON: {err}")))?;
+        let theme = crate::document::parse_theme_from_doc(&serde_json::json!({
+            "theme": theme_value
+        }))
+        .ok_or_else(|| PyValueError::new_err("theme must be a JSON object"))?;
+        self.enqueue(Command::SetTheme { theme })
+    }
+
+    fn enqueue_set_icon_theme(&self, theme_json: String) -> PyResult<()> {
+        let theme: Value = serde_json::from_str(&theme_json)
+            .map_err(|err| PyValueError::new_err(format!("invalid icon theme JSON: {err}")))?;
+        crate::icons::IconThemeRegistry::from_value(Some(&theme))
+            .map_err(|err| PyValueError::new_err(format!("invalid icon theme: {err}")))?;
+        self.enqueue(Command::SetIconTheme { theme })
     }
 
     fn enqueue_clear_stylesheets(&self, origin: String) -> PyResult<()> {
@@ -2317,6 +2411,44 @@ fn byte_buffer_from_py(value: &Bound<'_, PyAny>, context: &str) -> PyResult<Vec<
     })
 }
 
+const MANAGED_IMAGE_MAX_ENCODED_BYTES: usize = 16 * 1024 * 1024;
+
+fn validate_managed_image_resource(id: &str, bytes: &[u8], owner_id: Option<&str>) -> PyResult<()> {
+    let valid_id = !id.is_empty()
+        && id.len() <= 128
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'));
+    if !valid_id {
+        return Err(PyValueError::new_err(
+            "image resource id must contain 1..128 ASCII letters, digits, '.', '_', or '-'",
+        ));
+    }
+    if owner_id.is_some() {
+        return Err(PyValueError::new_err(
+            "managed image resources must be application-owned",
+        ));
+    }
+    if bytes.is_empty() {
+        return Err(PyValueError::new_err(
+            "managed image resource cannot be empty",
+        ));
+    }
+    if bytes.len() > MANAGED_IMAGE_MAX_ENCODED_BYTES {
+        return Err(PyValueError::new_err(
+            "encoded image resource cannot exceed 16 MiB",
+        ));
+    }
+    let png = bytes.starts_with(b"\x89PNG\r\n\x1a\n");
+    let jpeg = bytes.starts_with(b"\xff\xd8\xff");
+    if !png && !jpeg {
+        return Err(PyValueError::new_err(
+            "managed image resource must contain encoded PNG or JPEG data",
+        ));
+    }
+    Ok(())
+}
+
 fn command_value_from_py(value: &Bound<'_, PyAny>) -> PyResult<CommandValue> {
     if value.is_none() {
         return Ok(CommandValue::None);
@@ -2338,6 +2470,17 @@ fn command_value_from_py(value: &Bound<'_, PyAny>) -> PyResult<CommandValue> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn managed_image_resource_validation_rejects_unsafe_bridge_payloads() {
+        let png = b"\x89PNG\r\n\x1a\npayload";
+        assert!(validate_managed_image_resource("surface.tile", png, None).is_ok());
+        assert!(validate_managed_image_resource("../escape", png, None).is_err());
+        assert!(validate_managed_image_resource("surface", png, Some("owner")).is_err());
+        assert!(validate_managed_image_resource("surface", b"GIF89a", None).is_err());
+        assert!(validate_managed_image_resource("surface", b"", None).is_err());
+        assert_eq!(MANAGED_IMAGE_MAX_ENCODED_BYTES, 16 * 1024 * 1024);
+    }
 
     #[test]
     fn queue_push_drain_preserves_order() {
@@ -2408,6 +2551,7 @@ mod tests {
         queue
             .push(Command::SetStylesheet {
                 origin: StylesheetOrigin::User,
+                id: None,
                 css: "Button { border-radius: 4px; }".to_string(),
             })
             .unwrap();
@@ -2471,6 +2615,7 @@ mod tests {
                 },
                 Command::SetStylesheet {
                     origin: StylesheetOrigin::User,
+                    id: None,
                     css: "Button { border-radius: 4px; }".to_string(),
                 },
                 Command::ClearStylesheets {
@@ -2493,6 +2638,26 @@ mod tests {
             Err(CommandQueueError::Closed)
         );
         assert_eq!(queue.drain(), vec![Command::DrainPythonTasks]);
+    }
+
+    #[test]
+    fn native_sender_validates_icon_theme_before_enqueue() {
+        let bridge = Arc::new(CommandBridge::new());
+        let sender = NativeCommandSender::new(Arc::clone(&bridge));
+        sender
+            .enqueue_set_icon_theme(
+                r#"{"search":{"type":"stroke","view_box":[0,0,24,24],"stroke_width":2,"strokes":[{"points":[[3,3],[21,21]]}]}}"#
+                    .to_string(),
+            )
+            .unwrap();
+        assert!(matches!(
+            bridge.drain().as_slice(),
+            [Command::SetIconTheme { theme }] if theme["search"]["type"] == "stroke"
+        ));
+        assert!(sender
+            .enqueue_set_icon_theme(r#"{"search":"missing-terminal"}"#.to_string())
+            .is_err());
+        assert!(bridge.is_empty());
     }
 
     #[test]

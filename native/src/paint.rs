@@ -291,7 +291,7 @@ pub(crate) fn native_widget_paint_fallback_parts(kind: WidgetKind) -> &'static [
             "divider",
         ],
         DragNumber => &["grip"],
-        HLayout | VLayout | Pages | Page | Sidebar | Panel => {
+        HLayout | VLayout | ScrollArea | Pages | Page | Sidebar | Panel => {
             &["scrollbar-track", "scrollbar-thumb"]
         }
         Collapsible => &["header", "indicator", "scrollbar-track", "scrollbar-thumb"],
@@ -688,14 +688,14 @@ pub(crate) fn native_widget_part_paint_fallback_with_selection(
             ..NativePaintFallback::default()
         },
         (
-            HLayout | VLayout | Pages | Page | Sidebar | Panel | Collapsible | Modal,
+            HLayout | VLayout | ScrollArea | Pages | Page | Sidebar | Panel | Collapsible | Modal,
             "scrollbar-track",
         ) => NativePaintFallback {
             background: Some(with_alpha(mix(theme.surface, theme.muted_text, 0.25), 0.22)),
             ..NativePaintFallback::default()
         },
         (
-            HLayout | VLayout | Pages | Page | Sidebar | Panel | Collapsible | Modal,
+            HLayout | VLayout | ScrollArea | Pages | Page | Sidebar | Panel | Collapsible | Modal,
             "scrollbar-thumb",
         ) => NativePaintFallback {
             background: Some(with_alpha(

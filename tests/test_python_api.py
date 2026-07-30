@@ -21,7 +21,9 @@ import dragongui.dataframe as dataframe_module
 import dragongui.dialogs as dialogs_module
 import dragongui.terminal as terminal_module
 import dragongui.node_graph as node_graph_module
+import dragongui.runtime as runtime_module
 import dragongui.widgets as widgets_module
+from dragongui._widget_capabilities import widget_css_capabilities
 from dragongui.runtime import AppHandle, _collect_runtime_callbacks, _set_active_app_handle
 
 
@@ -105,6 +107,58 @@ def test_declarative_tree_serializes() -> None:
     assert col.value == "x"
     assert scatter.to_dict()["props"]["frame"]["rows"] == 1_000_000
     assert scatter.to_dict()["props"]["frame"]["dtypes"] == ["", "", ""]
+
+
+def test_window_client_decorations_serialize_retained_titlebar() -> None:
+    win = dg.Window("Client chrome", decorations="client", id="main-window")
+    with win:
+        dg.Label("Application content", id="content")
+
+    window = dg.App().document(win)["window"]
+    assert window["props"]["decorations"] == "client"
+    assert window["props"]["window_state"] == "normal"
+    assert [child["id"] for child in window["children"]] == [
+        "main-window--dg-window-titlebar",
+        "content",
+    ]
+    titlebar = window["children"][0]
+    assert titlebar["css_types"][0] == "WindowTitlebar"
+    assert [child["id"] for child in titlebar["children"]] == [
+        "main-window--dg-window-title",
+        "main-window--dg-window-minimize",
+        "main-window--dg-window-maximize",
+        "main-window--dg-window-close",
+    ]
+    assert [child["props"].get("tooltip") for child in titlebar["children"][1:]] == [
+        "Minimize window",
+        "Maximize window",
+        "Close window",
+    ]
+    assert [
+        child["props"].get("accessible_name") for child in titlebar["children"][1:]
+    ] == [
+        "Minimize window",
+        "Maximize window",
+        "Close window",
+    ]
+    assert [
+        child["props"].get("accessibility_role") for child in titlebar["children"][1:]
+    ] == ["button", "button", "button"]
+
+
+def test_window_native_decorations_remain_default_and_do_not_inject_chrome() -> None:
+    win = dg.Window("Native chrome", id="main-window")
+    with win:
+        dg.Label("Application content", id="content")
+
+    window = dg.App().document(win)["window"]
+    assert window["props"]["decorations"] == "native"
+    assert [child["id"] for child in window["children"]] == ["content"]
+
+
+def test_window_rejects_unknown_decoration_mode() -> None:
+    with pytest.raises(ValueError, match="decorations must be 'native' or 'client'"):
+        dg.Window("Invalid", decorations="borderless")
 
 
 def test_builtin_help_manual_exposes_nested_sections() -> None:
@@ -245,10 +299,160 @@ def test_builtin_help_manual_reference_covers_exported_class_members() -> None:
 
 def test_builtin_help_manual_css_parts_match_widget_registry() -> None:
     css_parts = dg.help.reference.css_parts()
-    for widget_kind, parts in widgets_module._SUPPORTED_PARTS_BY_KIND.items():
-        assert f"`{widget_kind}`" in css_parts
-        for part in parts:
-            assert f"`::{part}`" in css_parts
+    for capability in widget_css_capabilities()["widgets"]:
+        assert f"`{capability['public_type']}`" in css_parts
+        for parts in capability["parts"].values():
+            for part in parts:
+                assert f"`::{part}`" in css_parts
+
+
+def test_widget_css_capability_registry_drives_python_parts_and_type_chains() -> None:
+    registry = widget_css_capabilities()
+
+    assert registry["schema_version"] == 1
+    assert set(registry["part_property_categories"]) == {
+        "layout",
+        "visual",
+        "text",
+        "generated-content",
+    }
+    assert registry["generated_content"]["parts"] == ["before", "after"]
+    assert registry["generated_content"]["renderer"] == "text"
+    native_kind_capabilities = [
+        capability
+        for capability in registry["widgets"]
+        if not capability.get("semantic_only", False)
+    ]
+    assert len(native_kind_capabilities) == len(widgets_module._SUPPORTED_PARTS_BY_KIND)
+
+    for capability in registry["widgets"]:
+        public_type = capability["public_type"]
+        python_kind = capability["python_kind"]
+        parts = {
+            part
+            for renderer_parts in capability["parts"].values()
+            for part in renderer_parts
+        }
+        if not capability.get("semantic_only", False):
+            assert widgets_module._SUPPORTED_PARTS_BY_KIND[python_kind] == parts
+
+        widget_class = getattr(widgets_module, public_type)
+        css_type_chain: list[str] = []
+        for base in widget_class.__mro__:
+            if (
+                base is object
+                or not issubclass(base, widgets_module.Widget)
+                or base.__name__.startswith("_")
+            ):
+                continue
+            css_type = base.__dict__.get("CSS_TYPE", base.__name__)
+            if css_type is not None and css_type not in css_type_chain:
+                css_type_chain.append(css_type)
+            for alias in base.__dict__.get("CSS_TYPE_ALIASES", ()):
+                if alias not in css_type_chain:
+                    css_type_chain.append(alias)
+        assert capability["css_type_chain"] == css_type_chain
+
+
+def test_generated_content_part_validation_uses_capability_registry() -> None:
+    label = dg.Label(
+        "Status",
+        style={"parts": {"before": {"content": "•"}, "after": {"content": ":"}}},
+        parent=None,
+    )
+
+    assert set(label.to_dict()["style"]["parts"]) == {"before", "after"}
+    with pytest.raises(ValueError, match="Spacer has no CSS part 'before'"):
+        dg.Spacer(style={"parts": {"before": {"content": "invalid"}}}, parent=None)
+
+
+def test_search_box_semantic_parts_are_public_type_scoped() -> None:
+    search = dg.SearchBox(
+        style={
+            "parts": {
+                "icon": {"color": "#112233", "width": 24},
+                "field": {"background": "#223344", "padding": 5},
+                "clear": {"color": "#334455", "width": 26},
+            }
+        },
+        parent=None,
+    )
+
+    assert set(search.to_dict()["style"]["parts"]) == {"icon", "field", "clear"}
+    assert dg.SearchBox(disabled=True, clearable=False, parent=None).to_dict()["props"] == {
+        "disabled": True,
+        "clearable": False,
+    }
+    with pytest.raises(ValueError, match="HLayout has no CSS part 'field'"):
+        dg.HLayout(style={"parts": {"field": {"background": "#223344"}}}, parent=None)
+
+
+def test_panel_structural_parts_are_public_and_styleable() -> None:
+    panel = dg.Panel(
+        "System health",
+        style={
+            "parts": {
+                "header": {
+                    "background": "#223344",
+                    "border_color": "#445566",
+                    "border_width": 1,
+                    "height": 52,
+                    "padding": 8,
+                },
+                "title": {
+                    "color": "#ddeeff",
+                    "font_size": 18,
+                    "font_weight": 700,
+                    "line_height": 1.4,
+                },
+                "body": {"background": "#112233", "border_radius": 6},
+            }
+        },
+        parent=None,
+    )
+
+    assert panel.to_dict()["style"]["parts"]["header"] == {
+        "background": "#223344",
+        "border_color": "#445566",
+        "border_width": 1,
+        "height": 52,
+        "padding": 8,
+    }
+    assert panel.to_dict()["style"]["parts"]["title"] == {
+        "color": "#ddeeff",
+        "font_size": 18,
+        "font_weight": 700,
+        "line_height": 1.4,
+    }
+    assert panel.to_dict()["style"]["parts"]["body"] == {
+        "background": "#112233",
+        "border_radius": 6,
+    }
+    for container in (
+        dg.Sidebar(
+            title="Navigation",
+            style={
+                "parts": {
+                    "header": {"height": 44},
+                    "title": {"font_size": 16},
+                    "body": {"padding": 6},
+                }
+            },
+            parent=None,
+        ),
+        dg.Modal(
+            "Inspector",
+            style={
+                "parts": {
+                    "header": {"height": 44},
+                    "title": {"font_size": 16},
+                    "body": {"padding": 6},
+                }
+            },
+            parent=None,
+        ),
+    ):
+        assert set(container.to_dict()["style"]["parts"]) == {"header", "title", "body"}
 
 
 def test_app_loading_screen_serializes_defaults_and_custom_values() -> None:
@@ -457,6 +661,18 @@ def test_extension_widget_serializes_supported_metadata() -> None:
 
 
 def test_paint_widget_serializes_display_list_and_repaints() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.display_lists: list[tuple[str, str]] = []
+
+        def enqueue_update_extension_display_list(
+            self, widget_id: str, display_list_json: str
+        ) -> None:
+            self.display_lists.append((widget_id, display_list_json))
+
+        def close(self) -> None:
+            pass
+
     class Sparkline(dg.PaintWidget):
         def __init__(self, values: list[float], **kwargs: object) -> None:
             self.values = list(values)
@@ -502,11 +718,18 @@ def test_paint_widget_serializes_display_list_and_repaints() -> None:
     clickable = Sparkline([1, 2], on_click=lambda: None, parent=None)
     assert clickable.to_dict()["props"]["events"] == ["click"]
 
+    sender = Sender()
+    handle = AppHandle()
+    handle._bind_native_sender(sender)
+    spark._bind_live(handle.widget_handle(spark.id))
     spark.values = [2, 1, 5, 3]
     spark.repaint()
 
     updated = spark.to_dict()["props"]["display_list"]
     assert len(updated[1]["points"]) == 4
+    assert len(sender.display_lists) == 1
+    assert sender.display_lists[0][0] == spark.id
+    assert json.loads(sender.display_lists[0][1]) == updated
 
     with pytest.raises(ValueError, match="positive finite"):
         dg.Size(0, 10)
@@ -769,6 +992,10 @@ def test_inline_part_style_catalog_serializes_for_supported_widgets() -> None:
             ("scrollbar_track", "scrollbar_thumb"),
         ),
         (
+            lambda style: dg.ScrollArea(style=style, parent=None),
+            ("scrollbar_track", "scrollbar_thumb"),
+        ),
+        (
             lambda style: dg.Pages(style=style, parent=None),
             ("scrollbar_track", "scrollbar_thumb"),
         ),
@@ -801,6 +1028,14 @@ def test_inline_part_style_catalog_serializes_for_supported_widgets() -> None:
         (
             lambda style: dg.Button("Filters", style=style, parent=None),
             ("badge",),
+        ),
+        (
+            lambda style: dg.Selectable("Choice", style=style, parent=None),
+            ("row", "indicator", "label"),
+        ),
+        (
+            lambda style: dg.RadioButton("Choice", style=style, parent=None),
+            ("indicator", "dot", "label"),
         ),
         (
             lambda style: dg.NumberInput(4, style=style, parent=None),
@@ -872,7 +1107,14 @@ def test_inline_part_style_catalog_serializes_for_supported_widgets() -> None:
         ),
         (
             lambda style: dg.DataFrameTable(TypedFrame(), style=style, parent=None),
-            ("header", "row", "row_selected", "grid_line"),
+            (
+                "header",
+                "row",
+                "row_selected",
+                "grid_line",
+                "scrollbar_track",
+                "scrollbar_thumb",
+            ),
         ),
     ]
 
@@ -908,6 +1150,65 @@ def test_app_stylesheet_serializes_startup_stylesheets() -> None:
 
     app.clear_stylesheets()
     assert "stylesheets" not in app.document(win)
+
+
+def test_app_icon_theme_serializes_bounded_monochrome_resources() -> None:
+    app = dg.App()
+    search = dg.IconResource(
+        [
+            dg.IconStroke([(4, 4), (16, 16)]),
+            dg.IconStroke([(15, 15), (21, 21)]),
+        ],
+        view_box=(0, 0, 24, 24),
+        stroke_width=2,
+    )
+
+    app.set_icon_theme({"Search": search, "folder_open": "folder"})
+    document = app.document(dg.Window("Icons"))
+
+    assert document["icon_theme"] == {
+        "search": {
+            "type": "stroke",
+            "view_box": [0.0, 0.0, 24.0, 24.0],
+            "stroke_width": 2.0,
+            "strokes": [
+                {"points": [[4.0, 4.0], [16.0, 16.0]], "closed": False},
+                {"points": [[15.0, 15.0], [21.0, 21.0]], "closed": False},
+            ],
+        },
+        "folder-open": "folder",
+    }
+
+    with pytest.raises(ValueError, match="at least two points"):
+        dg.IconStroke([(1, 1)])
+    with pytest.raises(ValueError, match="positive"):
+        dg.IconResource([[(0, 0), (1, 1)]], stroke_width=0)
+    with pytest.raises(TypeError, match="mapping"):
+        app.set_icon_theme([])  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="IconResource"):
+        app.set_icon_theme({"search": object()})  # type: ignore[dict-item]
+
+    class Sender:
+        def __init__(self) -> None:
+            self.icon_themes: list[str] = []
+
+        def enqueue_set_icon_theme(self, theme_json: str) -> None:
+            self.icon_themes.append(theme_json)
+
+        def close(self) -> None:
+            pass
+
+    sender = Sender()
+    app._handle = AppHandle()
+    app._handle._bind_native_sender(sender)
+    try:
+        app.set_icon_theme({"search": search})
+    finally:
+        app._handle._close()
+        app._handle = None
+    assert json.loads(sender.icon_themes[-1]) == {
+        "search": document["icon_theme"]["search"]
+    }
 
 
 def test_app_load_stylesheet_and_live_stylesheet_updates() -> None:
@@ -950,6 +1251,66 @@ def test_app_load_stylesheet_and_live_stylesheet_updates() -> None:
 
     assert sender.stylesheets == [("user", "NumberInput::stepper { width: 34px; }")]
     assert sender.cleared == ["user"]
+
+
+def test_named_stylesheets_replace_in_place_and_theme_updates_live() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.named: list[tuple[str, str, str]] = []
+            self.removed: list[tuple[str, str]] = []
+            self.themes: list[str] = []
+
+        def enqueue_set_named_stylesheet(
+            self, origin: str, stylesheet_id: str, css: str
+        ) -> None:
+            self.named.append((origin, stylesheet_id, css))
+
+        def enqueue_remove_stylesheet(self, origin: str, stylesheet_id: str) -> None:
+            self.removed.append((origin, stylesheet_id))
+
+        def enqueue_set_theme(self, theme_json: str) -> None:
+            self.themes.append(theme_json)
+
+        def close(self) -> None:
+            pass
+
+    app = dg.App()
+    app.set_stylesheet("appearance", "Button { color: red; }")
+    app.set_stylesheet("application", "Label { color: white; }")
+    app.set_stylesheet("appearance", "Button { color: blue; }")
+    document = app.document(dg.Window("Named CSS"))
+    assert document["stylesheets"] == [
+        {
+            "origin": "user",
+            "id": "appearance",
+            "source": "Button { color: blue; }",
+        },
+        {
+            "origin": "user",
+            "id": "application",
+            "source": "Label { color: white; }",
+        },
+    ]
+    assert app.remove_stylesheet("appearance")
+    assert not app.remove_stylesheet("missing")
+
+    sender = Sender()
+    app._handle = AppHandle()
+    app._handle._bind_native_sender(sender)
+    theme = dg.Theme.light(accent="#2244cc")
+    try:
+        app.set_stylesheet("appearance", "Button { color: green; }")
+        assert app.remove_stylesheet("appearance") is None
+        app.set_theme(theme)
+    finally:
+        app._handle._close()
+        app._handle = None
+
+    assert sender.named == [
+        ("user", "appearance", "Button { color: green; }")
+    ]
+    assert sender.removed == [("user", "appearance")]
+    assert json.loads(sender.themes[-1]) == theme.to_dict()
 
 
 def test_widget_tooltip_serializes_as_common_prop() -> None:
@@ -1706,14 +2067,24 @@ def test_splitter_and_pane_serialize_size_defaults() -> None:
 
 
 def test_theme_exposes_derived_spacing_scale() -> None:
-    theme = dg.Theme.dark(spacing=6.0)
+    theme = dg.Theme.dark(
+        spacing=6.0,
+        font_family='"Segoe UI", sans-serif',
+        control_height=29.0,
+        panel_padding=9.0,
+    )
 
     assert theme.space_xs == 3.0
     assert theme.space_sm == 6.0
     assert theme.space_md == 12.0
     assert theme.space_lg == 18.0
     assert theme.space_xl == 24.0
-    assert theme.to_dict()["spacing"] == 6.0
+    serialized = theme.to_dict()
+    assert serialized["spacing"] == 6.0
+    assert serialized["font_family"] == '"Segoe UI", sans-serif'
+    assert serialized["control_height"] == 29.0
+    assert serialized["panel_padding"] == 9.0
+    assert serialized["monospace_font_family"] == "Consolas, monospace"
 
 
 def test_widget_set_style_updates_python_state_and_live_native_style() -> None:
@@ -2046,6 +2417,119 @@ def test_app_handle_coalesces_python_task_drain_wakeups() -> None:
     assert sender.wake_count == 2
 
 
+def test_app_handle_coalesces_keyed_python_tasks_at_their_latest_position() -> None:
+    handle = AppHandle()
+    calls: list[str] = []
+
+    for index in range(25):
+        handle.call_soon_threadsafe(
+            lambda value=index: calls.append(f"telemetry:{value}"),
+            coalesce_key="telemetry",
+        )
+    handle.call_soon_threadsafe(lambda: calls.append("event"))
+    handle.call_soon_threadsafe(
+        lambda: calls.append("telemetry:latest"),
+        coalesce_key="telemetry",
+    )
+
+    handle._drain_python_tasks()
+
+    assert calls == ["event", "telemetry:latest"]
+    snapshot = handle.debug_snapshot()["runtime"]["python"]
+    assert snapshot["tasks_enqueued"] == 27
+    assert snapshot["tasks_executed"] == 2
+    assert snapshot["tasks_coalesced"] == 25
+    assert snapshot["task_queue_high_water"] == 2
+
+
+def test_app_handle_preserves_latest_callbacks_for_multiple_keys() -> None:
+    handle = AppHandle()
+    calls: list[str] = []
+
+    handle.call_soon_threadsafe(lambda: calls.append("a1"), coalesce_key="a")
+    handle.call_soon_threadsafe(lambda: calls.append("b1"), coalesce_key="b")
+    handle.call_soon_threadsafe(lambda: calls.append("a2"), coalesce_key="a")
+    handle.call_soon_threadsafe(lambda: calls.append("plain"))
+    handle.call_soon_threadsafe(lambda: calls.append("b2"), coalesce_key="b")
+    handle._drain_python_tasks()
+
+    assert calls == ["a2", "plain", "b2"]
+
+
+def test_app_handle_keyed_tasks_are_thread_safe_and_require_hashable_keys() -> None:
+    handle = AppHandle()
+    calls: list[int] = []
+
+    def produce(offset: int) -> None:
+        for index in range(100):
+            handle.call_soon_threadsafe(
+                lambda value=offset + index: calls.append(value),
+                coalesce_key="shared",
+            )
+
+    threads = [threading.Thread(target=produce, args=(index * 100,)) for index in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    handle._drain_python_tasks()
+
+    assert len(calls) == 1
+    assert handle.debug_snapshot()["runtime"]["python"]["tasks_coalesced"] == 399
+    with pytest.raises(TypeError, match="hashable"):
+        handle.call_soon_threadsafe(lambda: None, coalesce_key=[])
+
+
+def test_app_handle_reentrant_keyed_scheduling_keeps_current_and_latest() -> None:
+    handle = AppHandle()
+    calls: list[int] = []
+
+    def task(value: int) -> None:
+        calls.append(value)
+        if value < 5:
+            handle.call_soon_threadsafe(
+                lambda next_value=value + 1: task(next_value),
+                coalesce_key="reentrant-loop",
+            )
+
+    handle.call_soon_threadsafe(lambda: task(0), coalesce_key="reentrant-loop")
+    handle._drain_python_tasks()
+
+    assert calls == list(range(6))
+    snapshot = handle.debug_snapshot()["runtime"]["python"]
+    assert snapshot["queued_tasks"] == 0
+    assert snapshot["tasks_enqueued"] == 6
+    assert snapshot["tasks_executed"] == 6
+    assert snapshot["tasks_coalesced"] == 0
+
+
+def test_app_handle_python_task_drain_obeys_time_budget(monkeypatch) -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.wake_count = 0
+
+        def enqueue_drain_python_tasks(self) -> None:
+            self.wake_count += 1
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(runtime_module, "_PYTHON_TASK_DRAIN_BUDGET_MS", 0.0)
+    handle = AppHandle()
+    sender = Sender()
+    calls: list[int] = []
+    handle._bind_native_sender(sender)
+    for index in range(3):
+        handle.call_soon_threadsafe(lambda value=index: calls.append(value))
+
+    handle._drain_python_tasks()
+
+    assert calls == [0]
+    assert sender.wake_count == 2
+    assert handle._python_debug_snapshot()["queued_tasks"] == 2
+
+
 def test_app_handle_window_requests_reach_native_sender() -> None:
     class Sender:
         def __init__(self) -> None:
@@ -2348,6 +2832,77 @@ def test_app_buffer_resource_methods_require_running_app() -> None:
         app.set_buffer_resource("buf", b"data")
     with pytest.raises(RuntimeError, match="not running"):
         app.release_resource("buf")
+
+
+def test_app_managed_image_resources_queue_before_start_and_replace_live(tmp_path: Path) -> None:
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+        "AAAADUlEQVR42mNk+M/wHwAEAQH/2W9xWQAAAABJRU5ErkJggg=="
+    )
+    image_path = tmp_path / "pixel.png"
+    image_path.write_bytes(png)
+
+    class Sender:
+        def __init__(self) -> None:
+            self.buffers: list[tuple[str, str, bytes, str | None]] = []
+            self.released: list[str] = []
+
+        def enqueue_set_buffer_resource(
+            self,
+            resource_id: str,
+            kind: str,
+            data: object,
+            owner_id: str | None = None,
+        ) -> None:
+            self.buffers.append((resource_id, kind, bytes(data), owner_id))
+
+        def enqueue_release_resource(self, resource_id: str) -> None:
+            self.released.append(resource_id)
+
+        def close(self) -> None:
+            pass
+
+    app = dg.App()
+    app.set_image_resource("surface.tile", image_path)
+    assert app._image_resources == {"surface.tile": png}
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+    app._queue_image_resources(handle)
+    app._handle = handle
+    try:
+        app.set_image_resource("surface.tile", bytearray(png))
+        app.release_image_resource("surface.tile")
+    finally:
+        app._handle = None
+
+    assert sender.buffers == [
+        ("surface.tile", "image_encoded", png, None),
+        ("surface.tile", "image_encoded", png, None),
+    ]
+    assert sender.released == ["surface.tile"]
+    assert app._image_resources == {}
+
+
+def test_app_managed_image_resources_validate_identifier_format_and_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    png = b"\x89PNG\r\n\x1a\npayload"
+    app = dg.App()
+
+    with pytest.raises(ValueError, match="1..128"):
+        app.set_image_resource("../escape", png)
+    with pytest.raises(TypeError, match="id must be a string"):
+        app.set_image_resource(1, png)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="PNG or JPEG"):
+        app.set_image_resource("texture", b"GIF89a")
+    with pytest.raises(TypeError, match="PNG/JPEG bytes"):
+        app.set_image_resource("texture", object())
+
+    monkeypatch.setattr(app_module, "_IMAGE_RESOURCE_MAX_ENCODED_BYTES", 8)
+    with pytest.raises(ValueError, match="16 MiB"):
+        app.set_image_resource("texture", png)
 
 
 def test_live_widget_setter_survives_unbind_during_closed_check() -> None:
@@ -4218,6 +4773,42 @@ def test_tool_buttons_serialize_and_validate() -> None:
         dg.IconButton("play", size=0, parent=None)
     with pytest.raises(ValueError, match="IconButton has no CSS part 'image'"):
         dg.IconButton("play", style={"parts": {"image": {"width": 12}}}, parent=None)
+    with pytest.raises(ValueError, match="ImageButton has no CSS part 'image'"):
+        dg.ImageButton(
+            "assets/save.png",
+            style={"parts": {"image": {"width": 12}}},
+            parent=None,
+        )
+
+
+def test_semantic_icon_resolution_is_public_and_diagnostic() -> None:
+    canonical = dg.resolve_icon("search")
+    assert canonical == dg.IconResolution(
+        requested="search",
+        resolved="search",
+        recognized=True,
+        alias=False,
+        fallback=False,
+    )
+
+    alias = dg.resolve_icon("Folder_Open")
+    assert alias.requested == "folder-open"
+    assert alias.resolved == "folder"
+    assert alias.recognized is True
+    assert alias.alias is True
+    assert alias.fallback is False
+
+    missing = dg.resolve_icon("product-specific-command")
+    assert missing.requested == "product-specific-command"
+    assert missing.resolved == "more"
+    assert missing.recognized is False
+    assert missing.alias is False
+    assert missing.fallback is True
+
+    assert "search" in dg.BUILTIN_ICONS
+    assert dg.ICON_ALIASES["zoom"] == "search"
+    with pytest.raises(ValueError, match="non-empty"):
+        dg.resolve_icon(" ")
 
 
 def test_drag_drop_widgets_serialize_and_dispatch_payload() -> None:
@@ -4525,6 +5116,7 @@ def test_toolbar_and_toolbar_separator_serialize() -> None:
     assert "flex_grow" not in serialized["default_style"]
     assert "flex_shrink" not in serialized["default_style"]
     assert "min_width" not in serialized["default_style"]
+    assert "gap" not in serialized["default_style"]
     assert serialized["default_style"]["min_height"] == 38
     assert serialized["default_style"]["flex_wrap"] == "wrap"
     assert [child["type"] for child in serialized["children"]] == [
@@ -4580,6 +5172,7 @@ def test_search_box_serializes_and_emits_change_and_clear() -> None:
 
     assert serialized["type"] == "h_layout"
     assert serialized["class"] == "search-box"
+    assert serialized["props"] == {"disabled": False, "clearable": True}
     assert serialized["default_style"] == {
         "align_items": "center",
         "flex_grow": 0,

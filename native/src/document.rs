@@ -27,6 +27,12 @@ pub struct WindowProps {
     pub title: String,
     pub width: u32,
     pub height: u32,
+    #[serde(default = "default_window_decorations")]
+    pub decorations: String,
+}
+
+fn default_window_decorations() -> String {
+    "native".to_string()
 }
 
 #[derive(Debug, Clone)]
@@ -388,11 +394,44 @@ pub fn parse_theme_from_doc(doc: &serde_json::Value) -> Option<Theme> {
             .and_then(|v| v.as_f64())
             .map(|v| v as f32)
             .unwrap_or(dark.font_size),
+        font_family: parse_theme_string(t.get("font_family"))
+            .unwrap_or_else(|| dark.font_family.clone()),
+        monospace_font_family: parse_theme_string(t.get("monospace_font_family"))
+            .unwrap_or_else(|| dark.monospace_font_family.clone()),
+        base_line_height: parse_theme_number(t.get("base_line_height"))
+            .unwrap_or(dark.base_line_height),
+        control_height: parse_theme_number(t.get("control_height")).unwrap_or(dark.control_height),
+        compact_control_height: parse_theme_number(t.get("compact_control_height"))
+            .unwrap_or(dark.compact_control_height),
+        default_border_width: parse_theme_number(t.get("default_border_width"))
+            .unwrap_or(dark.default_border_width),
+        focus_width: parse_theme_number(t.get("focus_width")).unwrap_or(dark.focus_width),
+        focus_offset: t
+            .get("focus_offset")
+            .and_then(|v| v.as_f64())
+            .filter(|v| v.is_finite())
+            .map(|v| v as f32)
+            .unwrap_or(dark.focus_offset),
+        panel_padding: parse_theme_number(t.get("panel_padding")).unwrap_or(dark.panel_padding),
+        toolbar_gap: parse_theme_number(t.get("toolbar_gap")).unwrap_or(dark.toolbar_gap),
     })
 }
 
 fn parse_theme_color(v: Option<&serde_json::Value>) -> Option<[f32; 4]> {
     parse_web_color(v?.as_str()?)
+}
+
+fn parse_theme_number(v: Option<&serde_json::Value>) -> Option<f32> {
+    v?.as_f64()
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .map(|value| value as f32)
+}
+
+fn parse_theme_string(v: Option<&serde_json::Value>) -> Option<String> {
+    v?.as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 fn parse_color_ref(v: Option<&serde_json::Value>) -> Option<ColorRef> {
@@ -1134,7 +1173,16 @@ pub fn parse_stylesheets_from_doc(doc: &serde_json::Value) -> StylesheetStore {
                 continue;
             }
         };
-        if let Err(error) = store.set_stylesheet(origin, source) {
+        let stylesheet_id = stylesheet
+            .get("id")
+            .and_then(|value| value.as_str())
+            .filter(|id| !id.trim().is_empty());
+        let result = if let Some(id) = stylesheet_id {
+            store.set_named_stylesheet(origin, id, source)
+        } else {
+            store.set_stylesheet(origin, source)
+        };
+        if let Err(error) = result {
             eprintln!("DragonGUI: ignoring invalid stylesheet: {error}");
         }
     }
@@ -1286,7 +1334,7 @@ pub(crate) const ALL_WIDGET_KINDS: &[WidgetKind] = &[
 ];
 
 impl WidgetKind {
-    fn from_str(s: &str) -> Self {
+    pub(crate) fn from_str(s: &str) -> Self {
         match s {
             "window" => WidgetKind::Window,
             "h_layout" => WidgetKind::HLayout,
@@ -2530,7 +2578,17 @@ mod tests {
                 "border": "not a color",
                 "radius": 12,
                 "spacing": 10,
-                "font_size": 15
+                "font_size": 15,
+                "font_family": "\"Chicago\", Geneva, sans-serif",
+                "monospace_font_family": "Monaco, monospace",
+                "base_line_height": 1.25,
+                "control_height": 31,
+                "compact_control_height": 23,
+                "default_border_width": 2,
+                "focus_width": 3,
+                "focus_offset": -1,
+                "panel_padding": 11,
+                "toolbar_gap": 7
             }
         });
 
@@ -2556,6 +2614,16 @@ mod tests {
         assert_eq!(theme.radius, 12.0);
         assert_eq!(theme.spacing, 10.0);
         assert_eq!(theme.font_size, 15.0);
+        assert_eq!(theme.font_family, "\"Chicago\", Geneva, sans-serif");
+        assert_eq!(theme.monospace_font_family, "Monaco, monospace");
+        assert_eq!(theme.base_line_height, 1.25);
+        assert_eq!(theme.control_height(), 31.0);
+        assert_eq!(theme.compact_control_height, 23.0);
+        assert_eq!(theme.default_border_width, 2.0);
+        assert_eq!(theme.focus_width, 3.0);
+        assert_eq!(theme.focus_offset, -1.0);
+        assert_eq!(theme.panel_padding, 11.0);
+        assert_eq!(theme.toolbar_gap, 7.0);
     }
 
     #[test]

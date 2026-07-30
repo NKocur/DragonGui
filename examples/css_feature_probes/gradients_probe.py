@@ -149,10 +149,10 @@ app.stylesheet(
     Panel.repeating {
         background:
             repeating-linear-gradient(135deg,
-                rgba(255, 255, 255, 0.13) 0%,
-                rgba(255, 255, 255, 0.13) 6%,
-                transparent 6%,
-                transparent 13%),
+                rgba(255, 255, 255, 0.16) 0px,
+                rgba(255, 255, 255, 0.16) 2px,
+                transparent 2px,
+                transparent 5px),
             linear-gradient(135deg, rgba(90, 169, 255, 0.38), rgba(116, 221, 176, 0.18));
     }
 
@@ -270,7 +270,7 @@ win = dg.Window("CSS Gradient Probe", width=760, height=980)
 with dg.VLayout(style={"gap": 12}):
     dg.Label("Gradients and background layers", class_="title")
     dg.Label(
-        "Each card isolates a paint path: linear, radial, layered, repeating, "
+        "Each card isolates a paint path: linear, radial, layered, fixed-pixel repeating, "
         "background-image, and background-image: none over a solid fallback.",
         class_="caption",
     )
@@ -290,8 +290,8 @@ with dg.VLayout(style={"gap": 12}):
             dg.Label("Two radial glows over a linear base.", class_="card-copy")
 
         with dg.Panel(class_="swatch repeating"):
-            dg.Label("repeating gradient", class_="card-title")
-            dg.Label("Repeating stripe layer over a soft gradient.", class_="card-copy")
+            dg.Label("fixed-pixel repeating gradient", class_="card-title")
+            dg.Label("2 px stripe + 3 px gap over a soft gradient.", class_="card-copy")
 
     with dg.HLayout(style={"gap": 12}):
         with dg.Panel(class_="swatch image-gradient"):

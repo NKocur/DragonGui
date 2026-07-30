@@ -4780,9 +4780,7 @@ mod tests {
             "scalar-bar ticks need room for formatted values before the right inset"
         );
         assert!(
-            SCALAR_BAR_RIGHT_GUTTER_PX
-                - SCALAR_BAR_TICK_GAP_PX
-                - SCALAR_BAR_TICK_LABEL_WIDTH_PX
+            SCALAR_BAR_RIGHT_GUTTER_PX - SCALAR_BAR_TICK_GAP_PX - SCALAR_BAR_TICK_LABEL_WIDTH_PX
                 >= SCALAR_BAR_RIGHT_PADDING_PX,
             "scalar-bar tick labels should retain explicit right-edge padding"
         );

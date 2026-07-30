@@ -125,10 +125,24 @@ def test_visual_audit_states_validate_actions_and_preserve_default_mode() -> Non
                 "name": "active",
                 "actions": [
                     "click:#run",
+                    "native-click:#run",
                     "hover:#help",
                     "type:#query=dragon",
                     "scroll:#body=0,240",
                     "resize:800x600",
+                    "assert-window-state:maximized",
+                    "assert-window-state:minimized",
+                    "assert-window-state:normal",
+                    "set-window-state:normal",
+                    "key:tab",
+                    "key:enter",
+                    "key:space",
+                    "key:escape",
+                    "key:alt-space",
+                    "assert-focus:#run",
+                    "right-click:#help",
+                    "assert-system-menu:open",
+                    "assert-system-menu:closed",
                     "wait:120",
                 ],
             },
@@ -466,6 +480,99 @@ def test_layout_styling_evolution_baselines_are_registered() -> None:
         assert target["manual"] is False
         assert {1.0, 1.5} <= set(target["scales"])
         assert (390, 720) in {tuple(size) for size in target["sizes"]}
+
+
+def test_client_window_chrome_visual_matrix_is_registered() -> None:
+    visual_audit = load_visual_audit()
+    manifest_path = ROOT / "examples" / "css_feature_probes" / "visual_audit_manifest.json"
+    targets = {target["id"]: target for target in visual_audit.load_manifest(manifest_path)}
+    target = targets["client-window-chrome"]
+
+    assert target["script"] == "examples/client_window_chrome_demo.py"
+    assert target["category"] == "layout"
+    assert target["manual"] is True
+    assert {tuple(size) for size in target["sizes"]} == {
+        (720, 520),
+        (940, 620),
+        (1280, 800),
+    }
+    assert target["scales"] == [1.0, 1.5, 2.0]
+    assert target["resize_checkpoints"] == [[720, 520], [940, 620]]
+
+
+def test_client_window_chrome_maximized_interaction_is_registered() -> None:
+    visual_audit = load_visual_audit()
+    manifest_path = ROOT / "examples" / "css_feature_probes" / "visual_audit_manifest.json"
+    targets = {target["id"]: target for target in visual_audit.load_manifest(manifest_path)}
+    target = targets["client-window-chrome-maximized"]
+    states = visual_audit.target_states(target)
+
+    assert target["strict_css"] is True
+    assert "resize_checkpoints" not in target
+    assert states == [
+        {
+            "name": "maximized",
+            "route": None,
+            "actions": ["click:#client-chrome-window--dg-window-maximize"],
+        }
+    ]
+
+
+def test_client_window_chrome_transition_interactions_are_registered() -> None:
+    visual_audit = load_visual_audit()
+    manifest_path = ROOT / "examples" / "css_feature_probes" / "visual_audit_manifest.json"
+    targets = {target["id"]: target for target in visual_audit.load_manifest(manifest_path)}
+    states = {
+        state["name"]: state
+        for state in visual_audit.target_states(targets["client-window-chrome-transitions"])
+    }
+
+    assert states["button-restore"]["actions"] == [
+        "click:#client-chrome-window--dg-window-maximize",
+        "assert-window-state:maximized",
+        "click:#client-chrome-window--dg-window-maximize",
+        "assert-window-state:normal",
+    ]
+    assert "titlebar-double-click" not in states
+
+
+def test_client_window_chrome_windows_input_interactions_are_registered() -> None:
+    visual_audit = load_visual_audit()
+    manifest_path = ROOT / "examples" / "css_feature_probes" / "visual_audit_manifest.json"
+    targets = {target["id"]: target for target in visual_audit.load_manifest(manifest_path)}
+    target = targets["client-window-chrome-windows-input"]
+    states = {
+        state["name"]: state for state in visual_audit.target_states(target)
+    }
+
+    assert target["manual"] is False
+    assert states["keyboard-traversal"]["actions"] == [
+        "native-click:#client-chrome-app-button",
+        "assert-focus:#client-chrome-app-button",
+        "key:tab",
+        "assert-focus:#client-chrome-window--dg-window-minimize",
+        "key:tab",
+        "assert-focus:#client-chrome-window--dg-window-maximize",
+        "key:tab",
+        "assert-focus:#client-chrome-window--dg-window-close",
+        "key:tab",
+        "assert-focus:#client-chrome-checkbox",
+    ]
+    assert states["keyboard-maximize-restore"]["actions"][-4:] == [
+        "key:enter",
+        "assert-window-state:maximized",
+        "key:space",
+        "assert-window-state:normal",
+    ]
+    assert "minimize-roundtrip" not in states
+    assert states["alt-space-system-menu"]["actions"] == [
+        "native-click:#client-chrome-app-button",
+        "key:alt-space",
+        "assert-system-menu:open",
+        "key:escape",
+        "assert-system-menu:closed",
+    ]
+    assert "right-click-system-menu" not in states
 
 
 def test_layout_snapshot_relations_accept_contained_owned_geometry(tmp_path: Path) -> None:
@@ -818,6 +925,53 @@ def test_run_target_preserves_manual_manifest_notes(
     assert result["status"] == "needs_manual_interaction"
     assert "Open menu and hover states still need interaction." in result["notes"]
     assert "Captured with native DragonGUI window screenshot API." in result["notes"]
+
+
+def test_run_target_promotes_snapshot_action_error_to_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    visual_audit = load_visual_audit()
+    script = tmp_path / "probe.py"
+    script.write_text("print('probe')\n", encoding="utf-8")
+
+    def fake_run_probe_process(*args, **kwargs):
+        kwargs["screenshot_path"].parent.mkdir(parents=True, exist_ok=True)
+        kwargs["snapshot_path"].parent.mkdir(parents=True, exist_ok=True)
+        kwargs["screenshot_path"].write_bytes(b"png")
+        kwargs["snapshot_path"].write_text(
+            json.dumps({"error": "expected maximized, observed normal"}),
+            encoding="utf-8",
+        )
+        return {
+            "status": "pass",
+            "notes": "screenshot captured",
+            "screenshot": True,
+            "snapshot": True,
+        }
+
+    monkeypatch.setattr(visual_audit, "run_probe_process", fake_run_probe_process)
+    monkeypatch.setattr(visual_audit, "ROOT", tmp_path)
+    result = visual_audit.run_target(
+        {
+            "id": "action-error",
+            "name": "Action Error",
+            "script": str(script),
+            "category": "layout",
+            "features": [],
+            "sizes": [[640, 480]],
+            "manual": False,
+        },
+        out_dir=tmp_path / "out",
+        wait_ms=1,
+        timeout_ms=100,
+        size_selectors=[None],
+        no_capture=False,
+    )
+
+    assert result["status"] == "fail"
+    assert "expected maximized, observed normal" in result["notes"]
+    assert result["captures"][0]["error"] == "expected maximized, observed normal"
+    assert result["captures"][0]["diagnostic_counts"]["capture-error"] == 1
 
 
 def test_run_target_expands_manifest_states_and_records_capture_context(

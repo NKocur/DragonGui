@@ -36,6 +36,7 @@ rfd = "0.15.4"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
 lightningcss = "=1.0.0-alpha.71"
 cssparser = "0.33"
+smallvec = "1"
 
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.38.2"
@@ -45,6 +46,7 @@ windows = { version = "0.61", features = [
     "Win32_System_DataExchange",
     "Win32_System_Memory",
     "Win32_System_Ole",
+    "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }
 

@@ -16,6 +16,7 @@ struct LineSegmentInstance {
     @location(0) rect: vec4<f32>,
     @location(1) color: vec4<f32>,
     @location(2) params: vec4<f32>,
+    @location(3) clip_bounds: vec4<f32>,
 }
 
 struct VertOut {
@@ -23,6 +24,8 @@ struct VertOut {
     @location(0) color: vec4<f32>,
     @location(1) local_px: vec2<f32>,
     @location(2) @interpolate(flat) half_size: vec2<f32>,
+    @location(3) screen_px: vec2<f32>,
+    @location(4) @interpolate(flat) clip_bounds: vec4<f32>,
 }
 
 const QUAD: array<vec2<f32>, 6> = array<vec2<f32>, 6>(
@@ -60,6 +63,8 @@ fn vs_main(@builtin(vertex_index) vid: u32, inst: LineSegmentInstance) -> VertOu
     out.color = inst.color;
     out.local_px = uv * expanded_size - vec2<f32>(aa_pad, aa_pad);
     out.half_size = inst.rect.zw * 0.5;
+    out.screen_px = screen_px;
+    out.clip_bounds = inst.clip_bounds;
     return out;
 }
 
@@ -72,6 +77,14 @@ fn capsule_sdf(p: vec2<f32>, half_size: vec2<f32>) -> f32 {
 
 @fragment
 fn fs_main(in: VertOut) -> @location(0) vec4<f32> {
+    if (
+        in.screen_px.x < in.clip_bounds.x ||
+        in.screen_px.y < in.clip_bounds.y ||
+        in.screen_px.x > in.clip_bounds.z ||
+        in.screen_px.y > in.clip_bounds.w
+    ) {
+        discard;
+    }
     let p = in.local_px - in.half_size;
     let sdf = capsule_sdf(p, max(in.half_size, vec2<f32>(0.5, 0.5)));
     let a = clamp(1.0 - sdf, 0.0, 1.0) * in.color.a;

@@ -29,10 +29,15 @@ pub fn run_app_impl(
     let python_theme: Option<Theme> = document::parse_theme_from_doc(&raw);
     let loading_screen = document::parse_loading_screen_from_doc(&raw);
     let effective_theme = python_theme.clone().unwrap_or_else(Theme::dark);
+    let icon_theme = crate::icons::IconThemeRegistry::from_value(raw.get("icon_theme"))
+        .map_err(DragonError::ParseError)?;
     let mut stylesheets = document::parse_stylesheets_from_doc(&raw);
     stylesheets.install_framework_defaults(&effective_theme);
     let mut widget_tree: Option<WidgetNode> = document::parse_widget_tree(&raw);
     if let Some(tree) = &mut widget_tree {
+        icon_theme
+            .apply_to_tree(tree)
+            .map_err(DragonError::ParseError)?;
         apply_stylesheets_to_tree(tree, &mut stylesheets);
     }
 
@@ -88,12 +93,23 @@ pub fn run_app_impl(
         (None, None)
     };
 
+    let decorations = doc.window.props.decorations.trim().to_ascii_lowercase();
+    if decorations != "native" && decorations != "client" {
+        return Err(DragonError::ParseError(format!(
+            "window decorations must be 'native' or 'client', got {:?}",
+            doc.window.props.decorations
+        ))
+        .into());
+    }
+
     let spec = AppSpec {
         title: doc.window.props.title,
         width: doc.window.props.width,
         height: doc.window.props.height,
+        client_decorations: decorations == "client",
         widget_tree,
         theme: python_theme,
+        icon_theme,
         stylesheets,
         click_callbacks: click_cbs,
         change_callbacks: change_cbs,

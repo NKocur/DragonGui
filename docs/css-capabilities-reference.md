@@ -16,6 +16,9 @@ Stylesheets are attached to an app:
 ```python
 app = dg.App()
 app.stylesheet("Button { background: accent; }")
+app.set_stylesheet("appearance", appearance_css)
+app.remove_stylesheet("appearance")
+app.set_theme(dg.Theme.light())
 app.load_stylesheet("styles/app.dg.css")
 app.clear_stylesheets()
 ```
@@ -23,19 +26,25 @@ app.clear_stylesheets()
 Capabilities:
 
 - `App.stylesheet(css)` accepts a non-empty CSS string.
+- `App.set_stylesheet(id, css)` adds or replaces a named user stylesheet while
+  preserving its source order.
+- `App.remove_stylesheet(id)` removes one named user stylesheet.
+- `App.set_theme(theme)` atomically replaces active design tokens.
 - `App.load_stylesheet(path)` reads UTF-8 CSS from disk and applies it.
 - `App.clear_stylesheets()` clears user stylesheets.
 - Stylesheets can be queued before `app.run(...)`.
 - Stylesheets can be changed while the app is live; the native runtime reapplies
   CSS without rebuilding the Python widget tree.
+- Runtime debug snapshots report active stylesheet IDs, origins, and source
+  order under `stylesheets.active`.
 - Inline `style={...}` dictionaries continue to work and are merged after
   stylesheets.
 
 Non-capabilities:
 
 - Stylesheet hot-reload file watching is not built in.
-- Public Python only exposes the user stylesheet origin. Framework/theme origins
-  are internal.
+- Public Python stylesheet methods expose the user origin. Framework/theme
+  stylesheet origins remain internal; `App.set_theme()` is the public token API.
 
 ## Parsing Model
 
@@ -662,25 +671,29 @@ Supported visual properties:
 
 | Property | Accepted Values | Effect |
 | --- | --- | --- |
-| `background` | color, `linear-gradient(...)`, `radial-gradient(...)`, `blob-gradient(...)`, `mesh-gradient(...)`, or comma-separated paint layers | Fill/background paint. |
+| `background` | color, `linear-gradient(...)`, `radial-gradient(...)`, `blob-gradient(...)`, `mesh-gradient(...)`, `dg-pattern(...)`, or comma-separated paint layers | Fill/background paint. |
 | `background-color` | color | Solid fill/background color. |
-| `background-image` | `linear-gradient(...)`, `radial-gradient(...)`, `blob-gradient(...)`, `mesh-gradient(...)`, repeating gradients, comma-separated gradient layers, or `none` | Gradient/image paint subset. Layers over `background-color`; `none` clears back to the solid color. `url(...)` sources are not supported. |
+| `background-image` | gradients, `dg-pattern(...)`, `app-resource("id", fit)`, comma-separated procedural paint layers, or `none` | `fit` is `contain`, `cover`, `stretch`, or `repeat`. Managed images compose over `background-color`; arbitrary `url(...)` sources remain unsupported. |
 | `background-noise` | number | Adds subtle deterministic noise to rect-backed gradient backgrounds. Clamped to `0.0..0.25`. |
 | `gradient-interpolation` | `srgb`, `linear-srgb`, or `oklab` | Selects the color interpolation space for gradient stops on rect-backed surfaces. Defaults to `srgb`. |
 | `foreground` | color | Foreground glyph/control color for renderers that use visual foreground. |
-| `border-color` | color | Border color. |
-| `border-width` | logical px | Border width. |
-| `border-style` | `solid`, `none`, or `hidden` | Uniform border style subset. `none` and `hidden` reset the rendered border; `solid` uses the current border width and color. |
+| `border-color` | color | Uniform border color. |
+| `border-width` | logical px | Uniform border width. |
+| `border-style` | `solid`, `dotted`, `dashed`, `double`, `none`, or `hidden` | Uniform border style. `none` and `hidden` reset the rendered border. |
+| `border-top`, `border-right`, `border-bottom`, `border-left` | `none`, `0`, or `<width> <style> <color>` | Side-specific border shorthand. |
+| `border-*-color` | color | Side-specific border color. |
+| `border-*-width` | logical px | Side-specific border width; participates in border-box layout. |
+| `border-*-style` | `solid`, `dotted`, `dashed`, `double`, `none`, or `hidden` | Side-specific border style. |
 | `border-radius` | logical px | Uniform corner radius. |
 | `border-top-left-radius` | logical px | Per-corner radius override. |
 | `border-top-right-radius` | logical px | Per-corner radius override. |
 | `border-bottom-right-radius` | logical px | Per-corner radius override. |
 | `border-bottom-left-radius` | logical px | Per-corner radius override. |
-| `border` | `none`, `0`, or `<width> solid <color>` | Shorthand for border reset, width, and color. Only `solid` and `none` styles are supported. |
-| `outline` | `none`, `0`, or `<width> solid <color>` | Paint-only outline shorthand for rect-backed widget surfaces. |
+| `border` | `none`, `0`, or `<width> <style> <color>` | Uniform shorthand for border reset, width, style, and color. |
+| `outline` | `none`, `0`, or `<width> <style> <color>` | Paint-only outline shorthand for rect-backed widget surfaces. |
 | `outline-color` | color | Outline color. |
 | `outline-width` | logical px | Outline width. |
-| `outline-style` | `solid`, `none`, or `hidden` | Outline style subset. `none` and `hidden` reset the rendered outline. |
+| `outline-style` | `solid`, `dotted`, `dashed`, `double`, `none`, or `hidden` | Outline style. `none` and `hidden` reset the rendered outline. |
 | `outline-offset` | logical px | Offset between the widget edge and outline. Negative offsets are clamped to zero in the first slice. |
 | `box-shadow` | comma-separated `inset? <offset-x> <offset-y> <blur?> <spread?> <color>` layers | Outset and inset soft shadows for rect-backed widget surfaces. |
 | `opacity` | number | Clamped to `0.0..1.0`. |
@@ -696,6 +709,15 @@ Notes:
 
 - Per-corner radius values inherit from `border-radius` when a specific corner
   is not set.
+- Uniform dotted, dashed, and double borders follow the rounded ring. Their
+  pattern phase uses a stable rectangular-perimeter projection while the
+  rounded SDF clips every fragment to the authored radii. Mixed per-edge
+  patterns use one GPU strip per visible edge with that edge's outer corner
+  radii, so pattern cost does not grow with widget size.
+- Double borders divide the authored width into two painted thirds separated by
+  a one-third gap. Border widths and colors interpolate through the existing
+  `border-width` and `border-color` transition properties; style keywords
+  switch discretely.
 - `box-shadow` supports one or more comma-separated outset or `inset` shadows.
   Outset shadows paint before the widget surface; inset shadows paint above the
   surface and below child widgets. Outset shadows inside scroll/overflow
@@ -707,12 +729,19 @@ Notes:
   The renderer interpolates up to six explicit or inferred color stops. Longer
   gradients are sampled down to six GPU stops. Transparent stops interpolate
   with premultiplied alpha to avoid dark halos when colors fade to transparent.
+  Stop positions accept percentages, logical pixels, and mixed
+  `calc(<percent> +/- <length>)` values. Two-position hard stops expand to
+  adjacent equal-color stops.
   `gradient-interpolation: linear-srgb` blends stops in linear-light sRGB;
   `gradient-interpolation: oklab` blends stops through Oklab before converting
   back to sRGB for output.
 - `repeating-linear-gradient(...)` and `repeating-radial-gradient(...)` are
-  supported when the final explicit stop is less than `100%`; the renderer
-  repeats that stop range across the shape.
+  supported. Pixel-based periods resolve against the physical painted gradient
+  line, so logical-pixel stripe widths remain fixed as widgets resize and scale
+  correctly with display DPI.
+- Omitted stop runs are distributed between their surrounding positions.
+  Decreasing positions are promoted to the previous resolved position, and
+  positions outside the painted interval are clamped to its nearest edge.
 - `blob-gradient(...)` is a DragonGUI-specific paint for organic blob
   backgrounds. It accepts up to four entries in the form
   `at <x> <y> <color> <radius>`, with percent centers and radius values such
@@ -722,14 +751,23 @@ Notes:
   It accepts four colors in top-left, top-right, bottom-left, bottom-right
   order and bilinearly blends across the rect. This is intended for smooth
   raster-gradient style surfaces rather than circular blob effects.
+- `dg-pattern(kind, foreground, background, tile-size)` is a bounded procedural
+  paint. Supported kinds are `checker`, `pinstripe`, `dot` (or `stipple`), and
+  `diagonal-hatch`; tile size must be a logical pixel value from `2px` through
+  `128px`. Patterns use one GPU rectangle instance and inherit opacity, rounded
+  clipping, transforms, layering, and display scaling.
 - Multiple comma-separated color/gradient background layers can be painted
   back-to-front. This is useful for a soft radial glow over a linear base.
 - `background-noise` is a small procedural dither/noise pass for rect-backed
   gradient backgrounds. Values around `0.01..0.03` are intended for softening
   gradient banding without looking visibly grainy.
-- Browser `background-image: url(...)` and side-specific border properties such
-  as `border-left` are not supported. `border-style` / `outline-style` are
-  uniform only; dashed, dotted, double, and per-side styles are not supported.
+- `app-resource("id", contain|cover|stretch|repeat)` samples a PNG/JPEG
+  registered by application code with `App.set_image_resource`. IDs are
+  semantic names rather than paths. Encoded data is capped at 16 MiB; native
+  decode is capped at 4096×4096 and 16 million pixels. Resources are versioned,
+  replaceable live, explicitly releasable, rounded/clipped, and DPI-aware.
+- Browser `background-image: url(...)` remains unsupported. CSS cannot load
+  filesystem paths, remote URLs, file/data URIs, or other arbitrary sources.
 - General clipping/overflow is first-slice only. Specific renderers also
   implement clipping where designed, such as `Image`, `DataFrameTable`,
   dropdown menus, menu rows, and panel accent fills.
@@ -763,7 +801,7 @@ Supported text properties:
 | --- | --- | --- |
 | `color` | color | Text color. |
 | `font-size` | logical px | Text size. |
-| `font-family` | family keyword or name | Text family. |
+| `font-family` | ordered comma-separated family keywords and/or quoted or unquoted names | First available family is selected. |
 | `font-weight` | `normal`, `bold`, or numeric `100..900` | Text weight, clamped to `100..900`. |
 | `text-align` | `left`, `start`, `center`, `middle`, `right`, `end` | Text alignment. |
 | `text-transform` | `none`, `uppercase`, `lowercase`, `capitalize` | Display-only text casing. Widget values and callbacks are not changed. |
@@ -775,12 +813,19 @@ Supported text properties:
 
 Font family keywords:
 
-- `serif`
-- `sans`, `sans-serif`, `sans_serif`, `system`
-- `mono`, `monospace`
+- `serif`, `ui-serif`
+- `sans`, `sans-serif`, `sans_serif`, `system`, `system-ui`,
+  `ui-sans-serif`, `ui-rounded`
+- `mono`, `monospace`, `ui-monospace`
 - `cursive`
 - `fantasy`
 - Any other value is treated as a named family.
+
+Comma-separated stacks retain declaration order through inheritance and debug
+snapshots. Missing named families fall through silently during rendering and
+are listed in runtime font diagnostics. `@font-face` aliases are valid stack
+entries. Family availability and resolved stack choices are cached and
+invalidated when active font-face aliases change.
 
 Text inheritance:
 
@@ -1040,28 +1085,57 @@ have separate layout nodes, focus targets, hit-test regions, callbacks, or ids.
 
 Supported parts:
 
-| Widget | Parts |
-| --- | --- |
-| `HLayout` | `scrollbar-track`, `scrollbar-thumb` |
-| `VLayout` | `scrollbar-track`, `scrollbar-thumb` |
-| `Pages` | `scrollbar-track`, `scrollbar-thumb` |
-| `Page` | `scrollbar-track`, `scrollbar-thumb` |
-| `Sidebar` | `scrollbar-track`, `scrollbar-thumb` |
-| `Panel` | `accent`, `scrollbar-track`, `scrollbar-thumb` |
-| `Collapsible` | `header`, `indicator`, `body`, `scrollbar-track`, `scrollbar-thumb` |
-| `Modal` | `scrim`, `scrollbar-track`, `scrollbar-thumb` |
-| `Button` | `badge` |
-| `NumberInput` | `field`, `stepper`, `stepper-up`, `stepper-down`, `stepper-divider`, `divider`, `caret` |
-| `Dropdown` | `field`, `chevron`, `menu`, `item`, `item-selected`, `item-hover` |
-| `Checkbox` | `row`, `box`, `indicator`, `label` |
-| `LED` | `dot`, `glow`, `highlight` |
-| `Slider` | `track`, `fill`, `thumb` |
-| `ProgressBar` | `track`, `fill`, `label` |
-| `Tabs` | `header` |
-| `Tab` | `tab`, `accent`, `badge` |
-| `NavItem` | `item`, `accent`, `badge` |
-| `DataFrameTable` | `header`, `row`, `row-selected`, `grid-line` |
-| Most rendered widgets | `before`, `after` generated content |
+<!-- BEGIN GENERATED WIDGET CSS CAPABILITIES -->
+
+_Generated from `python/dragongui/widget_css_capabilities.json`. Do not edit this table manually._
+
+Global generated-content hooks: `::before`, `::after` (text renderer).
+
+| Widget | Supported states | Parts and renderer support |
+| --- | --- | --- |
+| `ArrowButton` | `:hover`, `:active`, `:focus`, `:disabled` | `icon` (paint) |
+| `BarChart` | `:hover`, `:active`, `:focus`, `:disabled` | `label` (text), `value-label` (text) |
+| `Button` | `:hover`, `:active`, `:focus`, `:disabled` | `badge` (paint) |
+| `Checkbox` | `:hover`, `:active`, `:focus`, `:disabled`, `:checked` | `box` (paint), `indicator` (paint), `row` (paint), `label` (text) |
+| `CodeEditor` | `:hover`, `:active`, `:focus`, `:disabled` | `caret` (paint), `field` (paint), `gutter` (paint), `line-number` (text) |
+| `Collapsible` | `:hover`, `:active`, `:focus`, `:disabled`, `:open`, `:expanded`, `:collapsed` | `header` (paint), `indicator` (paint), `scrollbar-thumb` (paint), `scrollbar-track` (paint), `body` (structural) |
+| `ContextMenu` | `:hover`, `:active`, `:focus`, `:disabled`, `:open`, `:expanded`, `:collapsed` | `item` (paint), `item-disabled` (paint), `item-hover` (paint), `menu` (paint) |
+| `DataFrameTable` | `:hover`, `:active`, `:focus`, `:disabled`, `:selected` | `grid-line` (paint), `header` (paint), `row` (paint), `row-selected` (paint), `scrollbar-thumb` (paint), `scrollbar-track` (paint) |
+| `DragNumber` | `:hover`, `:active`, `:focus`, `:disabled` | `field` (paint), `grip` (paint), `value` (text) |
+| `Dropdown` | `:hover`, `:active`, `:focus`, `:disabled`, `:open`, `:expanded`, `:collapsed` | `chevron` (paint), `field` (paint), `item` (paint), `item-hover` (paint), `item-selected` (paint), `menu` (paint) |
+| `HLayout` | `:hover`, `:active`, `:focus`, `:disabled` | `scrollbar-thumb` (paint), `scrollbar-track` (paint) |
+| `Heatmap` | `:hover`, `:active`, `:focus`, `:disabled` | `cell` (paint), `grid` (paint), `hover` (paint), `scalar-bar` (paint), `label` (text) |
+| `IconButton` | `:hover`, `:active`, `:focus`, `:disabled` | `icon` (paint) |
+| `LED` | `:hover`, `:active`, `:focus`, `:disabled` | `dot` (paint), `glow` (paint), `highlight` (paint) |
+| `LoadingSpinner` | `:hover`, `:active`, `:focus`, `:disabled` | `arc` (paint), `track` (paint), `label` (text) |
+| `LogView` | `:hover`, `:active`, `:focus`, `:disabled` | `debug` (text), `error` (text), `info` (text), `line` (text), `warning` (text) |
+| `Menu` | `:hover`, `:active`, `:focus`, `:disabled`, `:open`, `:expanded`, `:collapsed` | `item` (paint), `item-disabled` (paint), `item-hover` (paint), `menu` (paint) |
+| `Modal` | `:hover`, `:active`, `:focus`, `:disabled`, `:open`, `:expanded`, `:collapsed` | `body` (paint), `header` (paint), `scrim` (paint), `scrollbar-thumb` (paint), `scrollbar-track` (paint), `title` (text) |
+| `NavItem` | `:hover`, `:active`, `:focus`, `:disabled`, `:selected` | `accent` (paint), `badge` (paint), `item` (paint) |
+| `NumberInput` | `:hover`, `:active`, `:focus`, `:disabled` | `caret` (paint), `divider` (paint), `field` (paint), `stepper` (paint), `stepper-divider` (paint), `stepper-down` (paint), `stepper-up` (paint) |
+| `Page` | `:hover`, `:active`, `:focus`, `:disabled` | `scrollbar-thumb` (paint), `scrollbar-track` (paint) |
+| `Pages` | `:hover`, `:active`, `:focus`, `:disabled` | `scrollbar-thumb` (paint), `scrollbar-track` (paint) |
+| `Pane` | `:hover`, `:active`, `:focus`, `:disabled` | `pane` (structural) |
+| `Panel` | `:hover`, `:active`, `:focus`, `:disabled` | `accent` (paint), `body` (paint), `header` (paint), `scrollbar-thumb` (paint), `scrollbar-track` (paint), `title` (text) |
+| `PieChart` | `:hover`, `:active`, `:focus`, `:disabled` | `label` (text) |
+| `ProgressBar` | `:hover`, `:active`, `:focus`, `:disabled` | `fill` (paint), `track` (paint), `label` (text) |
+| `RadioButton` | `:hover`, `:active`, `:focus`, `:disabled`, `:checked` | `dot` (paint), `indicator` (paint), `label` (text) |
+| `RangeSlider` | `:hover`, `:active`, `:focus`, `:disabled` | `range` (paint), `thumb-max` (paint), `thumb-min` (paint), `track` (paint), `label` (text) |
+| `ScrollArea` | `:hover`, `:active`, `:focus`, `:disabled` | `scrollbar-thumb` (paint), `scrollbar-track` (paint) |
+| `SearchBox` | `:hover`, `:active`, `:focus`, `:disabled` | `clear` (forwarded), `field` (forwarded), `icon` (forwarded) |
+| `Selectable` | `:hover`, `:active`, `:focus`, `:disabled`, `:selected` | `indicator` (paint), `row` (paint), `label` (text) |
+| `Sidebar` | `:hover`, `:active`, `:focus`, `:disabled` | `body` (paint), `header` (paint), `scrollbar-thumb` (paint), `scrollbar-track` (paint), `title` (text) |
+| `Slider` | `:hover`, `:active`, `:focus`, `:disabled` | `fill` (paint), `thumb` (paint), `track` (paint) |
+| `SmallButton` | `:hover`, `:active`, `:focus`, `:disabled` | `badge` (paint) |
+| `Splitter` | `:hover`, `:active`, `:focus`, `:disabled` | `gutter` (paint) |
+| `Tab` | `:hover`, `:active`, `:focus`, `:disabled`, `:selected` | `accent` (paint), `badge` (paint), `tab` (paint) |
+| `Tabs` | `:hover`, `:active`, `:focus`, `:disabled` | `header` (paint) |
+| `ToggleSwitch` | `:hover`, `:active`, `:focus`, `:disabled`, `:checked` | `row` (paint), `thumb` (paint), `track` (paint), `label` (text) |
+| `TreeNode` | `:hover`, `:active`, `:focus`, `:disabled`, `:open`, `:expanded`, `:collapsed` | `guide` (paint), `indicator` (paint), `row` (paint), `label` (text) |
+| `VLayout` | `:hover`, `:active`, `:focus`, `:disabled` | `scrollbar-thumb` (paint), `scrollbar-track` (paint) |
+| `Window` | `:hover`, `:active`, `:focus`, `:disabled` | `close` (forwarded), `maximize` (forwarded), `minimize` (forwarded), `title` (forwarded), `titlebar` (forwarded), `resize-border` (structural) |
+
+<!-- END GENERATED WIDGET CSS CAPABILITIES -->
 
 Part property support:
 

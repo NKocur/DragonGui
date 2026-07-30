@@ -427,10 +427,25 @@ Theme tokens include:
 - `radius`
 - `spacing`
 - `font_size`
+- `font_family`
+- `monospace_font_family`
+- `base_line_height`
+- `control_height`
+- `compact_control_height`
+- `default_border_width`
+- `focus_width`
+- `focus_offset`
+- `panel_padding`
+- `toolbar_gap`
 
 `spacing` is the base logical-pixel unit. Python exposes `space_xs`,
 `space_sm`, `space_md`, `space_lg`, and `space_xl`; application CSS can consume
 the same derived scale through `--dg-space-xs` through `--dg-space-xl`.
+System typography and geometry are exposed through matching `--dg-*`
+variables, including `--dg-font-family`, `--dg-line-height`,
+`--dg-control-height`, `--dg-border-width`, `--dg-panel-padding`, and
+`--dg-toolbar-gap`. Application CSS and inline style remain higher-precedence
+ways to customize individual widget properties.
 
 The native renderer also resolves derived tokens such as accent mix and accent
 dark variants.

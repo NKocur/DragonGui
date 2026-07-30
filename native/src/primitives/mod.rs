@@ -1,6 +1,8 @@
 use std::{
     borrow::Cow,
-    collections::HashMap,
+    collections::{HashMap, HashSet, VecDeque},
+    ops::Range,
+    sync::Arc,
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -33,13 +35,13 @@ use crate::style::{
     part_style_active_for_state as style_part_style_active_for_state,
     part_visual_for_state as style_part_visual_for_state, selected_part_style_for_state,
     state_part_style_for_state, tabs_header_height_for_style, uniform_layout_padding,
-    BackdropFilterStyle, BackgroundPaint, ColorRef, GradientInterpolation, NodeStyle, PartStyle,
-    PositionStyle, TextStyle, TransformStyle, TransitionProperty, VisualStyle, BORDER_WIDTH_LP,
-    CARET_WIDTH_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP, DROPDOWN_CHEVRON_WIDTH_LP,
-    FOCUS_RING_LP, PANEL_ACCENT_WIDTH_LP, SLIDER_THUMB_WIDTH_LP, SLIDER_TRACK_HEIGHT_LP,
-    SLIDER_TRACK_MARGIN_LP, TAB_ACTIVE_BAR_LP, TAB_GAP_LP, TAB_INACTIVE_BOTTOM_INSET_LP,
-    TAB_TOP_INSET_LP, TOGGLE_SWITCH_THUMB_SIZE_LP, TOGGLE_SWITCH_TRACK_HEIGHT_LP,
-    TOGGLE_SWITCH_TRACK_WIDTH_LP,
+    BackdropFilterStyle, BackgroundPaint, BackgroundPatternKind, BorderLineStyle, ColorRef,
+    GradientInterpolation, NodeStyle, PartStyle, PositionStyle, TextStyle, TransformStyle,
+    TransitionProperty, VisualStyle, BORDER_WIDTH_LP, CARET_WIDTH_LP, CHECKBOX_BOX_LP,
+    CHECKBOX_LEFT_PAD_LP, DROPDOWN_CHEVRON_WIDTH_LP, FOCUS_RING_LP, PANEL_ACCENT_WIDTH_LP,
+    SLIDER_THUMB_WIDTH_LP, SLIDER_TRACK_HEIGHT_LP, SLIDER_TRACK_MARGIN_LP, TAB_ACTIVE_BAR_LP,
+    TAB_GAP_LP, TAB_INACTIVE_BOTTOM_INSET_LP, TAB_TOP_INSET_LP, TOGGLE_SWITCH_THUMB_SIZE_LP,
+    TOGGLE_SWITCH_TRACK_HEIGHT_LP, TOGGLE_SWITCH_TRACK_WIDTH_LP,
 };
 use crate::table;
 use crate::text::measure_text_for_layout;
@@ -461,6 +463,8 @@ struct LineSegmentInstance {
     color: [f32; 4],
     /// x: rotation radians around rect center.
     params: [f32; 4],
+    /// Absolute screen-space paint clip: left, top, right, bottom.
+    clip: [f32; 4],
 }
 
 /// Raw line plot point stored in a compact GPU storage buffer.
@@ -590,7 +594,7 @@ static SIMPLE_RECT_ATTRS: [wgpu::VertexAttribute; 4] = [
     },
 ];
 
-static LINE_SEGMENT_ATTRS: [wgpu::VertexAttribute; 3] = [
+static LINE_SEGMENT_ATTRS: [wgpu::VertexAttribute; 4] = [
     wgpu::VertexAttribute {
         format: wgpu::VertexFormat::Float32x4,
         offset: 0,
@@ -605,6 +609,11 @@ static LINE_SEGMENT_ATTRS: [wgpu::VertexAttribute; 3] = [
         format: wgpu::VertexFormat::Float32x4,
         offset: 32,
         shader_location: 2,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 48,
+        shader_location: 3,
     },
 ];
 
@@ -709,6 +718,113 @@ pub struct PrimitiveRendererStats {
     pub last_emit_ms: f64,
     pub last_split_ms: f64,
     pub last_upload_ms: f64,
+    pub full_rebuilds: u64,
+    pub partial_base_attempts: u64,
+    pub partial_base_rebuilds: u64,
+    pub partial_base_fallbacks: u64,
+    pub partial_buffer_patches: u64,
+    pub partial_buffer_patch_fallbacks: u64,
+    pub partial_upload_bytes: u64,
+    pub last_partial_upload_bytes: u64,
+    pub overlay_rebuilds: u64,
+    pub targeted_line_plot_checks: u64,
+    pub targeted_line_plot_rebuilds: u64,
+    pub targeted_line_plot_skips: u64,
+    pub icon_cache_capacity: u32,
+    pub icon_cache_entries: u32,
+    pub icon_cache_hits: u64,
+    pub icon_cache_misses: u64,
+    pub icon_cache_evictions: u64,
+    pub icon_cache_parse_failures: u64,
+    pub last_rebuild_partial_base: bool,
+    pub last_rebuild_overlay_only: bool,
+}
+
+impl PrimitiveRendererStats {
+    pub fn icon_geometry_cache_snapshot(self) -> Value {
+        serde_json::json!({
+            "capacity": self.icon_cache_capacity,
+            "entries": self.icon_cache_entries,
+            "hits": self.icon_cache_hits,
+            "misses": self.icon_cache_misses,
+            "evictions": self.icon_cache_evictions,
+            "parse_failures": self.icon_cache_parse_failures,
+        })
+    }
+}
+
+const ICON_GEOMETRY_CACHE_CAPACITY: usize = 128;
+
+#[derive(Clone, Debug, PartialEq)]
+struct ParsedIconStroke {
+    points: Vec<[f32; 2]>,
+    closed: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ParsedIconGeometry {
+    view_box: [f32; 4],
+    stroke_width: f32,
+    strokes: Vec<ParsedIconStroke>,
+}
+
+#[derive(Debug)]
+struct IconGeometryCache {
+    capacity: usize,
+    entries: HashMap<Value, Arc<ParsedIconGeometry>>,
+    insertion_order: VecDeque<Value>,
+    hits: u64,
+    misses: u64,
+    evictions: u64,
+    parse_failures: u64,
+}
+
+impl Default for IconGeometryCache {
+    fn default() -> Self {
+        Self::with_capacity(ICON_GEOMETRY_CACHE_CAPACITY)
+    }
+}
+
+impl IconGeometryCache {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            capacity,
+            entries: HashMap::new(),
+            insertion_order: VecDeque::new(),
+            hits: 0,
+            misses: 0,
+            evictions: 0,
+            parse_failures: 0,
+        }
+    }
+
+    fn resolve(&mut self, resource: &Value) -> Option<Arc<ParsedIconGeometry>> {
+        if let Some(geometry) = self.entries.get(resource) {
+            self.hits = self.hits.saturating_add(1);
+            return Some(Arc::clone(geometry));
+        }
+
+        self.misses = self.misses.saturating_add(1);
+        let Some(geometry) = parse_custom_icon_resource(resource) else {
+            self.parse_failures = self.parse_failures.saturating_add(1);
+            return None;
+        };
+        let geometry = Arc::new(geometry);
+        if self.capacity == 0 {
+            return Some(geometry);
+        }
+        while self.entries.len() >= self.capacity {
+            let Some(oldest) = self.insertion_order.pop_front() else {
+                break;
+            };
+            if self.entries.remove(&oldest).is_some() {
+                self.evictions = self.evictions.saturating_add(1);
+            }
+        }
+        self.insertion_order.push_back(resource.clone());
+        self.entries.insert(resource.clone(), Arc::clone(&geometry));
+        Some(geometry)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -719,10 +835,92 @@ enum PrimitivePipelineKind {
 }
 
 #[derive(Clone, Copy, Debug)]
+struct PrimitiveRoute {
+    kind: PrimitivePipelineKind,
+    index: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
 struct PrimitiveBatch {
     kind: PrimitivePipelineKind,
     start: u32,
     count: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PrimitiveRebuildScope {
+    Full,
+    PartialBase,
+    Overlay,
+}
+
+fn replace_retained_base_range(
+    instances: &mut Vec<RectInstance>,
+    ranges: &mut HashMap<String, Range<usize>>,
+    overlay_start: &mut u32,
+    widget_id: &str,
+    replacement: Vec<RectInstance>,
+) -> bool {
+    let Some(old_range) = ranges.get(widget_id).cloned() else {
+        return false;
+    };
+    if old_range.start >= old_range.end
+        || old_range.end > *overlay_start as usize
+        || old_range.end > instances.len()
+    {
+        return false;
+    }
+    let old_len = old_range.len();
+    let new_len = replacement.len();
+    instances.splice(old_range.clone(), replacement);
+    let delta = new_len as isize - old_len as isize;
+    let new_end = old_range.start + new_len;
+    ranges.retain(|owner, range| {
+        if owner == widget_id {
+            *range = old_range.start..new_end;
+        } else if range.start >= old_range.end {
+            range.start = range.start.saturating_add_signed(delta);
+            range.end = range.end.saturating_add_signed(delta);
+        } else if range.start <= old_range.start && range.end >= old_range.end {
+            range.end = range.end.saturating_add_signed(delta);
+        } else if range.start >= old_range.start && range.end <= old_range.end {
+            return false;
+        }
+        true
+    });
+    *overlay_start = (*overlay_start as usize)
+        .saturating_add_signed(delta)
+        .min(u32::MAX as usize) as u32;
+    true
+}
+
+fn include_instance_index(range: &mut Option<Range<usize>>, index: usize) {
+    match range {
+        Some(range) => {
+            range.start = range.start.min(index);
+            range.end = range.end.max(index.saturating_add(1));
+        }
+        None => *range = Some(index..index.saturating_add(1)),
+    }
+}
+
+fn write_instance_range<T: Pod>(
+    queue: &wgpu::Queue,
+    buffer: &wgpu::Buffer,
+    instances: &[T],
+    range: Option<Range<usize>>,
+) -> u64 {
+    let Some(range) = range else {
+        return 0;
+    };
+    if range.is_empty() || range.end > instances.len() {
+        return 0;
+    }
+    let stride = std::mem::size_of::<T>();
+    let byte_offset = (range.start * stride) as u64;
+    let bytes = bytemuck::cast_slice(&instances[range]);
+    queue.write_buffer(buffer, byte_offset, bytes);
+    bytes.len() as u64
 }
 
 pub struct PrimitivesRenderer {
@@ -741,8 +939,11 @@ pub struct PrimitivesRenderer {
     simple_instances: Vec<SimpleRectInstance>,
     line_instances: Vec<LineSegmentInstance>,
     complex_instances: Vec<RectInstance>,
+    source_routes: Vec<PrimitiveRoute>,
     base_batches: Vec<PrimitiveBatch>,
     overlay_batches: Vec<PrimitiveBatch>,
+    base_subtree_ranges: HashMap<String, Range<usize>>,
+    icon_geometry_cache: IconGeometryCache,
     split_enabled: bool,
     stats: PrimitiveRendererStats,
     pub rect_count: u32,
@@ -958,8 +1159,11 @@ impl PrimitivesRenderer {
             simple_instances: Vec::with_capacity(64),
             line_instances: Vec::with_capacity(64),
             complex_instances: Vec::with_capacity(64),
+            source_routes: Vec::with_capacity(64),
             base_batches: Vec::with_capacity(16),
             overlay_batches: Vec::with_capacity(4),
+            base_subtree_ranges: HashMap::new(),
+            icon_geometry_cache: IconGeometryCache::default(),
             split_enabled,
             stats: PrimitiveRendererStats::default(),
             rect_count: 0,
@@ -988,7 +1192,8 @@ impl PrimitivesRenderer {
         self.instances = instances;
         self.rect_count = self.instances.len() as u32;
         self.overlay_start = overlay_start.min(self.rect_count);
-        self.split_and_upload(device, queue, 0.0);
+        self.base_subtree_ranges.clear();
+        self.split_and_upload(device, queue, 0.0, PrimitiveRebuildScope::Full);
     }
 
     /// Rebuild the instance list from layout, theme, and interactive state.
@@ -1009,6 +1214,7 @@ impl PrimitivesRenderer {
         let window_w = media.width * scale_factor;
         let window_h = media.height * scale_factor;
         self.instances.clear();
+        self.base_subtree_ranges.clear();
         let emit_t0 = Instant::now();
         emit_rects_inner(
             tree,
@@ -1020,34 +1226,11 @@ impl PrimitivesRenderer {
             true,
             RenderContext::default(),
             &mut self.instances,
+            Some(&mut self.base_subtree_ranges),
+            &mut self.icon_geometry_cache,
         );
         self.overlay_start = self.instances.len() as u32;
-        emit_dropdown_overlays(
-            tree,
-            layout,
-            theme,
-            scale_factor,
-            state,
-            &mut self.instances,
-        );
-        emit_menu_overlays(
-            tree,
-            layout,
-            theme,
-            scale_factor,
-            state,
-            &mut self.instances,
-        );
-        emit_modal_overlays(
-            tree,
-            layout,
-            theme,
-            scale_factor,
-            state,
-            caret_positions,
-            &mut self.instances,
-        );
-        emit_tooltip_overlay(
+        emit_primitive_overlays(
             tree,
             layout,
             theme,
@@ -1056,37 +1239,311 @@ impl PrimitivesRenderer {
             caret_positions,
             stylesheets,
             media,
-            &mut self.instances,
-        );
-        emit_toast_overlays(
             toasts,
-            theme,
-            scale_factor,
-            stylesheets,
-            media,
             window_w,
             window_h,
             &mut self.instances,
-        );
-        emit_drag_drop_overlay(
-            state,
-            theme,
-            scale_factor,
-            window_w,
-            window_h,
-            &mut self.instances,
+            &mut self.icon_geometry_cache,
         );
 
         self.rect_count = self.instances.len() as u32;
         let emit_ms = emit_t0.elapsed().as_secs_f64() * 1000.0;
-        self.split_and_upload(device, queue, emit_ms);
+        self.split_and_upload(device, queue, emit_ms, PrimitiveRebuildScope::Full);
     }
 
-    fn split_and_upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, emit_ms: f64) {
+    /// Rebuild only virtual overlay primitives while retaining the base-tree
+    /// instance range and its established paint order.
+    pub fn rebuild_overlays(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        tree: &WidgetNode,
+        layout: &LayoutResult,
+        theme: &Theme,
+        scale_factor: f32,
+        state: &WidgetState,
+        caret_positions: &HashMap<String, [f32; 2]>,
+        toasts: &[ToastOverlay],
+        stylesheets: &StylesheetStore,
+        media: DgMediaEnvironment,
+    ) {
+        let window_w = media.width * scale_factor;
+        let window_h = media.height * scale_factor;
+        let base_len = (self.overlay_start as usize).min(self.instances.len());
+        self.instances.truncate(base_len);
+        self.overlay_start = base_len as u32;
+        let emit_t0 = Instant::now();
+        emit_primitive_overlays(
+            tree,
+            layout,
+            theme,
+            scale_factor,
+            state,
+            caret_positions,
+            stylesheets,
+            media,
+            toasts,
+            window_w,
+            window_h,
+            &mut self.instances,
+            &mut self.icon_geometry_cache,
+        );
+        self.rect_count = self.instances.len() as u32;
+        let emit_ms = emit_t0.elapsed().as_secs_f64() * 1000.0;
+        self.split_and_upload(device, queue, emit_ms, PrimitiveRebuildScope::Overlay);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn rebuild_base_subtrees(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        tree: &WidgetNode,
+        layout: &LayoutResult,
+        theme: &Theme,
+        scale_factor: f32,
+        state: &WidgetState,
+        caret_positions: &HashMap<String, [f32; 2]>,
+        toasts: &[ToastOverlay],
+        stylesheets: &StylesheetStore,
+        media: DgMediaEnvironment,
+        widget_ids: &HashSet<String>,
+        rebuild_overlays: bool,
+    ) -> bool {
+        if widget_ids.is_empty() {
+            return false;
+        }
+        self.stats.partial_base_attempts = self.stats.partial_base_attempts.saturating_add(1);
+        let mut replacements = Vec::with_capacity(widget_ids.len());
+        for widget_id in widget_ids {
+            let Some(range) = self.base_subtree_ranges.get(widget_id).cloned() else {
+                return self.reject_partial_base_rebuild();
+            };
+            if range.end > self.overlay_start as usize {
+                return self.reject_partial_base_rebuild();
+            }
+            let Some(node) = find_node(tree, widget_id) else {
+                return self.reject_partial_base_rebuild();
+            };
+            let mut instances = Vec::with_capacity(range.len());
+            let mut replacement_ranges = HashMap::new();
+            emit_rects_inner(
+                node,
+                layout,
+                theme,
+                scale_factor,
+                state,
+                caret_positions,
+                true,
+                RenderContext::default(),
+                &mut instances,
+                Some(&mut replacement_ranges),
+                &mut self.icon_geometry_cache,
+            );
+            if range.is_empty() {
+                if instances.is_empty() {
+                    continue;
+                }
+                return self.reject_partial_base_rebuild();
+            }
+            replacements.push((
+                widget_id.clone(),
+                range.start,
+                range.len(),
+                instances,
+                replacement_ranges,
+            ));
+        }
+        replacements.sort_by(|left, right| right.1.cmp(&left.1));
+
+        let emit_t0 = Instant::now();
+        let same_shape = replacements
+            .iter()
+            .all(|(_, _, old_len, replacement, _)| *old_len == replacement.len());
+        let changed_ranges = replacements
+            .iter()
+            .map(|(_, range_start, _, replacement, _)| {
+                *range_start..*range_start + replacement.len()
+            })
+            .collect::<Vec<_>>();
+        for (widget_id, range_start, _, replacement, replacement_ranges) in replacements {
+            let replaced = replace_retained_base_range(
+                &mut self.instances,
+                &mut self.base_subtree_ranges,
+                &mut self.overlay_start,
+                &widget_id,
+                replacement,
+            );
+            debug_assert!(replaced, "validated retained primitive range");
+            for (owner, range) in replacement_ranges {
+                self.base_subtree_ranges
+                    .insert(owner, range_start + range.start..range_start + range.end);
+            }
+        }
+
+        if rebuild_overlays {
+            let base_len = (self.overlay_start as usize).min(self.instances.len());
+            self.instances.truncate(base_len);
+            let window_w = media.width * scale_factor;
+            let window_h = media.height * scale_factor;
+            emit_primitive_overlays(
+                tree,
+                layout,
+                theme,
+                scale_factor,
+                state,
+                caret_positions,
+                stylesheets,
+                media,
+                toasts,
+                window_w,
+                window_h,
+                &mut self.instances,
+                &mut self.icon_geometry_cache,
+            );
+        }
+        self.rect_count = self.instances.len() as u32;
+        let emit_ms = emit_t0.elapsed().as_secs_f64() * 1000.0;
+        if !rebuild_overlays && same_shape {
+            if self.patch_split_instances_and_upload(queue, &changed_ranges, emit_ms) {
+                return true;
+            }
+            self.stats.partial_buffer_patch_fallbacks =
+                self.stats.partial_buffer_patch_fallbacks.saturating_add(1);
+        } else {
+            self.stats.partial_buffer_patch_fallbacks =
+                self.stats.partial_buffer_patch_fallbacks.saturating_add(1);
+        }
+        self.split_and_upload(device, queue, emit_ms, PrimitiveRebuildScope::PartialBase);
+        true
+    }
+
+    pub fn record_targeted_line_plot_rebuild(&mut self, rebuilt: bool) {
+        self.stats.targeted_line_plot_checks =
+            self.stats.targeted_line_plot_checks.saturating_add(1);
+        if rebuilt {
+            self.stats.targeted_line_plot_rebuilds =
+                self.stats.targeted_line_plot_rebuilds.saturating_add(1);
+        } else {
+            self.stats.targeted_line_plot_skips =
+                self.stats.targeted_line_plot_skips.saturating_add(1);
+        }
+    }
+
+    fn reject_partial_base_rebuild(&mut self) -> bool {
+        self.stats.partial_base_fallbacks = self.stats.partial_base_fallbacks.saturating_add(1);
+        false
+    }
+
+    fn patch_split_instances_and_upload(
+        &mut self,
+        queue: &wgpu::Queue,
+        changed_ranges: &[Range<usize>],
+        emit_ms: f64,
+    ) -> bool {
+        if self.source_routes.len() != self.instances.len() {
+            return false;
+        }
+
+        let mut updates = Vec::new();
+        for range in changed_ranges {
+            if range.end > self.instances.len() {
+                return false;
+            }
+            for source_index in range.clone() {
+                let instance = self.instances[source_index];
+                let route = self.source_routes[source_index];
+                let expected_kind = pipeline_kind_for_instance(
+                    &instance,
+                    self.split_enabled,
+                    self.stats.split_collapsed,
+                );
+                if route.kind != expected_kind {
+                    return false;
+                }
+                let route_is_valid = match route.kind {
+                    PrimitivePipelineKind::Simple => route.index < self.simple_instances.len(),
+                    PrimitivePipelineKind::Line => route.index < self.line_instances.len(),
+                    PrimitivePipelineKind::Complex => route.index < self.complex_instances.len(),
+                };
+                if !route_is_valid {
+                    return false;
+                }
+                updates.push((route, instance));
+            }
+        }
+
+        let upload_t0 = Instant::now();
+        let mut simple_range = None;
+        let mut line_range = None;
+        let mut complex_range = None;
+        for (route, instance) in updates {
+            match route.kind {
+                PrimitivePipelineKind::Simple => {
+                    self.simple_instances[route.index] = SimpleRectInstance {
+                        rect: instance.rect,
+                        color: instance.color,
+                        radii: instance.radii,
+                        clip: instance.clip,
+                    };
+                    include_instance_index(&mut simple_range, route.index);
+                }
+                PrimitivePipelineKind::Line => {
+                    self.line_instances[route.index] = line_segment_instance_from_rect(instance);
+                    include_instance_index(&mut line_range, route.index);
+                }
+                PrimitivePipelineKind::Complex => {
+                    self.complex_instances[route.index] = instance;
+                    include_instance_index(&mut complex_range, route.index);
+                }
+            }
+        }
+
+        let mut upload_bytes = 0;
+        upload_bytes += write_instance_range(
+            queue,
+            &self.simple_vertex_buffer,
+            &self.simple_instances,
+            simple_range,
+        );
+        upload_bytes += write_instance_range(
+            queue,
+            &self.line_vertex_buffer,
+            &self.line_instances,
+            line_range,
+        );
+        upload_bytes += write_instance_range(
+            queue,
+            &self.complex_vertex_buffer,
+            &self.complex_instances,
+            complex_range,
+        );
+
+        self.stats.last_emit_ms = emit_ms;
+        self.stats.last_split_ms = 0.0;
+        self.stats.last_upload_ms = upload_t0.elapsed().as_secs_f64() * 1000.0;
+        self.stats.partial_base_rebuilds = self.stats.partial_base_rebuilds.saturating_add(1);
+        self.stats.partial_buffer_patches = self.stats.partial_buffer_patches.saturating_add(1);
+        self.stats.partial_upload_bytes =
+            self.stats.partial_upload_bytes.saturating_add(upload_bytes);
+        self.stats.last_partial_upload_bytes = upload_bytes;
+        self.stats.last_rebuild_partial_base = true;
+        self.stats.last_rebuild_overlay_only = false;
+        true
+    }
+
+    fn split_and_upload(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        emit_ms: f64,
+        scope: PrimitiveRebuildScope,
+    ) {
         let split_t0 = Instant::now();
         self.simple_instances.clear();
         self.line_instances.clear();
         self.complex_instances.clear();
+        self.source_routes.clear();
         self.base_batches.clear();
         self.overlay_batches.clear();
 
@@ -1097,27 +1554,41 @@ impl PrimitivesRenderer {
             } else {
                 &mut self.base_batches
             };
-            if self.split_enabled && is_line_segment_instance(&instance) {
-                let start = self.line_instances.len() as u32;
-                self.line_instances.push(LineSegmentInstance {
-                    rect: instance.rect,
-                    color: instance.color,
-                    params: [instance.transform2[0], 0.0, 0.0, 0.0],
-                });
-                push_primitive_batch(batches, PrimitivePipelineKind::Line, start, 1);
-            } else if self.split_enabled && is_simple_rect_instance(&instance) {
-                let start = self.simple_instances.len() as u32;
-                self.simple_instances.push(SimpleRectInstance {
-                    rect: instance.rect,
-                    color: instance.color,
-                    radii: instance.radii,
-                    clip: instance.clip,
-                });
-                push_primitive_batch(batches, PrimitivePipelineKind::Simple, start, 1);
-            } else {
-                let start = self.complex_instances.len() as u32;
-                self.complex_instances.push(instance);
-                push_primitive_batch(batches, PrimitivePipelineKind::Complex, start, 1);
+            let kind = pipeline_kind_for_instance(&instance, self.split_enabled, false);
+            match kind {
+                PrimitivePipelineKind::Line => {
+                    let start = self.line_instances.len() as u32;
+                    self.source_routes.push(PrimitiveRoute {
+                        kind,
+                        index: start as usize,
+                    });
+                    self.line_instances
+                        .push(line_segment_instance_from_rect(instance));
+                    push_primitive_batch(batches, kind, start, 1);
+                }
+                PrimitivePipelineKind::Simple => {
+                    let start = self.simple_instances.len() as u32;
+                    self.source_routes.push(PrimitiveRoute {
+                        kind,
+                        index: start as usize,
+                    });
+                    self.simple_instances.push(SimpleRectInstance {
+                        rect: instance.rect,
+                        color: instance.color,
+                        radii: instance.radii,
+                        clip: instance.clip,
+                    });
+                    push_primitive_batch(batches, kind, start, 1);
+                }
+                PrimitivePipelineKind::Complex => {
+                    let start = self.complex_instances.len() as u32;
+                    self.source_routes.push(PrimitiveRoute {
+                        kind,
+                        index: start as usize,
+                    });
+                    self.complex_instances.push(instance);
+                    push_primitive_batch(batches, kind, start, 1);
+                }
             }
         }
         let mut split_collapsed = false;
@@ -1213,6 +1684,32 @@ impl PrimitivesRenderer {
             .chain(self.overlay_batches.iter())
             .filter(|batch| batch.kind == PrimitivePipelineKind::Complex)
             .count() as u32;
+        let full_rebuilds = self
+            .stats
+            .full_rebuilds
+            .saturating_add(u64::from(scope == PrimitiveRebuildScope::Full));
+        let partial_base_rebuilds = self
+            .stats
+            .partial_base_rebuilds
+            .saturating_add(u64::from(scope == PrimitiveRebuildScope::PartialBase));
+        let partial_base_attempts = self.stats.partial_base_attempts;
+        let partial_base_fallbacks = self.stats.partial_base_fallbacks;
+        let partial_buffer_patches = self.stats.partial_buffer_patches;
+        let partial_buffer_patch_fallbacks = self.stats.partial_buffer_patch_fallbacks;
+        let partial_upload_bytes = self.stats.partial_upload_bytes;
+        let targeted_line_plot_checks = self.stats.targeted_line_plot_checks;
+        let targeted_line_plot_rebuilds = self.stats.targeted_line_plot_rebuilds;
+        let targeted_line_plot_skips = self.stats.targeted_line_plot_skips;
+        let icon_cache_capacity = self.icon_geometry_cache.capacity as u32;
+        let icon_cache_entries = self.icon_geometry_cache.entries.len() as u32;
+        let icon_cache_hits = self.icon_geometry_cache.hits;
+        let icon_cache_misses = self.icon_geometry_cache.misses;
+        let icon_cache_evictions = self.icon_geometry_cache.evictions;
+        let icon_cache_parse_failures = self.icon_geometry_cache.parse_failures;
+        let overlay_rebuilds = self
+            .stats
+            .overlay_rebuilds
+            .saturating_add(u64::from(scope == PrimitiveRebuildScope::Overlay));
         self.stats = PrimitiveRendererStats {
             split_enabled: self.split_enabled,
             split_collapsed,
@@ -1233,6 +1730,26 @@ impl PrimitivesRenderer {
             last_emit_ms: emit_ms,
             last_split_ms: split_ms,
             last_upload_ms: upload_ms,
+            full_rebuilds,
+            partial_base_attempts,
+            partial_base_rebuilds,
+            partial_base_fallbacks,
+            partial_buffer_patches,
+            partial_buffer_patch_fallbacks,
+            partial_upload_bytes,
+            last_partial_upload_bytes: 0,
+            overlay_rebuilds,
+            targeted_line_plot_checks,
+            targeted_line_plot_rebuilds,
+            targeted_line_plot_skips,
+            icon_cache_capacity,
+            icon_cache_entries,
+            icon_cache_hits,
+            icon_cache_misses,
+            icon_cache_evictions,
+            icon_cache_parse_failures,
+            last_rebuild_partial_base: scope == PrimitiveRebuildScope::PartialBase,
+            last_rebuild_overlay_only: scope == PrimitiveRebuildScope::Overlay,
         };
     }
 
@@ -1244,10 +1761,15 @@ impl PrimitivesRenderer {
         self.simple_instances.clear();
         self.line_instances.clear();
         self.complex_instances.clear();
+        self.source_routes.clear();
         self.base_batches.clear();
         self.overlay_batches.clear();
         for (index, instance) in self.instances.iter().copied().enumerate() {
             let start = self.complex_instances.len() as u32;
+            self.source_routes.push(PrimitiveRoute {
+                kind: PrimitivePipelineKind::Complex,
+                index: start as usize,
+            });
             self.complex_instances.push(instance);
             let batches = if index >= self.overlay_start as usize {
                 &mut self.overlay_batches
@@ -1752,6 +2274,36 @@ fn is_line_segment_instance(instance: &RectInstance) -> bool {
         && instance.transform2[2].abs() <= EPS
 }
 
+fn pipeline_kind_for_instance(
+    instance: &RectInstance,
+    split_enabled: bool,
+    split_collapsed: bool,
+) -> PrimitivePipelineKind {
+    if split_collapsed || !split_enabled {
+        PrimitivePipelineKind::Complex
+    } else if is_line_segment_instance(instance) {
+        PrimitivePipelineKind::Line
+    } else if is_simple_rect_instance(instance) {
+        PrimitivePipelineKind::Simple
+    } else {
+        PrimitivePipelineKind::Complex
+    }
+}
+
+fn line_segment_instance_from_rect(instance: RectInstance) -> LineSegmentInstance {
+    LineSegmentInstance {
+        rect: instance.rect,
+        color: instance.color,
+        params: [instance.transform2[0], 0.0, 0.0, 0.0],
+        clip: [
+            instance.rect[0] + instance.clip[0],
+            instance.rect[1] + instance.clip[1],
+            instance.rect[0] + instance.clip[2],
+            instance.rect[1] + instance.clip[3],
+        ],
+    }
+}
+
 fn should_collapse_split_batches(rect_count: usize, batch_count: usize, line_count: usize) -> bool {
     if line_count > 0 && line_count * 2 >= rect_count {
         return false;
@@ -1908,6 +2460,42 @@ fn inst_outline_ring_clipped(
         color6: color,
         gradient_stops2: [1.0, 1.0, 1.0, 1.0],
     }
+}
+
+fn border_pattern_code(style: BorderLineStyle) -> f32 {
+    match style {
+        BorderLineStyle::None | BorderLineStyle::Solid => 0.0,
+        BorderLineStyle::Dotted => 10.0,
+        BorderLineStyle::Dashed => 11.0,
+        BorderLineStyle::Double => 12.0,
+    }
+}
+
+fn inst_patterned_outline_ring_clipped(
+    rect: [f32; 4],
+    color: [f32; 4],
+    radii: [f32; 4],
+    thickness: f32,
+    clip: [f32; 4],
+    style: BorderLineStyle,
+) -> RectInstance {
+    let mut instance = inst_outline_ring_clipped(rect, color, radii, thickness, clip);
+    instance.paint[0] = border_pattern_code(style);
+    instance
+}
+
+fn inst_patterned_border_strip(
+    rect: [f32; 4],
+    color: [f32; 4],
+    radii: [f32; 4],
+    horizontal: bool,
+    style: BorderLineStyle,
+) -> RectInstance {
+    let mut instance = inst_radii(rect, color, radii);
+    instance.params[3] = 6.0;
+    instance.paint[0] = border_pattern_code(style);
+    instance.paint[1] = if horizontal { 1.0 } else { 0.0 };
+    instance
 }
 
 fn default_local_clip(rect: [f32; 4]) -> [f32; 4] {
@@ -2141,6 +2729,34 @@ fn inst_mesh_gradient(
         color6: [0.0, 0.0, 0.0, 0.0],
         gradient_stops2: [1.0, 1.0, 1.0, 1.0],
     }
+}
+
+fn background_pattern_kind_code(kind: BackgroundPatternKind) -> f32 {
+    match kind {
+        BackgroundPatternKind::Checker => 0.0,
+        BackgroundPatternKind::Pinstripe => 1.0,
+        BackgroundPatternKind::Dot => 2.0,
+        BackgroundPatternKind::DiagonalHatch => 3.0,
+    }
+}
+
+fn inst_background_pattern(
+    rect: [f32; 4],
+    foreground: [f32; 4],
+    background: [f32; 4],
+    kind: BackgroundPatternKind,
+    tile_size_px: f32,
+    radii: [f32; 4],
+) -> RectInstance {
+    let mut instance = inst_radii(rect, foreground, radii);
+    instance.color2 = background;
+    instance.paint = [
+        5.0,
+        background_pattern_kind_code(kind),
+        tile_size_px.max(1.0),
+        0.0,
+    ];
+    instance
 }
 
 fn push_masked_rect(
@@ -2556,6 +3172,51 @@ pub(crate) fn interpolate_visual_style(
         } else {
             instant.border_width
         },
+        border_style: instant.border_style,
+        border_top_color: if transition_allows(properties, TransitionProperty::BorderColor) {
+            interpolate_color_ref(&from.border_top_color, &to.border_top_color, t, theme)
+        } else {
+            instant.border_top_color.clone()
+        },
+        border_right_color: if transition_allows(properties, TransitionProperty::BorderColor) {
+            interpolate_color_ref(&from.border_right_color, &to.border_right_color, t, theme)
+        } else {
+            instant.border_right_color.clone()
+        },
+        border_bottom_color: if transition_allows(properties, TransitionProperty::BorderColor) {
+            interpolate_color_ref(&from.border_bottom_color, &to.border_bottom_color, t, theme)
+        } else {
+            instant.border_bottom_color.clone()
+        },
+        border_left_color: if transition_allows(properties, TransitionProperty::BorderColor) {
+            interpolate_color_ref(&from.border_left_color, &to.border_left_color, t, theme)
+        } else {
+            instant.border_left_color.clone()
+        },
+        border_top_width: if transition_allows(properties, TransitionProperty::BorderWidth) {
+            interpolate_option_f32(from.border_top_width, to.border_top_width, t)
+        } else {
+            instant.border_top_width
+        },
+        border_right_width: if transition_allows(properties, TransitionProperty::BorderWidth) {
+            interpolate_option_f32(from.border_right_width, to.border_right_width, t)
+        } else {
+            instant.border_right_width
+        },
+        border_bottom_width: if transition_allows(properties, TransitionProperty::BorderWidth) {
+            interpolate_option_f32(from.border_bottom_width, to.border_bottom_width, t)
+        } else {
+            instant.border_bottom_width
+        },
+        border_left_width: if transition_allows(properties, TransitionProperty::BorderWidth) {
+            interpolate_option_f32(from.border_left_width, to.border_left_width, t)
+        } else {
+            instant.border_left_width
+        },
+        border_top_style: instant.border_top_style,
+        border_right_style: instant.border_right_style,
+        border_bottom_style: instant.border_bottom_style,
+        border_left_style: instant.border_left_style,
         outline_color: if transition_allows_any(
             properties,
             &[
@@ -2578,6 +3239,7 @@ pub(crate) fn interpolate_visual_style(
         } else {
             instant.outline_width
         },
+        outline_style: instant.outline_style,
         outline_offset: if transition_allows_any(
             properties,
             &[
@@ -2781,6 +3443,56 @@ fn merged_part_visual_for(node: &WidgetNode, state: &WidgetState, parts: &[&str]
     style_merged_part_visual_for_state(&node.style, &node.id, state, parts)
 }
 
+fn emit_titled_container_surface_parts(
+    out: &mut Vec<RectInstance>,
+    node: &WidgetNode,
+    layout: &LayoutResult,
+    state: &WidgetState,
+    theme: &Theme,
+    sf: f32,
+    container_radii: [f32; 4],
+    container_border_w: f32,
+) {
+    let Some(geometry) = titled_container_geometry(node, layout, sf, theme) else {
+        return;
+    };
+    let inner_radii = inset_radii(container_radii, container_border_w);
+    for (part, rect, inherited_radii) in [
+        (
+            "header",
+            geometry.title_band,
+            [inner_radii[0], inner_radii[1], 0.0, 0.0],
+        ),
+        (
+            "body",
+            geometry.body_viewport,
+            [0.0, 0.0, inner_radii[2], inner_radii[3]],
+        ),
+    ] {
+        if !part_style_active_for_state(node, state, part) || rect.w <= 0.0 || rect.h <= 0.0 {
+            continue;
+        }
+        let part_visual = part_visual_for(node, state, part);
+        let part_border_w = part_visual.border_width.unwrap_or(0.0).max(0.0) * sf;
+        let part_radii = part_visual
+            .border_radius
+            .map(|radius| visual_radii(&part_visual, radius.max(0.0), sf))
+            .unwrap_or(inherited_radii);
+        let part_fill = resolve_background_paint(&part_visual, theme, [0.0, 0.0, 0.0, 0.0], sf);
+        let part_border = resolve_color(&part_visual.border_color, theme)
+            .map(|color| apply_opacity(color, part_visual.opacity))
+            .unwrap_or(theme.border);
+        emit_bordered_paint_rect_radii(
+            out,
+            [rect.x, rect.y, rect.w, rect.h],
+            part_border,
+            part_fill,
+            part_radii,
+            part_border_w,
+        );
+    }
+}
+
 fn resolve_color(color: &Option<crate::style::ColorRef>, theme: &Theme) -> Option<[f32; 4]> {
     color.as_ref().map(|c| c.resolve(theme))
 }
@@ -2790,16 +3502,16 @@ enum FillPaint {
     Solid([f32; 4]),
     Layers(Vec<FillPaint>),
     LinearGradient {
-        colors: [[f32; 4]; GRADIENT_STOP_CAPACITY],
-        stops: [f32; GRADIENT_STOP_CAPACITY],
-        count: f32,
+        stops: Vec<ResolvedGradientStop>,
+        repeating: bool,
+        scale_factor: f32,
         interpolation: f32,
         angle_deg: f32,
     },
     RadialGradient {
-        colors: [[f32; 4]; GRADIENT_STOP_CAPACITY],
-        stops: [f32; GRADIENT_STOP_CAPACITY],
-        count: f32,
+        stops: Vec<ResolvedGradientStop>,
+        repeating: bool,
+        scale_factor: f32,
         interpolation: f32,
         center: [f32; 2],
     },
@@ -2814,6 +3526,18 @@ enum FillPaint {
         colors: [[f32; 4]; 4],
         interpolation: f32,
     },
+    Pattern {
+        kind: BackgroundPatternKind,
+        foreground: [f32; 4],
+        background: [f32; 4],
+        tile_size_px: f32,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedGradientStop {
+    color: [f32; 4],
+    position: Option<crate::style::CalcLength>,
 }
 
 const GRADIENT_STOP_CAPACITY: usize = 6;
@@ -5352,6 +6076,12 @@ fn emit_heatmap(
     let grid_visual = base_part_style(&node.style, "grid")
         .map(|style| style.visual.clone())
         .unwrap_or_default();
+    let cell_visual = base_part_style(&node.style, "cell")
+        .map(|style| style.visual.clone())
+        .unwrap_or_default();
+    let cell_fill = resolve_color(&cell_visual.background, theme)
+        .or_else(|| resolve_color(&cell_visual.foreground, theme))
+        .map(|color| apply_opacity(color, cell_visual.opacity));
     let grid_fallback = native_widget_part_paint_fallback(
         WidgetKind::Heatmap,
         "grid",
@@ -5392,7 +6122,7 @@ fn emit_heatmap(
             let y1 = plot[1] + plot[3] * (row_end as f32 / rows as f32);
             out.push(inst_radii(
                 [x0, y0, (x1 - x0).max(0.5), (y1 - y0).max(0.5)],
-                heatmap_value_color(node, value, theme),
+                cell_fill.unwrap_or_else(|| heatmap_value_color(node, value, theme)),
                 [0.0; 4],
             ));
         }
@@ -7273,45 +8003,149 @@ fn emit_tool_icon_button_mark(
     rect: [f32; 4],
     color: Color,
     sf: f32,
+    icon_geometry_cache: &mut IconGeometryCache,
 ) {
-    let icon = widget_raw_str(node, "icon").unwrap_or("more");
+    if let Some(resource) = node.props.raw_props.get("icon_override_resource") {
+        if let Some(geometry) = icon_geometry_cache.resolve(resource) {
+            emit_custom_icon_geometry(out, &geometry, rect, color);
+            return;
+        }
+    }
+    let requested = widget_raw_str(node, "icon_override_name")
+        .or_else(|| widget_raw_str(node, "icon"))
+        .unwrap_or("more");
+    let icon = crate::icons::resolve_builtin_icon(requested).resolved;
     match icon {
-        "add" | "plus" | "new" => emit_stepper_mark(out, rect, color, true, sf),
-        "minus" | "remove" | "subtract" => emit_stepper_mark(out, rect, color, false, sf),
-        "close" | "x" | "delete" | "clear" => emit_tool_x_icon(out, rect, color, sf),
-        "check" | "ok" | "done" => emit_tool_check_icon(out, rect, color, sf),
-        "edit" | "pencil" => emit_tool_edit_icon(out, rect, color, sf),
-        "copy" | "duplicate" => emit_tool_copy_icon(out, rect, color, sf),
-        "file" | "document" => emit_tool_file_icon(out, rect, color, sf),
-        "folder" | "open" => emit_tool_folder_icon(out, rect, color, sf),
-        "upload" | "import" => emit_tool_transfer_icon(out, rect, color, true, sf),
-        "download" | "export" => emit_tool_transfer_icon(out, rect, color, false, sf),
-        "refresh" | "reload" | "sync" => emit_tool_refresh_icon(out, rect, color, sf),
-        "settings" | "gear" => emit_tool_settings_icon(out, rect, color, sf),
+        "add" => emit_stepper_mark(out, rect, color, true, sf),
+        "minus" => emit_stepper_mark(out, rect, color, false, sf),
+        "close" => emit_tool_x_icon(out, rect, color, sf),
+        "check" => emit_tool_check_icon(out, rect, color, sf),
+        "edit" => emit_tool_edit_icon(out, rect, color, sf),
+        "copy" => emit_tool_copy_icon(out, rect, color, sf),
+        "file" => emit_tool_file_icon(out, rect, color, sf),
+        "folder" => emit_tool_folder_icon(out, rect, color, sf),
+        "upload" => emit_tool_transfer_icon(out, rect, color, true, sf),
+        "download" => emit_tool_transfer_icon(out, rect, color, false, sf),
+        "refresh" => emit_tool_refresh_icon(out, rect, color, sf),
+        "settings" => emit_tool_settings_icon(out, rect, color, sf),
         "home" => emit_tool_home_icon(out, rect, color, sf),
         "info" => emit_tool_info_icon(out, rect, color, sf),
-        "help" | "question" => emit_tool_help_icon(out, rect, color, sf),
-        "warning" | "alert" => emit_tool_warning_icon(out, rect, color, sf),
+        "help" => emit_tool_help_icon(out, rect, color, sf),
+        "warning" => emit_tool_warning_icon(out, rect, color, sf),
         "lock" => emit_tool_lock_icon(out, rect, color, false, sf),
         "unlock" => emit_tool_lock_icon(out, rect, color, true, sf),
-        "eye" | "show" | "visible" => emit_tool_eye_icon(out, rect, color, false, sf),
-        "eye-off" | "hide" | "hidden" => emit_tool_eye_icon(out, rect, color, true, sf),
-        "menu" | "hamburger" => emit_tool_menu_icon(out, rect, color, sf),
-        "list" | "workflow" => emit_tool_list_icon(out, rect, color, sf),
-        "filter" | "funnel" => emit_tool_filter_icon(out, rect, color, sf),
+        "eye" => emit_tool_eye_icon(out, rect, color, false, sf),
+        "eye-off" => emit_tool_eye_icon(out, rect, color, true, sf),
+        "menu" => emit_tool_menu_icon(out, rect, color, sf),
+        "list" => emit_tool_list_icon(out, rect, color, sf),
+        "filter" => emit_tool_filter_icon(out, rect, color, sf),
         "sort" => emit_tool_sort_icon(out, rect, color, sf),
         "undo" => emit_tool_history_icon(out, rect, color, true, sf),
         "redo" => emit_tool_history_icon(out, rect, color, false, sf),
-        "play" | "run" => emit_tool_triangle_icon(out, rect, color, "right", sf),
+        "play" => emit_tool_triangle_icon(out, rect, color, "right", sf),
         "pause" => emit_tool_pause_icon(out, rect, color, sf),
-        "stop" | "square" => emit_tool_stop_icon(out, rect, color, sf),
+        "stop" => emit_tool_stop_icon(out, rect, color, sf),
         "save" => emit_tool_save_icon(out, rect, color, sf),
-        "search" | "zoom" => emit_line_plot_zoom_icon(out, rect, color, sf),
+        "search" => emit_line_plot_zoom_icon(out, rect, color, sf),
         "fit" => emit_line_plot_fit_icon(out, rect, color, sf),
         "pan" | "move" => emit_line_plot_pan_icon(out, rect, color, sf),
         "grid" => emit_line_plot_grid_icon(out, rect, color, sf),
         "axes" => emit_line_plot_axes_icon(out, rect, color, sf),
-        _ => emit_tool_more_icon(out, rect, color, sf),
+        "more" | _ => emit_tool_more_icon(out, rect, color, sf),
+    }
+}
+
+fn parse_custom_icon_resource(resource: &Value) -> Option<ParsedIconGeometry> {
+    let Some(view_box) = resource.get("view_box").and_then(Value::as_array) else {
+        return None;
+    };
+    let Some(strokes) = resource.get("strokes").and_then(Value::as_array) else {
+        return None;
+    };
+    if view_box.len() != 4 || strokes.is_empty() {
+        return None;
+    }
+    let values = view_box
+        .iter()
+        .map(|value| value.as_f64().map(|value| value as f32))
+        .collect::<Option<Vec<_>>>();
+    let Some(values) = values else {
+        return None;
+    };
+    let [view_x, view_y, view_w, view_h] = [values[0], values[1], values[2], values[3]];
+    if view_w <= 0.0 || view_h <= 0.0 {
+        return None;
+    }
+    let Some(resource_stroke_width) = resource
+        .get("stroke_width")
+        .and_then(Value::as_f64)
+        .map(|value| value as f32)
+        .filter(|value| *value > 0.0)
+    else {
+        return None;
+    };
+    let mut parsed_strokes = Vec::with_capacity(strokes.len());
+    for stroke in strokes {
+        let points = stroke.get("points").and_then(Value::as_array)?;
+        let parsed_points = points
+            .iter()
+            .map(|point| {
+                let pair = point.as_array()?;
+                if pair.len() != 2 {
+                    return None;
+                }
+                Some([pair[0].as_f64()? as f32, pair[1].as_f64()? as f32])
+            })
+            .collect::<Option<Vec<_>>>()?;
+        if parsed_points.len() < 2 {
+            return None;
+        }
+        parsed_strokes.push(ParsedIconStroke {
+            points: parsed_points,
+            closed: stroke.get("closed").and_then(Value::as_bool) == Some(true),
+        });
+    }
+    Some(ParsedIconGeometry {
+        view_box: [view_x, view_y, view_w, view_h],
+        stroke_width: resource_stroke_width,
+        strokes: parsed_strokes,
+    })
+}
+
+fn emit_custom_icon_geometry(
+    out: &mut Vec<RectInstance>,
+    geometry: &ParsedIconGeometry,
+    rect: [f32; 4],
+    color: Color,
+) {
+    let [view_x, view_y, view_w, view_h] = geometry.view_box;
+    let target_side = rect[2].min(rect[3]) * 0.56;
+    let scale = (target_side / view_w).min(target_side / view_h);
+    let target_w = view_w * scale;
+    let target_h = view_h * scale;
+    let origin_x = rect[0] + (rect[2] - target_w) * 0.5 - view_x * scale;
+    let origin_y = rect[1] + (rect[3] - target_h) * 0.5 - view_y * scale;
+    let stroke_width = (geometry.stroke_width * scale).max(1.0);
+    let transform = |point: [f32; 2]| [origin_x + point[0] * scale, origin_y + point[1] * scale];
+    for stroke in &geometry.strokes {
+        for segment in stroke.points.windows(2) {
+            push_line_segment(
+                out,
+                transform(segment[0]),
+                transform(segment[1]),
+                stroke_width,
+                color,
+            );
+        }
+        if stroke.closed && stroke.points.len() >= 3 {
+            push_line_segment(
+                out,
+                transform(*stroke.points.last().expect("non-empty icon stroke")),
+                transform(stroke.points[0]),
+                stroke_width,
+                color,
+            );
+        }
     }
 }
 
@@ -8829,7 +9663,7 @@ fn emit_scrollbar_part_rect(
     sf: f32,
 ) {
     let radii = visual_radii_with_fallback(visual, fallback_radii, sf);
-    let paint = resolve_part_background_paint(visual, theme, fallback_color);
+    let paint = resolve_part_background_paint(visual, theme, fallback_color, sf);
     let border_w = visual
         .border_width
         .map(|width| width.max(0.0) * sf)
@@ -8849,9 +9683,10 @@ fn resolve_part_background_paint(
     visual: &VisualStyle,
     theme: &Theme,
     fallback: Color,
+    sf: f32,
 ) -> FillPaint {
     if visual.background_paint.is_some() || visual.background.is_some() {
-        resolve_background_paint(visual, theme, fallback)
+        resolve_background_paint(visual, theme, fallback, sf)
     } else {
         FillPaint::Solid(apply_opacity(fallback, visual.opacity))
     }
@@ -8877,7 +9712,22 @@ fn overlay_color(
     color
 }
 
-fn resolve_background_paint(visual: &VisualStyle, theme: &Theme, fallback: [f32; 4]) -> FillPaint {
+fn resolve_background_paint(
+    visual: &VisualStyle,
+    theme: &Theme,
+    fallback: [f32; 4],
+    sf: f32,
+) -> FillPaint {
+    if visual
+        .background_paint
+        .as_ref()
+        .is_some_and(background_paint_contains_image)
+    {
+        // Managed image backgrounds and their fallback color are composed by
+        // ImageRenderer before normal widget primitives. Keeping this fill
+        // transparent preserves borders and child controls drawn afterward.
+        return FillPaint::Solid([0.0, 0.0, 0.0, 0.0]);
+    }
     match &visual.background_paint {
         Some(BackgroundPaint::Color(color)) => {
             FillPaint::Solid(apply_opacity(color.resolve(theme), visual.opacity))
@@ -8885,10 +9735,10 @@ fn resolve_background_paint(visual: &VisualStyle, theme: &Theme, fallback: [f32;
         Some(BackgroundPaint::Layers(layers)) if !layers.is_empty() => FillPaint::Layers(
             layers
                 .iter()
-                .map(|paint| resolve_background_paint_layer(paint, visual, theme, fallback))
+                .map(|paint| resolve_background_paint_layer(paint, visual, theme, fallback, sf))
                 .collect(),
         ),
-        Some(paint) => resolve_background_paint_layer(paint, visual, theme, fallback),
+        Some(paint) => resolve_background_paint_layer(paint, visual, theme, fallback, sf),
         None => FillPaint::Solid(
             resolve_color(&visual.background, theme)
                 .map(|color| apply_opacity(color, visual.opacity))
@@ -8897,34 +9747,39 @@ fn resolve_background_paint(visual: &VisualStyle, theme: &Theme, fallback: [f32;
     }
 }
 
+fn background_paint_contains_image(paint: &BackgroundPaint) -> bool {
+    match paint {
+        BackgroundPaint::Image(_) => true,
+        BackgroundPaint::Layers(layers) => layers.iter().any(background_paint_contains_image),
+        _ => false,
+    }
+}
+
 fn resolve_background_paint_layer(
     paint: &BackgroundPaint,
     visual: &VisualStyle,
     theme: &Theme,
     fallback: [f32; 4],
+    sf: f32,
 ) -> FillPaint {
     match paint {
         BackgroundPaint::Color(color) => {
             FillPaint::Solid(apply_opacity(color.resolve(theme), visual.opacity))
         }
         BackgroundPaint::LinearGradient(gradient) if gradient.stops.len() >= 2 => {
-            let (colors, stops, count) =
-                resolve_gradient_stops(&gradient.stops, theme, visual.opacity);
             FillPaint::LinearGradient {
-                colors,
-                stops,
-                count: signed_gradient_stop_count(count, gradient.repeating),
+                stops: resolve_gradient_stop_colors(&gradient.stops, theme, visual.opacity),
+                repeating: gradient.repeating,
+                scale_factor: sf,
                 interpolation: gradient_interpolation_mode(visual.gradient_interpolation),
                 angle_deg: gradient.angle_deg,
             }
         }
         BackgroundPaint::RadialGradient(gradient) if gradient.stops.len() >= 2 => {
-            let (colors, stops, count) =
-                resolve_gradient_stops(&gradient.stops, theme, visual.opacity);
             FillPaint::RadialGradient {
-                colors,
-                stops,
-                count: signed_gradient_stop_count(count, gradient.repeating),
+                stops: resolve_gradient_stop_colors(&gradient.stops, theme, visual.opacity),
+                repeating: gradient.repeating,
+                scale_factor: sf,
                 interpolation: gradient_interpolation_mode(visual.gradient_interpolation),
                 center: gradient.center,
             }
@@ -8949,10 +9804,17 @@ fn resolve_background_paint_layer(
             ],
             interpolation: gradient_interpolation_mode(visual.gradient_interpolation),
         },
+        BackgroundPaint::Pattern(pattern) => FillPaint::Pattern {
+            kind: pattern.kind,
+            foreground: apply_opacity(pattern.foreground.resolve(theme), visual.opacity),
+            background: apply_opacity(pattern.background.resolve(theme), visual.opacity),
+            tile_size_px: pattern.tile_size * sf,
+        },
+        BackgroundPaint::Image(_) => FillPaint::Solid([0.0, 0.0, 0.0, 0.0]),
         BackgroundPaint::Layers(layers) if !layers.is_empty() => FillPaint::Layers(
             layers
                 .iter()
-                .map(|paint| resolve_background_paint_layer(paint, visual, theme, fallback))
+                .map(|paint| resolve_background_paint_layer(paint, visual, theme, fallback, sf))
                 .collect(),
         ),
         _ => FillPaint::Solid(
@@ -8980,16 +9842,30 @@ fn gradient_interpolation_mode(mode: Option<GradientInterpolation>) -> f32 {
     }
 }
 
-fn resolve_gradient_stops(
+fn resolve_gradient_stop_colors(
     stops: &[crate::style::GradientStop],
     theme: &Theme,
     opacity: Option<f32>,
+) -> Vec<ResolvedGradientStop> {
+    stops
+        .iter()
+        .map(|stop| ResolvedGradientStop {
+            color: apply_opacity(stop.color.resolve(theme), opacity),
+            position: stop.position,
+        })
+        .collect()
+}
+
+fn prepare_gradient_stops(
+    stops: &[ResolvedGradientStop],
+    line_length_px: f32,
+    scale_factor: f32,
 ) -> (
     [[f32; 4]; GRADIENT_STOP_CAPACITY],
     [f32; GRADIENT_STOP_CAPACITY],
     u32,
 ) {
-    let resolved: Vec<([f32; 4], f32)> = normalize_gradient_stops(stops, theme, opacity);
+    let resolved = normalize_gradient_stops(stops, line_length_px, scale_factor);
     if resolved.len() <= GRADIENT_STOP_CAPACITY {
         let mut colors = [[0.0, 0.0, 0.0, 0.0]; GRADIENT_STOP_CAPACITY];
         let mut positions = [1.0; GRADIENT_STOP_CAPACITY];
@@ -9041,14 +9917,20 @@ fn resolve_blob_gradient(
 }
 
 fn normalize_gradient_stops(
-    stops: &[crate::style::GradientStop],
-    theme: &Theme,
-    opacity: Option<f32>,
+    stops: &[ResolvedGradientStop],
+    line_length_px: f32,
+    scale_factor: f32,
 ) -> Vec<([f32; 4], f32)> {
     let len = stops.len();
+    let line_length_px = line_length_px.max(0.001);
     let mut positions: Vec<Option<f32>> = stops
         .iter()
-        .map(|stop| stop.position.map(|position| position.clamp(0.0, 1.0)))
+        .map(|stop| {
+            stop.position.map(|position| {
+                (position.percent / 100.0 + position.px * scale_factor / line_length_px)
+                    .clamp(0.0, 1.0)
+            })
+        })
         .collect();
     if len == 0 {
         return Vec::new();
@@ -9082,7 +9964,7 @@ fn normalize_gradient_stops(
         .map(|(stop, position)| {
             let position = position.unwrap_or(previous).max(previous).clamp(0.0, 1.0);
             previous = position;
-            (apply_opacity(stop.color.resolve(theme), opacity), position)
+            (stop.color, position)
         })
         .collect()
 }
@@ -9120,35 +10002,55 @@ fn emit_paint_rect_radii(
             }
         }
         FillPaint::LinearGradient {
-            colors,
             stops,
-            count,
+            repeating,
+            scale_factor,
             interpolation,
             angle_deg,
-        } => out.push(inst_linear_gradient(
-            rect,
-            colors,
-            stops,
-            count,
-            interpolation,
-            radii,
-            angle_deg,
-        )),
+        } => {
+            let angle = angle_deg.to_radians();
+            let line_length = (rect[2] * angle.sin().abs() + rect[3] * angle.cos().abs()).max(1.0);
+            let (colors, positions, count) =
+                prepare_gradient_stops(&stops, line_length, scale_factor);
+            out.push(inst_linear_gradient(
+                rect,
+                colors,
+                positions,
+                signed_gradient_stop_count(count, repeating),
+                interpolation,
+                radii,
+                angle_deg,
+            ));
+        }
         FillPaint::RadialGradient {
-            colors,
             stops,
-            count,
+            repeating,
+            scale_factor,
             interpolation,
             center,
-        } => out.push(inst_radial_gradient(
-            rect,
-            colors,
-            stops,
-            count,
-            interpolation,
-            radii,
-            center,
-        )),
+        } => {
+            let center_px = [rect[2] * center[0], rect[3] * center[1]];
+            let line_length = [
+                [0.0, 0.0],
+                [rect[2], 0.0],
+                [0.0, rect[3]],
+                [rect[2], rect[3]],
+            ]
+            .into_iter()
+            .map(|corner| (corner[0] - center_px[0]).hypot(corner[1] - center_px[1]))
+            .fold(1.0_f32, f32::max);
+            let (colors, positions, count) =
+                prepare_gradient_stops(&stops, line_length, scale_factor);
+            out.push(inst_radial_gradient(
+                rect,
+                colors,
+                positions,
+                signed_gradient_stop_count(count, repeating),
+                interpolation,
+                radii,
+                center,
+            ));
+        }
         FillPaint::BlobGradient {
             colors,
             centers,
@@ -9168,6 +10070,19 @@ fn emit_paint_rect_radii(
             colors,
             interpolation,
         } => out.push(inst_mesh_gradient(rect, colors, interpolation, radii)),
+        FillPaint::Pattern {
+            kind,
+            foreground,
+            background,
+            tile_size_px,
+        } => out.push(inst_background_pattern(
+            rect,
+            foreground,
+            background,
+            kind,
+            tile_size_px,
+            radii,
+        )),
     }
 }
 
@@ -9315,6 +10230,72 @@ fn control_border(node: &WidgetNode, theme: &Theme, state: &WidgetState) -> [f32
             PaintInteraction::Hovered => mix(theme.border, theme.accent, 0.35),
             PaintInteraction::Resting => theme.border,
         })
+}
+
+fn emit_asymmetric_css_border(
+    out: &mut Vec<RectInstance>,
+    rect: [f32; 4],
+    radii: [f32; 4],
+    visual: &VisualStyle,
+    fallback_color: [f32; 4],
+    theme: &Theme,
+    sf: f32,
+) {
+    let widths = visual.effective_border_widths().map(|width| width * sf);
+    let styles = visual.resolved_border_styles();
+    let uniform_color = resolve_color(&visual.border_color, theme);
+    let colors = [
+        resolve_color(&visual.border_top_color, theme),
+        resolve_color(&visual.border_right_color, theme),
+        resolve_color(&visual.border_bottom_color, theme),
+        resolve_color(&visual.border_left_color, theme),
+    ]
+    .map(|color| {
+        apply_opacity(
+            color.or(uniform_color).unwrap_or(fallback_color),
+            visual.opacity,
+        )
+    });
+    let [x, y, w, h] = rect;
+
+    if widths[3] > 0.0 {
+        let edge_rect = [x, y, widths[3].min(w), h];
+        let edge_radii = [radii[0], 0.0, 0.0, radii[3]];
+        out.push(if styles[3] == BorderLineStyle::Solid {
+            inst_radii(edge_rect, colors[3], edge_radii)
+        } else {
+            inst_patterned_border_strip(edge_rect, colors[3], edge_radii, false, styles[3])
+        });
+    }
+    if widths[1] > 0.0 {
+        let width = widths[1].min(w);
+        let edge_rect = [x + w - width, y, width, h];
+        let edge_radii = [0.0, radii[1], radii[2], 0.0];
+        out.push(if styles[1] == BorderLineStyle::Solid {
+            inst_radii(edge_rect, colors[1], edge_radii)
+        } else {
+            inst_patterned_border_strip(edge_rect, colors[1], edge_radii, false, styles[1])
+        });
+    }
+    if widths[0] > 0.0 {
+        let edge_rect = [x, y, w, widths[0].min(h)];
+        let edge_radii = [radii[0], radii[1], 0.0, 0.0];
+        out.push(if styles[0] == BorderLineStyle::Solid {
+            inst_radii(edge_rect, colors[0], edge_radii)
+        } else {
+            inst_patterned_border_strip(edge_rect, colors[0], edge_radii, true, styles[0])
+        });
+    }
+    if widths[2] > 0.0 {
+        let height = widths[2].min(h);
+        let edge_rect = [x, y + h - height, w, height];
+        let edge_radii = [0.0, 0.0, radii[2], radii[3]];
+        out.push(if styles[2] == BorderLineStyle::Solid {
+            inst_radii(edge_rect, colors[2], edge_radii)
+        } else {
+            inst_patterned_border_strip(edge_rect, colors[2], edge_radii, true, styles[2])
+        });
+    }
 }
 
 fn emit_bordered_rect(
@@ -9521,7 +10502,9 @@ fn emit_outline(
     sf: f32,
     clip: Option<Rect>,
 ) {
-    let has_outline = visual.outline_width.is_some() || visual.outline_color.is_some();
+    let has_outline = visual.outline_width.is_some()
+        || visual.outline_color.is_some()
+        || visual.outline_style.is_some();
     if !has_outline {
         return;
     }
@@ -9546,13 +10529,14 @@ fn emit_outline(
     let Some(local_clip) = local_clip_for_rect(outer, clip) else {
         return;
     };
-    out.push(inst_outline_ring_clipped(
-        outer,
-        color,
-        outer_radii,
-        width,
-        local_clip,
-    ));
+    let style = visual.outline_style.unwrap_or(BorderLineStyle::Solid);
+    if style != BorderLineStyle::None {
+        out.push(if style == BorderLineStyle::Solid {
+            inst_outline_ring_clipped(outer, color, outer_radii, width, local_clip)
+        } else {
+            inst_patterned_outline_ring_clipped(outer, color, outer_radii, width, local_clip, style)
+        });
+    }
 }
 
 fn emit_focus_ring_radii(
@@ -9583,6 +10567,58 @@ fn emit_focus_ring_radii(
             default_local_clip(outer),
         ));
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_primitive_overlays(
+    tree: &WidgetNode,
+    layout: &LayoutResult,
+    theme: &Theme,
+    sf: f32,
+    state: &WidgetState,
+    caret_positions: &HashMap<String, [f32; 2]>,
+    stylesheets: &StylesheetStore,
+    media: DgMediaEnvironment,
+    toasts: &[ToastOverlay],
+    window_w: f32,
+    window_h: f32,
+    out: &mut Vec<RectInstance>,
+    icon_geometry_cache: &mut IconGeometryCache,
+) {
+    emit_dropdown_overlays(tree, layout, theme, sf, state, out);
+    emit_menu_overlays(tree, layout, theme, sf, state, out);
+    emit_modal_overlays(
+        tree,
+        layout,
+        theme,
+        sf,
+        state,
+        caret_positions,
+        out,
+        icon_geometry_cache,
+    );
+    emit_tooltip_overlay(
+        tree,
+        layout,
+        theme,
+        sf,
+        state,
+        caret_positions,
+        stylesheets,
+        media,
+        out,
+    );
+    emit_toast_overlays(
+        toasts,
+        theme,
+        sf,
+        stylesheets,
+        media,
+        window_w,
+        window_h,
+        out,
+    );
+    emit_drag_drop_overlay(state, theme, sf, window_w, window_h, out);
 }
 
 fn emit_drag_drop_overlay(
@@ -9691,6 +10727,7 @@ fn emit_rects(
     caret_positions: &HashMap<String, [f32; 2]>,
     out: &mut Vec<RectInstance>,
 ) {
+    let mut icon_geometry_cache = IconGeometryCache::default();
     emit_rects_inner(
         node,
         layout,
@@ -9701,12 +10738,15 @@ fn emit_rects(
         false,
         RenderContext::default(),
         out,
+        None,
+        &mut icon_geometry_cache,
     );
 }
 
 #[derive(Clone, Copy, Default)]
 struct RenderContext {
     tab_body_start: bool,
+    transformed_ancestor: bool,
 }
 
 fn transparent_tab_body_container(kind: WidgetKind) -> bool {
@@ -9732,6 +10772,8 @@ fn emit_rects_inner(
     skip_open_modals: bool,
     context: RenderContext,
     out: &mut Vec<RectInstance>,
+    mut base_leaf_ranges: Option<&mut HashMap<String, Range<usize>>>,
+    icon_geometry_cache: &mut IconGeometryCache,
 ) {
     if node.kind == WidgetKind::Tooltip {
         return;
@@ -9755,12 +10797,24 @@ fn emit_rects_inner(
         let [x, y, w, h] = [full_rect.x, full_rect.y, full_rect.w, full_rect.h];
         let visual = visual_for(node, state, theme);
         let paint_fallback = widget_paint_fallback(node, theme, state);
-        let border_w = visual
-            .border_width
-            .or(paint_fallback.border_width)
-            .unwrap_or(BORDER_WIDTH_LP)
-            .max(0.0)
-            * sf;
+        let side_border_overrides = visual.has_border_side_overrides();
+        let uniform_border_style = visual.border_style.unwrap_or(BorderLineStyle::Solid);
+        let patterned_uniform_border = !side_border_overrides
+            && matches!(
+                uniform_border_style,
+                BorderLineStyle::Dotted | BorderLineStyle::Dashed | BorderLineStyle::Double
+            );
+        let custom_css_border = side_border_overrides || patterned_uniform_border;
+        let border_w = if custom_css_border {
+            0.0
+        } else {
+            visual
+                .border_width
+                .or(paint_fallback.border_width)
+                .unwrap_or(BORDER_WIDTH_LP)
+                .max(0.0)
+                * sf
+        };
         let radius_lp = visual
             .border_radius
             .or(paint_fallback.border_radius)
@@ -9820,6 +10874,7 @@ fn emit_rects_inner(
                     &visual,
                     theme,
                     paint_fallback.background.unwrap_or(theme.surface),
+                    sf,
                 );
                 emit_bordered_paint_rect_radii(
                     out,
@@ -9828,6 +10883,16 @@ fn emit_rects_inner(
                         .or(paint_fallback.border_color)
                         .unwrap_or(theme.border),
                     panel_fill,
+                    panel_radii,
+                    border_w,
+                );
+                emit_titled_container_surface_parts(
+                    out,
+                    node,
+                    layout,
+                    state,
+                    theme,
+                    sf,
                     panel_radii,
                     border_w,
                 );
@@ -9878,7 +10943,7 @@ fn emit_rects_inner(
                         [0.0, 0.0, 0.0, 0.0]
                     };
                     let fill = if visual.background_paint.is_some() {
-                        resolve_background_paint(&visual, theme, fallback_fill)
+                        resolve_background_paint(&visual, theme, fallback_fill, sf)
                     } else {
                         FillPaint::Solid(styled_bg.unwrap_or(fallback_fill))
                     };
@@ -9920,6 +10985,7 @@ fn emit_rects_inner(
                         &visual,
                         theme,
                         paint_fallback.background.unwrap_or(theme.surface),
+                        sf,
                     )
                 } else {
                     FillPaint::Solid(
@@ -10058,7 +11124,7 @@ fn emit_rects_inner(
                 emit_paint_rect_radii(
                     out,
                     [root.x, root.y, root.w, root.h],
-                    resolve_background_paint(&scrim_visual, theme, scrim_fallback),
+                    resolve_background_paint(&scrim_visual, theme, scrim_fallback, sf),
                     [0.0; 4],
                 );
                 if visual.box_shadows.is_some() {
@@ -10115,6 +11181,7 @@ fn emit_rects_inner(
                                     &visual,
                                     theme,
                                     paint_fallback.background.unwrap_or(theme.surface),
+                                    sf,
                                 ),
                                 [0.0, 0.0, inner_radii[2], inner_radii[3]],
                             );
@@ -10130,6 +11197,7 @@ fn emit_rects_inner(
                         &visual,
                         theme,
                         paint_fallback.background.unwrap_or(theme.surface),
+                        sf,
                     );
                     emit_underpainted_bordered_paint_rect_radii(
                         out,
@@ -10142,6 +11210,9 @@ fn emit_rects_inner(
                         border_w,
                     );
                 }
+                emit_titled_container_surface_parts(
+                    out, node, layout, state, theme, sf, radii, border_w,
+                );
                 if let Some(button) = modal_close_button_rect(node, layout, theme, sf) {
                     let button_radius = button[2].min(button[3]) * 0.5;
                     let bg = apply_opacity(mix(theme.surface, theme.text, 0.10), visual.opacity);
@@ -10163,6 +11234,7 @@ fn emit_rects_inner(
                         &visual,
                         theme,
                         paint_fallback.background.unwrap_or(theme.surface),
+                        sf,
                     ),
                     radii,
                 );
@@ -10173,6 +11245,9 @@ fn emit_rects_inner(
                         .unwrap_or(theme.border),
                     0.0,
                 ));
+                emit_titled_container_surface_parts(
+                    out, node, layout, state, theme, sf, radii, border_w,
+                );
             }
 
             WidgetKind::StatusBar => {
@@ -10183,6 +11258,7 @@ fn emit_rects_inner(
                         &visual,
                         theme,
                         paint_fallback.background.unwrap_or(theme.surface),
+                        sf,
                     ),
                     radii,
                 );
@@ -10210,6 +11286,7 @@ fn emit_rects_inner(
                             &visual,
                             theme,
                             styled_bg.unwrap_or([0.0, 0.0, 0.0, 0.0]),
+                            sf,
                         )
                     } else {
                         FillPaint::Solid(styled_bg.unwrap_or([0.0, 0.0, 0.0, 0.0]))
@@ -10259,6 +11336,7 @@ fn emit_rects_inner(
                             &pane_visual,
                             theme,
                             pane_bg.unwrap_or([0.0, 0.0, 0.0, 0.0]),
+                            sf,
                         )
                     } else {
                         FillPaint::Solid(pane_bg.unwrap_or([0.0, 0.0, 0.0, 0.0]))
@@ -10287,6 +11365,7 @@ fn emit_rects_inner(
                         &visual,
                         theme,
                         paint_fallback.background.unwrap_or(theme.surface),
+                        sf,
                     ),
                     radii,
                 );
@@ -10330,6 +11409,7 @@ fn emit_rects_inner(
                                 &header_visual,
                                 theme,
                                 header_bg.unwrap_or([0.0, 0.0, 0.0, 0.0]),
+                                sf,
                             )
                         } else {
                             FillPaint::Solid(header_bg.unwrap_or([0.0, 0.0, 0.0, 0.0]))
@@ -10359,7 +11439,7 @@ fn emit_rects_inner(
                 let menu_fill = visual
                     .background_paint
                     .as_ref()
-                    .map(|_| resolve_background_paint(&visual, theme, theme.surface_alt))
+                    .map(|_| resolve_background_paint(&visual, theme, theme.surface_alt, sf))
                     .or_else(|| styled_bg.map(FillPaint::Solid));
                 let menu_border_w = visual
                     .border_width
@@ -10387,15 +11467,25 @@ fn emit_rects_inner(
             | WidgetKind::ArrowButton
             | WidgetKind::Dropdown => {
                 emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], radii, out);
+                let field_visual = (node.kind == WidgetKind::Dropdown)
+                    .then(|| part_visual_for(node, state, "field"));
+                let field_fill = field_visual
+                    .as_ref()
+                    .and_then(|field| resolve_color(&field.background, theme))
+                    .map(|color| {
+                        apply_opacity(color, field_visual.as_ref().and_then(|field| field.opacity))
+                    });
                 let fill = if visual.background_paint.is_some() {
                     resolve_background_paint(
                         &visual,
                         theme,
                         paint_fallback.background.unwrap_or(theme.surface_alt),
+                        sf,
                     )
                 } else {
                     FillPaint::Solid(
-                        styled_bg
+                        field_fill
+                            .or(styled_bg)
                             .or(paint_fallback.background)
                             .unwrap_or(theme.surface_alt),
                     )
@@ -10403,7 +11493,10 @@ fn emit_rects_inner(
                 emit_bordered_paint_rect_radii(
                     out,
                     [x, y, w, h],
-                    styled_border
+                    field_visual
+                        .as_ref()
+                        .and_then(|field| resolve_color(&field.border_color, theme))
+                        .or(styled_border)
                         .or(paint_fallback.border_color)
                         .unwrap_or(theme.border),
                     fill,
@@ -10425,7 +11518,14 @@ fn emit_rects_inner(
                         .unwrap_or(theme.text);
                     let icon_color =
                         single_part_mark_color(node, state, theme, "icon", icon_fallback);
-                    emit_tool_icon_button_mark(out, node, [x, y, w, h], icon_color, sf);
+                    emit_tool_icon_button_mark(
+                        out,
+                        node,
+                        [x, y, w, h],
+                        icon_color,
+                        sf,
+                        icon_geometry_cache,
+                    );
                 } else if node.kind == WidgetKind::ArrowButton {
                     let icon_fallback = resolve_color(&visual.foreground, theme)
                         .map(|c| apply_opacity(c, visual.opacity))
@@ -10482,7 +11582,7 @@ fn emit_rects_inner(
                     .or(styled_bg)
                     .unwrap_or(fallback_fill);
                 let row_fill = if row_visual.background_paint.is_some() {
-                    resolve_background_paint(&row_visual, theme, row_fill_solid)
+                    resolve_background_paint(&row_visual, theme, row_fill_solid, sf)
                 } else {
                     FillPaint::Solid(row_fill_solid)
                 };
@@ -10578,7 +11678,7 @@ fn emit_rects_inner(
                     .or(styled_bg)
                     .unwrap_or(fallback_fill);
                 let row_fill = if row_visual.background_paint.is_some() {
-                    resolve_background_paint(&row_visual, theme, row_fill_solid)
+                    resolve_background_paint(&row_visual, theme, row_fill_solid, sf)
                 } else {
                     FillPaint::Solid(row_fill_solid)
                 };
@@ -10660,6 +11760,7 @@ fn emit_rects_inner(
                         &visual,
                         theme,
                         paint_fallback.background.unwrap_or([0.0, 0.0, 0.0, 0.0]),
+                        sf,
                     )
                 } else {
                     FillPaint::Solid(
@@ -10728,7 +11829,7 @@ fn emit_rects_inner(
                     indicator_visual.opacity,
                 );
                 let indicator_fill = if indicator_visual.background_paint.is_some() {
-                    resolve_background_paint(&indicator_visual, theme, indicator_fill_solid)
+                    resolve_background_paint(&indicator_visual, theme, indicator_fill_solid, sf)
                 } else {
                     FillPaint::Solid(indicator_fill_solid)
                 };
@@ -10784,7 +11885,7 @@ fn emit_rects_inner(
                     .or(paint_fallback.background)
                     .unwrap_or(theme.accent);
                 let fill = if visual.background_paint.is_some() {
-                    resolve_background_paint(&visual, theme, fill_solid)
+                    resolve_background_paint(&visual, theme, fill_solid, sf)
                 } else {
                     FillPaint::Solid(fill_solid)
                 };
@@ -10892,7 +11993,7 @@ fn emit_rects_inner(
                             || glow_visual.background_paint.is_some()
                         {
                             let glow_fill =
-                                resolve_part_background_paint(&glow_visual, theme, glow_color);
+                                resolve_part_background_paint(&glow_visual, theme, glow_color, sf);
                             emit_paint_rect_radii(out, glow_rect, glow_fill, glow_radii);
                         }
                     } else if glow_color[3] > 0.001 {
@@ -10929,7 +12030,7 @@ fn emit_rects_inner(
                     paint_clip,
                 );
                 let fill = if dot_visual.background_paint.is_some() {
-                    resolve_background_paint(&dot_visual, theme, fill_solid)
+                    resolve_background_paint(&dot_visual, theme, fill_solid, sf)
                 } else {
                     FillPaint::Solid(fill_solid)
                 };
@@ -11009,6 +12110,7 @@ fn emit_rects_inner(
                                 &highlight_visual,
                                 theme,
                                 highlight_color,
+                                sf,
                             ),
                             highlight_radii,
                         );
@@ -11298,7 +12400,14 @@ fn emit_rects_inner(
                     let icon_color = resolve_color(&item_visual.foreground, theme)
                         .or(resolve_color(&node.style.visual.foreground, theme))
                         .unwrap_or(theme.text);
-                    emit_tool_icon_button_mark(out, node, icon_rect, icon_color, sf);
+                    emit_tool_icon_button_mark(
+                        out,
+                        node,
+                        icon_rect,
+                        icon_color,
+                        sf,
+                        icon_geometry_cache,
+                    );
                 }
                 if nav_item_uses_compact_icon(node, w, sf) {
                     if node
@@ -11332,18 +12441,29 @@ fn emit_rects_inner(
             | WidgetKind::CodeEditor
             | WidgetKind::LogView => {
                 emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], radii, out);
-                let fill_solid = styled_bg
+                let field_visual = (node.kind == WidgetKind::CodeEditor)
+                    .then(|| part_visual_for(node, state, "field"));
+                let fill_solid = field_visual
+                    .as_ref()
+                    .and_then(|field| resolve_color(&field.background, theme))
+                    .map(|color| {
+                        apply_opacity(color, field_visual.as_ref().and_then(|field| field.opacity))
+                    })
+                    .or(styled_bg)
                     .or(paint_fallback.background)
                     .unwrap_or_else(|| mix(theme.surface, theme.surface_alt, 0.55));
                 let fill = if visual.background_paint.is_some() {
-                    resolve_background_paint(&visual, theme, fill_solid)
+                    resolve_background_paint(&visual, theme, fill_solid, sf)
                 } else {
                     FillPaint::Solid(fill_solid)
                 };
                 emit_bordered_paint_rect_radii(
                     out,
                     [x, y, w, h],
-                    styled_border
+                    field_visual
+                        .as_ref()
+                        .and_then(|field| resolve_color(&field.border_color, theme))
+                        .or(styled_border)
                         .or(paint_fallback.border_color)
                         .unwrap_or_else(|| control_border(node, theme, state)),
                     fill,
@@ -11414,6 +12534,20 @@ fn emit_rects_inner(
                     } else {
                         y + (h - caret_h) * 0.5
                     };
+                    let caret_visual = part_visual_for(node, state, "caret");
+                    let caret_width = node
+                        .style
+                        .parts
+                        .parts
+                        .get("caret")
+                        .and_then(|part| part.layout.width)
+                        .map(|width| width.max(1.0) * sf)
+                        .unwrap_or(CARET_WIDTH_LP * sf);
+                    let caret_color = resolve_color(&caret_visual.background, theme)
+                        .or_else(|| resolve_color(&caret_visual.foreground, theme))
+                        .or_else(|| resolve_color(&caret_visual.border_color, theme))
+                        .map(|color| apply_opacity(color, caret_visual.opacity))
+                        .unwrap_or(theme.focus);
                     let visible_caret = !multiline
                         || (caret_y < y + h - border_w && caret_y + caret_h > y + border_w);
                     if visible_caret {
@@ -11423,8 +12557,8 @@ fn emit_rects_inner(
                             caret_y
                         };
                         out.push(inst(
-                            [caret_xy[0], caret_y, CARET_WIDTH_LP * sf, caret_h],
-                            theme.focus,
+                            [caret_xy[0], caret_y, caret_width, caret_h],
+                            caret_color,
                             0.0,
                         ));
                     }
@@ -11439,7 +12573,7 @@ fn emit_rects_inner(
                     .or(paint_fallback.background)
                     .unwrap_or_else(|| mix(theme.surface, theme.surface_alt, 0.55));
                 let fill = if visual.background_paint.is_some() {
-                    resolve_background_paint(&visual, theme, fill_solid)
+                    resolve_background_paint(&visual, theme, fill_solid, sf)
                 } else {
                     FillPaint::Solid(fill_solid)
                 };
@@ -11730,9 +12864,9 @@ fn emit_rects_inner(
                     .map(|color| apply_opacity(color, field_visual.opacity))
                     .unwrap_or(base_fill);
                 let field_fill = if field_visual.background_paint.is_some() {
-                    resolve_background_paint(&field_visual, theme, field_fill_solid)
+                    resolve_background_paint(&field_visual, theme, field_fill_solid, sf)
                 } else if visual.background_paint.is_some() {
-                    resolve_background_paint(&visual, theme, field_fill_solid)
+                    resolve_background_paint(&visual, theme, field_fill_solid, sf)
                 } else {
                     FillPaint::Solid(field_fill_solid)
                 };
@@ -12237,7 +13371,7 @@ fn emit_rects_inner(
                     out,
                     [x, y, w, h],
                     styled_border.unwrap_or(theme.border),
-                    resolve_background_paint(&visual, theme, theme.surface_alt),
+                    resolve_background_paint(&visual, theme, theme.surface_alt, sf),
                     radii,
                     border_w,
                 );
@@ -12245,7 +13379,7 @@ fn emit_rects_inner(
 
             WidgetKind::Extension => {
                 let fill = if visual.background_paint.is_some() {
-                    resolve_background_paint(&visual, theme, theme.surface_alt)
+                    resolve_background_paint(&visual, theme, theme.surface_alt, sf)
                 } else {
                     FillPaint::Solid(styled_bg.unwrap_or_else(|| {
                         apply_opacity(mix(theme.surface_alt, theme.background, 0.22), Some(0.86))
@@ -12891,6 +14025,43 @@ fn emit_rects_inner(
             | WidgetKind::Toast
             | WidgetKind::Unknown => {}
         }
+        if side_border_overrides {
+            emit_asymmetric_css_border(
+                out,
+                [x, y, w, h],
+                radii,
+                &visual,
+                paint_fallback.border_color.unwrap_or(theme.border),
+                theme,
+                sf,
+            );
+        } else if patterned_uniform_border {
+            let width = visual
+                .border_width
+                .or(paint_fallback.border_width)
+                .unwrap_or(BORDER_WIDTH_LP)
+                .max(0.0)
+                * sf;
+            let color = apply_opacity(
+                resolve_color(&visual.border_color, theme)
+                    .or(paint_fallback.border_color)
+                    .unwrap_or(theme.border),
+                visual.opacity,
+            );
+            if width > 0.0 && color[3] > 0.001 {
+                let rect = [x, y, w, h];
+                if let Some(local_clip) = local_clip_for_rect(rect, paint_clip) {
+                    out.push(inst_patterned_outline_ring_clipped(
+                        rect,
+                        color,
+                        radii,
+                        width,
+                        local_clip,
+                        uniform_border_style,
+                    ));
+                }
+            }
+        }
         if let Some(filter) = visual
             .backdrop_filter
             .filter(|_| widget_supports_backdrop_filter(node.kind))
@@ -12940,8 +14111,11 @@ fn emit_rects_inner(
             skip_open_modals,
             RenderContext {
                 tab_body_start: child_starts_tab_body,
+                transformed_ancestor: context.transformed_ancestor || subtree_transform.is_some(),
             },
             out,
+            base_leaf_ranges.as_deref_mut(),
+            icon_geometry_cache,
         );
     });
     if is_scroll_container_node(node) {
@@ -12958,6 +14132,11 @@ fn emit_rects_inner(
         );
     }
     apply_paint_clip(&mut out[subtree_primitive_start..], subtree_paint_clip);
+    if !context.transformed_ancestor && !context.tab_body_start {
+        if let Some(ranges) = base_leaf_ranges {
+            ranges.insert(node.id.clone(), subtree_primitive_start..out.len());
+        }
+    }
 }
 
 fn splitter_is_horizontal(node: &WidgetNode) -> bool {
@@ -13002,7 +14181,7 @@ fn emit_splitter_gutters(
                 .map(|color| apply_opacity(color, gutter_visual.opacity))
         })
         .unwrap_or_else(|| apply_opacity(theme.border, gutter_visual.opacity));
-    let gutter_fill = resolve_part_background_paint(&gutter_visual, theme, fallback_color);
+    let gutter_fill = resolve_part_background_paint(&gutter_visual, theme, fallback_color, sf);
     let gutter_border = resolve_color(&gutter_visual.border_color, theme)
         .map(|color| apply_opacity(color, gutter_visual.opacity))
         .unwrap_or(fallback_color);
@@ -13309,6 +14488,7 @@ fn emit_modal_overlays(
     state: &WidgetState,
     caret_positions: &HashMap<String, [f32; 2]>,
     out: &mut Vec<RectInstance>,
+    icon_geometry_cache: &mut IconGeometryCache,
 ) {
     if node.kind == WidgetKind::Modal && node.props.open.unwrap_or(false) {
         emit_rects_inner(
@@ -13321,11 +14501,22 @@ fn emit_modal_overlays(
             false,
             RenderContext::default(),
             out,
+            None,
+            icon_geometry_cache,
         );
         return;
     }
     for child in &node.children {
-        emit_modal_overlays(child, layout, theme, sf, state, caret_positions, out);
+        emit_modal_overlays(
+            child,
+            layout,
+            theme,
+            sf,
+            state,
+            caret_positions,
+            out,
+            icon_geometry_cache,
+        );
     }
 }
 
@@ -13394,6 +14585,7 @@ fn emit_menu_popup(
             &menu_visual,
             theme,
             menu_fallback.background.unwrap_or(theme.surface),
+            sf,
         ),
         radii,
     );
@@ -13859,9 +15051,9 @@ mod tests {
         BarChartSeriesProp, HeatmapHoverProp, LinePlotPayloadFormat, LinePlotSeriesProp, NodeProps,
     };
     use crate::style::{
-        BackdropFilterStyle, BackgroundPaint, BlobGradient, BlobGradientStop, BoxShadow, ColorRef,
-        GradientStop, LinearGradient, MeshGradient, OverflowStyle, PartLayoutStyle, PartStyle,
-        RadialGradient, TextStyle, VisualStyle,
+        BackdropFilterStyle, BackgroundPaint, BlobGradient, BlobGradientStop, BoxShadow,
+        CalcLength, ColorRef, GradientStop, LinearGradient, MeshGradient, OverflowStyle,
+        PartLayoutStyle, PartStyle, RadialGradient, TextStyle, VisualStyle,
     };
 
     fn node(id: &str, kind: WidgetKind) -> WidgetNode {
@@ -13878,6 +15070,443 @@ mod tests {
             style: Default::default(),
             children: Vec::new(),
         }
+    }
+
+    fn icon_resource(stroke_width: f64) -> Value {
+        serde_json::json!({
+            "view_box": [0.0, 0.0, 24.0, 24.0],
+            "stroke_width": stroke_width,
+            "strokes": [
+                {
+                    "points": [[3.0, 12.0], [12.0, 3.0], [21.0, 12.0]],
+                    "closed": true
+                }
+            ]
+        })
+    }
+
+    #[test]
+    fn parsed_icon_geometry_emits_without_transformed_point_allocation_contract_changes() {
+        let geometry =
+            parse_custom_icon_resource(&icon_resource(2.0)).expect("valid icon resource");
+        assert_eq!(geometry.view_box, [0.0, 0.0, 24.0, 24.0]);
+        assert_eq!(geometry.strokes.len(), 1);
+        assert_eq!(geometry.strokes[0].points.len(), 3);
+
+        let mut out = Vec::new();
+        emit_custom_icon_geometry(&mut out, &geometry, [10.0, 20.0, 40.0, 40.0], [1.0; 4]);
+        assert_eq!(out.len(), 3, "closed triangle should emit three segments");
+    }
+
+    #[test]
+    fn icon_geometry_cache_reuses_steady_state_resource() {
+        let resource = icon_resource(2.0);
+        let mut cache = IconGeometryCache::with_capacity(4);
+        let first = cache.resolve(&resource).expect("first parse");
+        for _ in 0..999 {
+            let cached = cache.resolve(&resource).expect("cached geometry");
+            assert!(Arc::ptr_eq(&first, &cached));
+        }
+        assert_eq!(cache.entries.len(), 1);
+        assert_eq!(cache.misses, 1);
+        assert_eq!(cache.hits, 999);
+        assert_eq!(cache.evictions, 0);
+        assert_eq!(cache.parse_failures, 0);
+    }
+
+    #[test]
+    fn icon_geometry_cache_bounds_theme_replacement_history() {
+        let mut cache = IconGeometryCache::with_capacity(2);
+        cache.resolve(&icon_resource(1.0)).expect("first resource");
+        cache.resolve(&icon_resource(2.0)).expect("second resource");
+        cache.resolve(&icon_resource(3.0)).expect("third resource");
+
+        assert_eq!(cache.entries.len(), 2);
+        assert_eq!(cache.misses, 3);
+        assert_eq!(cache.evictions, 1);
+        cache
+            .resolve(&icon_resource(1.0))
+            .expect("evicted resource reparses");
+        assert_eq!(cache.misses, 4);
+        assert_eq!(cache.evictions, 2);
+    }
+
+    #[test]
+    fn icon_geometry_cache_reports_invalid_resources_without_retaining_them() {
+        let invalid = serde_json::json!({
+            "view_box": [0.0, 0.0, 0.0, 24.0],
+            "stroke_width": 2.0,
+            "strokes": [{"points": [[0.0, 0.0], [1.0, 1.0]]}]
+        });
+        let mut cache = IconGeometryCache::with_capacity(4);
+        assert!(cache.resolve(&invalid).is_none());
+        assert!(cache.resolve(&invalid).is_none());
+        assert!(cache.entries.is_empty());
+        assert_eq!(cache.misses, 2);
+        assert_eq!(cache.parse_failures, 2);
+    }
+
+    #[test]
+    fn primitive_renderer_stats_expose_icon_cache_diagnostics() {
+        let stats = PrimitiveRendererStats {
+            icon_cache_capacity: 128,
+            icon_cache_entries: 3,
+            icon_cache_hits: 40,
+            icon_cache_misses: 4,
+            icon_cache_evictions: 1,
+            icon_cache_parse_failures: 2,
+            ..PrimitiveRendererStats::default()
+        };
+        assert_eq!(
+            stats.icon_geometry_cache_snapshot(),
+            serde_json::json!({
+                "capacity": 128,
+                "entries": 3,
+                "hits": 40,
+                "misses": 4,
+                "evictions": 1,
+                "parse_failures": 2,
+            })
+        );
+    }
+
+    #[test]
+    fn complex_rect_shader_with_border_patterns_parses_and_validates() {
+        let module = wgpu::naga::front::wgsl::parse_str(include_str!("rect.wgsl"))
+            .expect("rect shader should parse");
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .expect("rect shader should validate");
+    }
+
+    #[test]
+    fn background_patterns_use_one_dpi_scaled_rounded_rect_instance() {
+        let visual = VisualStyle {
+            opacity: Some(0.5),
+            background_paint: Some(BackgroundPaint::Pattern(crate::style::BackgroundPattern {
+                kind: BackgroundPatternKind::DiagonalHatch,
+                foreground: ColorRef::Rgba([1.0, 0.5, 0.25, 0.8]),
+                background: ColorRef::Rgba([0.1, 0.2, 0.3, 0.6]),
+                tile_size: 8.0,
+            })),
+            ..VisualStyle::default()
+        };
+        let paint = resolve_background_paint(&visual, &Theme::dark(), [0.0; 4], 2.0);
+        let FillPaint::Pattern {
+            kind,
+            foreground,
+            background,
+            tile_size_px,
+        } = paint
+        else {
+            panic!("resolved background pattern");
+        };
+        assert_eq!(kind, BackgroundPatternKind::DiagonalHatch);
+        assert_eq!(tile_size_px, 16.0);
+        assert_eq!(foreground[3], 0.4);
+        assert_eq!(background[3], 0.3);
+
+        let mut out = Vec::new();
+        emit_paint_rect_radii(
+            &mut out,
+            [10.0, 20.0, 180.0, 80.0],
+            FillPaint::Pattern {
+                kind,
+                foreground,
+                background,
+                tile_size_px,
+            },
+            [9.0; 4],
+        );
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].paint, [5.0, 3.0, 16.0, 0.0]);
+        assert_eq!(out[0].radii, [9.0; 4]);
+        assert_eq!(out[0].color, foreground);
+        assert_eq!(out[0].color2, background);
+    }
+
+    #[test]
+    fn asymmetric_solid_border_emits_one_clamped_strip_per_visible_edge() {
+        let visual = VisualStyle {
+            border_top_width: Some(1.0),
+            border_right_width: Some(2.0),
+            border_bottom_width: Some(3.0),
+            border_left_width: Some(4.0),
+            border_top_color: Some(ColorRef::Rgba([1.0, 0.0, 0.0, 1.0])),
+            border_right_color: Some(ColorRef::Rgba([0.0, 1.0, 0.0, 1.0])),
+            border_bottom_color: Some(ColorRef::Rgba([0.0, 0.0, 1.0, 1.0])),
+            border_left_color: Some(ColorRef::Rgba([1.0, 1.0, 0.0, 1.0])),
+            ..VisualStyle::default()
+        };
+        let mut out = Vec::new();
+
+        emit_asymmetric_css_border(
+            &mut out,
+            [10.0, 20.0, 100.0, 50.0],
+            [5.0; 4],
+            &visual,
+            [0.5; 4],
+            &Theme::dark(),
+            1.0,
+        );
+
+        assert_eq!(out.len(), 4);
+        assert_eq!(out[0].rect, [10.0, 20.0, 4.0, 50.0]);
+        assert_eq!(out[1].rect, [108.0, 20.0, 2.0, 50.0]);
+        assert_eq!(out[2].rect, [10.0, 20.0, 100.0, 1.0]);
+        assert_eq!(out[3].rect, [10.0, 67.0, 100.0, 3.0]);
+        assert_eq!(out[0].color, [1.0, 1.0, 0.0, 1.0]);
+        assert_eq!(out[2].color, [1.0, 0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn side_color_override_repaints_uniform_width_without_geometry_override() {
+        let visual = VisualStyle {
+            border_width: Some(2.0),
+            border_color: Some(ColorRef::Rgba([0.2, 0.2, 0.2, 1.0])),
+            border_right_color: Some(ColorRef::Rgba([0.0, 1.0, 0.0, 1.0])),
+            ..VisualStyle::default()
+        };
+        assert!(visual.has_border_side_overrides());
+        let mut out = Vec::new();
+
+        emit_asymmetric_css_border(
+            &mut out,
+            [0.0, 0.0, 20.0, 10.0],
+            [0.0; 4],
+            &visual,
+            [0.5; 4],
+            &Theme::dark(),
+            1.0,
+        );
+
+        assert_eq!(out.len(), 4);
+        assert_eq!(out[1].color, [0.0, 1.0, 0.0, 1.0]);
+        assert_eq!(out[0].color, [0.2, 0.2, 0.2, 1.0]);
+        assert_eq!(out[2].rect[3], 2.0);
+    }
+
+    #[test]
+    fn patterned_ring_instances_encode_gpu_pattern_without_extra_geometry() {
+        for (style, code) in [
+            (BorderLineStyle::Dotted, 10.0),
+            (BorderLineStyle::Dashed, 11.0),
+            (BorderLineStyle::Double, 12.0),
+        ] {
+            let instance = inst_patterned_outline_ring_clipped(
+                [2.0, 3.0, 80.0, 30.0],
+                [1.0; 4],
+                [8.0; 4],
+                3.0,
+                [0.0, 0.0, 80.0, 30.0],
+                style,
+            );
+            assert_eq!(instance.params[2], 3.0);
+            assert_eq!(instance.paint[0], code);
+            assert_eq!(instance.paint[3], 3.0);
+        }
+    }
+
+    #[test]
+    fn side_patterns_use_one_dpi_scaled_gpu_strip_per_visible_edge() {
+        let visual = VisualStyle {
+            border_top_width: Some(2.0),
+            border_right_width: Some(3.0),
+            border_bottom_width: Some(4.0),
+            border_left_width: Some(5.0),
+            border_top_style: Some(BorderLineStyle::Dashed),
+            border_right_style: Some(BorderLineStyle::Dotted),
+            border_bottom_style: Some(BorderLineStyle::Double),
+            border_left_style: Some(BorderLineStyle::None),
+            ..VisualStyle::default()
+        };
+        let mut out = Vec::new();
+
+        emit_asymmetric_css_border(
+            &mut out,
+            [0.0, 0.0, 100.0, 50.0],
+            [6.0; 4],
+            &visual,
+            [1.0; 4],
+            &Theme::dark(),
+            1.25,
+        );
+
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[0].rect, [96.25, 0.0, 3.75, 50.0]);
+        assert_eq!(out[0].paint[0], 10.0);
+        assert_eq!(out[1].rect, [0.0, 0.0, 100.0, 2.5]);
+        assert_eq!(out[1].paint[0], 11.0);
+        assert_eq!(out[2].rect, [0.0, 45.0, 100.0, 5.0]);
+        assert_eq!(out[2].paint[0], 12.0);
+        assert!(out.iter().all(|instance| instance.params[3] == 6.0));
+    }
+
+    #[test]
+    fn patterned_outline_scales_width_and_offset_without_emitting_layout_geometry() {
+        let visual = VisualStyle {
+            outline_width: Some(2.0),
+            outline_offset: Some(3.0),
+            outline_style: Some(BorderLineStyle::Dotted),
+            outline_color: Some(ColorRef::Rgba([1.0, 0.0, 0.0, 1.0])),
+            ..VisualStyle::default()
+        };
+        let mut out = Vec::new();
+
+        emit_outline(
+            &mut out,
+            [10.0, 20.0, 50.0, 30.0],
+            [4.0; 4],
+            &visual,
+            &Theme::dark(),
+            2.0,
+            None,
+        );
+
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].rect, [0.0, 10.0, 70.0, 50.0]);
+        assert_eq!(out[0].paint[0], 10.0);
+        assert_eq!(out[0].paint[3], 4.0);
+        assert_eq!(out[0].params[2], 3.0);
+    }
+
+    #[test]
+    fn border_transitions_interpolate_per_edge_widths_and_colors_but_not_styles() {
+        let from = VisualStyle {
+            border_top_width: Some(2.0),
+            border_left_color: Some(ColorRef::Rgba([0.0, 0.0, 0.0, 1.0])),
+            border_style: Some(BorderLineStyle::Dotted),
+            ..VisualStyle::default()
+        };
+        let to = VisualStyle {
+            border_top_width: Some(6.0),
+            border_left_color: Some(ColorRef::Rgba([1.0, 1.0, 1.0, 1.0])),
+            border_style: Some(BorderLineStyle::Dashed),
+            ..VisualStyle::default()
+        };
+        let instant = to.clone();
+
+        let interpolated = interpolate_visual_style(
+            &from,
+            &to,
+            &instant,
+            0.5,
+            &Theme::dark(),
+            Some(&[
+                TransitionProperty::BorderWidth,
+                TransitionProperty::BorderColor,
+            ]),
+        );
+
+        assert_eq!(interpolated.border_top_width, Some(4.0));
+        assert_eq!(
+            interpolated.border_left_color,
+            Some(ColorRef::Rgba([0.5, 0.5, 0.5, 1.0]))
+        );
+        assert_eq!(interpolated.border_style, Some(BorderLineStyle::Dashed));
+    }
+
+    #[test]
+    fn retained_base_range_replacement_shifts_following_leaf_and_overlay_offsets() {
+        let mut instances = (0..6)
+            .map(|index| inst([index as f32, 0.0, 1.0, 1.0], [1.0, 1.0, 1.0, 1.0], 0.0))
+            .collect::<Vec<_>>();
+        let mut ranges = HashMap::from([("first".to_string(), 0..2), ("second".to_string(), 2..4)]);
+        let mut overlay_start = 4;
+        let replacement = (0..3)
+            .map(|_| inst([9.0, 0.0, 1.0, 1.0], [0.0, 1.0, 0.0, 1.0], 0.0))
+            .collect();
+
+        assert!(replace_retained_base_range(
+            &mut instances,
+            &mut ranges,
+            &mut overlay_start,
+            "first",
+            replacement,
+        ));
+        assert_eq!(ranges["first"], 0..3);
+        assert_eq!(ranges["second"], 3..5);
+        assert_eq!(overlay_start, 5);
+        assert_eq!(instances.len(), 7);
+        assert_eq!(instances[5].rect[0], 4.0);
+    }
+
+    #[test]
+    fn retained_leaf_ranges_exclude_widgets_below_transformed_ancestors() {
+        let mut root = node("root", WidgetKind::Panel);
+        root.children.push(node("button", WidgetKind::Button));
+        root.children.push(node("label", WidgetKind::Label));
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "root".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 160.0,
+                h: 80.0,
+            },
+        );
+        layout.rects.insert(
+            "button".to_string(),
+            Rect {
+                x: 10.0,
+                y: 10.0,
+                w: 100.0,
+                h: 30.0,
+            },
+        );
+        layout.rects.insert(
+            "label".to_string(),
+            Rect {
+                x: 10.0,
+                y: 48.0,
+                w: 100.0,
+                h: 20.0,
+            },
+        );
+        let mut out = Vec::new();
+        let mut ranges = HashMap::new();
+        let mut icon_geometry_cache = IconGeometryCache::default();
+        emit_rects_inner(
+            &root,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            true,
+            RenderContext::default(),
+            &mut out,
+            Some(&mut ranges),
+            &mut icon_geometry_cache,
+        );
+        assert!(ranges.contains_key("button"));
+        assert_eq!(ranges["label"].start, ranges["label"].end);
+
+        root.style.visual.transform = Some(TransformStyle {
+            translate_x: 5.0,
+            ..TransformStyle::default()
+        });
+        out.clear();
+        ranges.clear();
+        emit_rects_inner(
+            &root,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            true,
+            RenderContext::default(),
+            &mut out,
+            Some(&mut ranges),
+            &mut icon_geometry_cache,
+        );
+        assert!(!ranges.contains_key("button"));
+        assert!(!ranges.contains_key("label"));
     }
 
     #[test]
@@ -14090,7 +15719,6 @@ mod tests {
 
         assert_eq!(value.color, Some([0.18, 0.24, 0.32]));
         assert_eq!(value.font_size, Some(12.0));
-
     }
 
     #[test]
@@ -14466,6 +16094,7 @@ mod tests {
             );
         }
         for (part, background, border) in [
+            ("cell", Some(rgba(0.3, 0.2, 0.7)), None),
             ("grid", Some(rgba(0.9, 0.1, 0.2)), None),
             (
                 "scalar-bar",
@@ -14501,6 +16130,7 @@ mod tests {
             &mut heatmap_out,
         );
         for color in [
+            [0.3, 0.2, 0.7, 1.0],
             [0.9, 0.1, 0.2, 1.0],
             [0.2, 0.3, 0.4, 1.0],
             [0.4, 0.5, 0.6, 1.0],
@@ -14723,6 +16353,47 @@ mod tests {
         let instance = inst_radii([4.0, 5.0, 120.0, 36.0], [0.1, 0.2, 0.3, 0.8], [8.0; 4]);
 
         assert!(is_simple_rect_instance(&instance));
+    }
+
+    #[test]
+    fn retained_patch_pipeline_routing_respects_split_modes() {
+        let simple = inst_radii([4.0, 5.0, 120.0, 36.0], [0.1, 0.2, 0.3, 0.8], [8.0; 4]);
+        let mut line = inst_radii([10.0, 20.0, 160.0, 3.0], [0.2, 0.4, 0.8, 1.0], [1.5; 4]);
+        line.transform2[0] = 0.42;
+        line.transform2[3] = 1.0;
+        let mut complex = simple;
+        complex.paint[0] = 1.0;
+
+        assert_eq!(
+            pipeline_kind_for_instance(&simple, true, false),
+            PrimitivePipelineKind::Simple
+        );
+        assert_eq!(
+            pipeline_kind_for_instance(&line, true, false),
+            PrimitivePipelineKind::Line
+        );
+        assert_eq!(
+            pipeline_kind_for_instance(&complex, true, false),
+            PrimitivePipelineKind::Complex
+        );
+        assert_eq!(
+            pipeline_kind_for_instance(&simple, false, false),
+            PrimitivePipelineKind::Complex
+        );
+        assert_eq!(
+            pipeline_kind_for_instance(&line, true, true),
+            PrimitivePipelineKind::Complex
+        );
+    }
+
+    #[test]
+    fn retained_patch_upload_span_covers_sparse_indices() {
+        let mut range = None;
+        include_instance_index(&mut range, 7);
+        include_instance_index(&mut range, 3);
+        include_instance_index(&mut range, 5);
+
+        assert_eq!(range, Some(3..8));
     }
 
     #[test]
@@ -14953,6 +16624,18 @@ mod tests {
         assert!(is_line_segment_instance(&line));
         assert!(is_line_segment_instance(&short_line));
         assert!(!is_simple_rect_instance(&line));
+    }
+
+    #[test]
+    fn line_fast_path_preserves_ancestor_paint_clip_in_screen_space() {
+        let mut line = inst_radii([10.0, 20.0, 160.0, 3.0], [0.2, 0.4, 0.8, 1.0], [1.5; 4]);
+        line.transform2[0] = 0.42;
+        line.transform2[3] = 1.0;
+        line.clip = [20.0, 1.0, 60.0, 2.0];
+
+        let compact = line_segment_instance_from_rect(line);
+
+        assert_eq!(compact.clip, [30.0, 21.0, 70.0, 22.0]);
     }
 
     #[test]
@@ -15469,6 +17152,121 @@ mod tests {
     }
 
     #[test]
+    fn titled_panel_header_and_body_parts_paint_their_owned_geometry() {
+        let mut panel = node("panel", WidgetKind::Panel);
+        panel.props.text = Some("Structural parts".to_string());
+        panel.style.layout.width = Some(240.0);
+        panel.style.layout.height = Some(140.0);
+        panel.style.visual.border_width = Some(2.0);
+        panel.style.visual.border_radius = Some(10.0);
+
+        let mut header = PartStyle::default();
+        header.visual.background = Some(ColorRef::Rgba([0.8, 0.1, 0.2, 1.0]));
+        header.visual.border_color = Some(ColorRef::Rgba([0.2, 0.8, 0.1, 1.0]));
+        header.visual.border_width = Some(1.0);
+        panel.style.parts.parts.insert("header".to_string(), header);
+
+        let mut body = PartStyle::default();
+        body.visual.background = Some(ColorRef::Rgba([0.1, 0.2, 0.8, 1.0]));
+        panel.style.parts.parts.insert("body".to_string(), body);
+
+        let mut root = node("window", WidgetKind::Window);
+        root.children.push(panel);
+        let theme = Theme::dark();
+        let layout = crate::layout::compute_layout(&root, 320.0, 220.0, 1.0, &theme, None);
+        let panel = &root.children[0];
+        let geometry =
+            titled_container_geometry(panel, &layout, 1.0, &theme).expect("titled panel geometry");
+        let mut out = Vec::new();
+
+        emit_rects(
+            &root,
+            &layout,
+            &theme,
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let header_fill = out
+            .iter()
+            .find(|instance| instance.color == [0.8, 0.1, 0.2, 1.0])
+            .expect("header part fill");
+        assert_eq!(
+            header_fill.rect,
+            [
+                geometry.title_band.x + 1.0,
+                geometry.title_band.y + 1.0,
+                geometry.title_band.w - 2.0,
+                geometry.title_band.h - 2.0,
+            ]
+        );
+        let header_border = out
+            .iter()
+            .find(|instance| instance.color == [0.2, 0.8, 0.1, 1.0])
+            .expect("header part border");
+        assert_eq!(
+            header_border.rect,
+            [
+                geometry.title_band.x,
+                geometry.title_band.y,
+                geometry.title_band.w,
+                geometry.title_band.h,
+            ]
+        );
+        let body_fill = out
+            .iter()
+            .find(|instance| instance.color == [0.1, 0.2, 0.8, 1.0])
+            .expect("body part fill");
+        assert_eq!(
+            body_fill.rect,
+            [
+                geometry.body_viewport.x,
+                geometry.body_viewport.y,
+                geometry.body_viewport.w,
+                geometry.body_viewport.h,
+            ]
+        );
+        assert_eq!(header_fill.radii[2..], [0.0, 0.0]);
+        assert_eq!(body_fill.radii[..2], [0.0, 0.0]);
+    }
+
+    #[test]
+    fn untitled_panel_does_not_paint_header_or_body_virtual_parts() {
+        let mut panel = node("panel", WidgetKind::Panel);
+        panel.style.layout.width = Some(200.0);
+        panel.style.layout.height = Some(100.0);
+        for (part, color) in [
+            ("header", [0.8, 0.1, 0.2, 1.0]),
+            ("body", [0.1, 0.2, 0.8, 1.0]),
+        ] {
+            let mut style = PartStyle::default();
+            style.visual.background = Some(ColorRef::Rgba(color));
+            panel.style.parts.parts.insert(part.to_string(), style);
+        }
+        let mut root = node("window", WidgetKind::Window);
+        root.children.push(panel);
+        let theme = Theme::dark();
+        let layout = crate::layout::compute_layout(&root, 240.0, 160.0, 1.0, &theme, None);
+        let mut out = Vec::new();
+
+        emit_rects(
+            &root,
+            &layout,
+            &theme,
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        assert!(!out.iter().any(|instance| {
+            instance.color == [0.8, 0.1, 0.2, 1.0] || instance.color == [0.1, 0.2, 0.8, 1.0]
+        }));
+    }
+
+    #[test]
     fn fully_visible_panel_keeps_antialias_clip_pad() {
         let mut panel = node("panel", WidgetKind::Panel);
         panel.style.visual.background = Some(ColorRef::Rgba([0.4, 0.5, 0.6, 1.0]));
@@ -15783,6 +17581,26 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn custom_icon_resource_emits_tinted_segments() {
+        let resource = serde_json::json!({
+            "type": "stroke",
+            "view_box": [0, 0, 24, 24],
+            "stroke_width": 2,
+            "strokes": [
+                {"points": [[4, 4], [20, 20]]},
+                {"points": [[20, 4], [4, 20]], "closed": false}
+            ]
+        });
+        let color = [0.2, 0.4, 0.6, 1.0];
+        let mut instances = Vec::new();
+
+        let geometry = parse_custom_icon_resource(&resource).expect("valid icon resource");
+        emit_custom_icon_geometry(&mut instances, &geometry, [10.0, 20.0, 40.0, 32.0], color);
+        assert_eq!(instances.len(), 2);
+        assert!(instances.iter().all(|instance| instance.color == color));
     }
 
     #[test]
@@ -16182,6 +18000,62 @@ mod tests {
     }
 
     #[test]
+    fn extension_display_list_lines_keep_scroll_ancestor_paint_clip() {
+        let mut extension = node("scope", WidgetKind::Extension);
+        let props = serde_json::json!({
+            "extension_type": "scope",
+            "paint_width": 100,
+            "paint_height": 50,
+            "display_list": [
+                {"cmd": "line", "x1": 0, "y1": 0, "x2": 100, "y2": 50, "stroke": "accent", "stroke_width": 2}
+            ]
+        });
+        extension.props.raw_props = props.as_object().unwrap().clone();
+        extension.props.extension_type = Some("scope".to_string());
+        extension.props.intrinsic_width = Some(100.0);
+        extension.props.intrinsic_height = Some(50.0);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "scope".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 200.0,
+                h: 100.0,
+            },
+        );
+        layout.paint_clips.insert(
+            "scope".to_string(),
+            Rect {
+                x: 0.0,
+                y: 40.0,
+                w: 200.0,
+                h: 20.0,
+            },
+        );
+        let mut out = Vec::new();
+        emit_rects(
+            &extension,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let line = out
+            .iter()
+            .copied()
+            .find(is_line_segment_instance)
+            .expect("display-list line");
+        let compact = line_segment_instance_from_rect(line);
+        assert!(compact.clip[1] >= 39.0, "{:?}", compact.clip);
+        assert!(compact.clip[3] <= 61.0, "{:?}", compact.clip);
+    }
+
+    #[test]
     fn multi_stop_linear_gradient_emits_stop_data() {
         let mut panel = node("panel", WidgetKind::Panel);
         panel.style.visual.background_paint =
@@ -16191,15 +18065,24 @@ mod tests {
                 stops: vec![
                     GradientStop {
                         color: ColorRef::Rgba([1.0, 0.0, 0.0, 1.0]),
-                        position: Some(0.0),
+                        position: Some(CalcLength {
+                            percent: 0.0,
+                            px: 0.0,
+                        }),
                     },
                     GradientStop {
                         color: ColorRef::Rgba([0.0, 1.0, 0.0, 1.0]),
-                        position: Some(0.25),
+                        position: Some(CalcLength {
+                            percent: 25.0,
+                            px: 0.0,
+                        }),
                     },
                     GradientStop {
                         color: ColorRef::Rgba([0.0, 0.0, 1.0, 1.0]),
-                        position: Some(1.0),
+                        position: Some(CalcLength {
+                            percent: 100.0,
+                            px: 0.0,
+                        }),
                     },
                 ],
             }));
@@ -16248,27 +18131,45 @@ mod tests {
                 stops: vec![
                     GradientStop {
                         color: ColorRef::Rgba([1.0, 0.0, 0.0, 1.0]),
-                        position: Some(0.0),
+                        position: Some(CalcLength {
+                            percent: 0.0,
+                            px: 0.0,
+                        }),
                     },
                     GradientStop {
                         color: ColorRef::Rgba([1.0, 0.5, 0.0, 1.0]),
-                        position: Some(0.18),
+                        position: Some(CalcLength {
+                            percent: 18.0,
+                            px: 0.0,
+                        }),
                     },
                     GradientStop {
                         color: ColorRef::Rgba([1.0, 1.0, 0.0, 1.0]),
-                        position: Some(0.34),
+                        position: Some(CalcLength {
+                            percent: 34.0,
+                            px: 0.0,
+                        }),
                     },
                     GradientStop {
                         color: ColorRef::Rgba([0.0, 1.0, 0.0, 1.0]),
-                        position: Some(0.52),
+                        position: Some(CalcLength {
+                            percent: 52.0,
+                            px: 0.0,
+                        }),
                     },
                     GradientStop {
                         color: ColorRef::Rgba([0.0, 0.0, 1.0, 1.0]),
-                        position: Some(0.76),
+                        position: Some(CalcLength {
+                            percent: 76.0,
+                            px: 0.0,
+                        }),
                     },
                     GradientStop {
                         color: ColorRef::Rgba([0.5, 0.0, 1.0, 1.0]),
-                        position: Some(1.0),
+                        position: Some(CalcLength {
+                            percent: 100.0,
+                            px: 0.0,
+                        }),
                     },
                 ],
             }));
@@ -16318,11 +18219,17 @@ mod tests {
                 stops: vec![
                     GradientStop {
                         color: ColorRef::Rgba([1.0, 0.0, 0.0, 1.0]),
-                        position: Some(0.0),
+                        position: Some(CalcLength {
+                            percent: 0.0,
+                            px: 0.0,
+                        }),
                     },
                     GradientStop {
                         color: ColorRef::Rgba([0.0, 0.0, 1.0, 1.0]),
-                        position: Some(1.0),
+                        position: Some(CalcLength {
+                            percent: 100.0,
+                            px: 0.0,
+                        }),
                     },
                 ],
             }));
@@ -16474,19 +18381,31 @@ mod tests {
                 stops: vec![
                     GradientStop {
                         color: ColorRef::Rgba([1.0, 1.0, 1.0, 0.18]),
-                        position: Some(0.0),
+                        position: Some(CalcLength {
+                            percent: 0.0,
+                            px: 0.0,
+                        }),
                     },
                     GradientStop {
                         color: ColorRef::Rgba([1.0, 1.0, 1.0, 0.18]),
-                        position: Some(0.08),
+                        position: Some(CalcLength {
+                            percent: 8.0,
+                            px: 0.0,
+                        }),
                     },
                     GradientStop {
                         color: ColorRef::Rgba([0.0, 0.0, 0.0, 0.0]),
-                        position: Some(0.08),
+                        position: Some(CalcLength {
+                            percent: 8.0,
+                            px: 0.0,
+                        }),
                     },
                     GradientStop {
                         color: ColorRef::Rgba([0.0, 0.0, 0.0, 0.0]),
-                        position: Some(0.16),
+                        position: Some(CalcLength {
+                            percent: 16.0,
+                            px: 0.0,
+                        }),
                     },
                 ],
             }));
@@ -16522,6 +18441,108 @@ mod tests {
     }
 
     #[test]
+    fn pixel_gradient_period_remains_fixed_across_sizes_and_dpi() {
+        let stops = vec![
+            ResolvedGradientStop {
+                color: [1.0, 1.0, 1.0, 1.0],
+                position: Some(CalcLength {
+                    percent: 0.0,
+                    px: 0.0,
+                }),
+            },
+            ResolvedGradientStop {
+                color: [1.0, 1.0, 1.0, 1.0],
+                position: Some(CalcLength {
+                    percent: 0.0,
+                    px: 1.0,
+                }),
+            },
+            ResolvedGradientStop {
+                color: [0.0, 0.0, 0.0, 1.0],
+                position: Some(CalcLength {
+                    percent: 0.0,
+                    px: 2.0,
+                }),
+            },
+        ];
+
+        let (_, small, _) = prepare_gradient_stops(&stops, 100.0, 1.0);
+        let (_, large, _) = prepare_gradient_stops(&stops, 200.0, 1.0);
+        let (_, high_dpi, _) = prepare_gradient_stops(&stops, 200.0, 2.0);
+
+        assert_eq!([small[1], small[2]], [0.01, 0.02]);
+        assert_eq!([large[1], large[2]], [0.005, 0.01]);
+        assert_eq!([high_dpi[1], high_dpi[2]], [0.01, 0.02]);
+        assert_eq!(small[2] * 100.0, large[2] * 200.0);
+        assert_eq!(high_dpi[2] * 200.0, 4.0);
+    }
+
+    #[test]
+    fn mixed_gradient_positions_resolve_then_apply_css_fixup() {
+        let stops = vec![
+            ResolvedGradientStop {
+                color: [1.0; 4],
+                position: Some(CalcLength {
+                    percent: -10.0,
+                    px: 0.0,
+                }),
+            },
+            ResolvedGradientStop {
+                color: [0.8; 4],
+                position: Some(CalcLength {
+                    percent: 10.0,
+                    px: 2.0,
+                }),
+            },
+            ResolvedGradientStop {
+                color: [0.4; 4],
+                position: None,
+            },
+            ResolvedGradientStop {
+                color: [0.0; 4],
+                position: Some(CalcLength {
+                    percent: 5.0,
+                    px: 0.0,
+                }),
+            },
+        ];
+
+        let normalized = normalize_gradient_stops(&stops, 100.0, 2.0);
+        let positions = normalized
+            .iter()
+            .map(|(_, position)| *position)
+            .collect::<Vec<_>>();
+
+        assert_eq!(positions, vec![0.0, 0.14, 0.14, 0.14]);
+    }
+
+    #[test]
+    fn percentage_gradient_positions_are_independent_of_size_and_scale() {
+        let stops = vec![
+            ResolvedGradientStop {
+                color: [1.0; 4],
+                position: Some(CalcLength {
+                    percent: 25.0,
+                    px: 0.0,
+                }),
+            },
+            ResolvedGradientStop {
+                color: [0.0; 4],
+                position: Some(CalcLength {
+                    percent: 75.0,
+                    px: 0.0,
+                }),
+            },
+        ];
+
+        let narrow = normalize_gradient_stops(&stops, 80.0, 1.0);
+        let wide_high_dpi = normalize_gradient_stops(&stops, 640.0, 2.0);
+        assert_eq!(narrow[0].1, 0.25);
+        assert_eq!(narrow[1].1, 0.75);
+        assert_eq!(narrow, wide_high_dpi);
+    }
+
+    #[test]
     fn layered_gradient_background_emits_back_to_front_instances() {
         let mut panel = node("panel", WidgetKind::Panel);
         panel.style.visual.background_paint = Some(BackgroundPaint::Layers(vec![
@@ -16531,11 +18552,17 @@ mod tests {
                 stops: vec![
                     GradientStop {
                         color: ColorRef::Rgba([1.0, 1.0, 1.0, 0.18]),
-                        position: Some(0.0),
+                        position: Some(CalcLength {
+                            percent: 0.0,
+                            px: 0.0,
+                        }),
                     },
                     GradientStop {
                         color: ColorRef::Rgba([0.0, 0.0, 0.0, 0.0]),
-                        position: Some(0.65),
+                        position: Some(CalcLength {
+                            percent: 65.0,
+                            px: 0.0,
+                        }),
                     },
                 ],
             }),
@@ -16545,11 +18572,17 @@ mod tests {
                 stops: vec![
                     GradientStop {
                         color: ColorRef::Rgba([0.1, 0.2, 0.3, 1.0]),
-                        position: Some(0.0),
+                        position: Some(CalcLength {
+                            percent: 0.0,
+                            px: 0.0,
+                        }),
                     },
                     GradientStop {
                         color: ColorRef::Rgba([0.0, 0.0, 0.1, 1.0]),
-                        position: Some(1.0),
+                        position: Some(CalcLength {
+                            percent: 100.0,
+                            px: 0.0,
+                        }),
                     },
                 ],
             }),
@@ -16594,11 +18627,17 @@ mod tests {
                 stops: vec![
                     GradientStop {
                         color: ColorRef::Rgba([0.1, 0.2, 0.3, 1.0]),
-                        position: Some(0.0),
+                        position: Some(CalcLength {
+                            percent: 0.0,
+                            px: 0.0,
+                        }),
                     },
                     GradientStop {
                         color: ColorRef::Rgba([0.0, 0.0, 0.1, 1.0]),
-                        position: Some(1.0),
+                        position: Some(CalcLength {
+                            percent: 100.0,
+                            px: 0.0,
+                        }),
                     },
                 ],
             }));
@@ -17374,6 +19413,74 @@ mod tests {
     }
 
     #[test]
+    fn sidebar_and_modal_consume_shared_titled_surface_parts() {
+        for (kind, id, header_color, body_color) in [
+            (
+                WidgetKind::Sidebar,
+                "sidebar",
+                [0.81, 0.11, 0.21, 1.0],
+                [0.11, 0.21, 0.81, 1.0],
+            ),
+            (
+                WidgetKind::Modal,
+                "modal",
+                [0.82, 0.12, 0.22, 1.0],
+                [0.12, 0.22, 0.82, 1.0],
+            ),
+        ] {
+            let mut container = node(id, kind);
+            container.props.text = Some("Shared title".to_string());
+            if kind == WidgetKind::Modal {
+                container.props.open = Some(true);
+            }
+            for (part, color) in [("header", header_color), ("body", body_color)] {
+                let mut style = PartStyle::default();
+                style.visual.background = Some(ColorRef::Rgba(color));
+                container.style.parts.parts.insert(part.to_string(), style);
+            }
+            let mut layout = LayoutResult::default();
+            layout.rects.insert(
+                "window".to_string(),
+                Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 360.0,
+                    h: 240.0,
+                },
+            );
+            layout.rects.insert(
+                id.to_string(),
+                Rect {
+                    x: 40.0,
+                    y: 30.0,
+                    w: 220.0,
+                    h: 150.0,
+                },
+            );
+            let mut out = Vec::new();
+
+            emit_rects(
+                &container,
+                &layout,
+                &Theme::dark(),
+                1.0,
+                &WidgetState::default(),
+                &HashMap::new(),
+                &mut out,
+            );
+
+            assert!(
+                out.iter().any(|instance| instance.color == header_color),
+                "{kind:?} did not paint ::header"
+            );
+            assert!(
+                out.iter().any(|instance| instance.color == body_color),
+                "{kind:?} did not paint ::body"
+            );
+        }
+    }
+
+    #[test]
     fn dataframe_table_border_uses_rounded_ring() {
         let mut table = node("table", WidgetKind::DataFrameTable);
         table.style.visual.background = Some(ColorRef::Rgba([0.02, 0.03, 0.04, 1.0]));
@@ -17457,6 +19564,7 @@ mod tests {
         let theme = Theme::dark();
         let state = WidgetState::default();
         let carets = HashMap::new();
+        let mut icon_geometry_cache = IconGeometryCache::default();
         emit_rects_inner(
             &root,
             &layout,
@@ -17467,8 +19575,19 @@ mod tests {
             true,
             RenderContext::default(),
             &mut out,
+            None,
+            &mut icon_geometry_cache,
         );
-        emit_modal_overlays(&root, &layout, &theme, 1.0, &state, &carets, &mut out);
+        emit_modal_overlays(
+            &root,
+            &layout,
+            &theme,
+            1.0,
+            &state,
+            &carets,
+            &mut out,
+            &mut icon_geometry_cache,
+        );
 
         let panel_index = out
             .iter()
@@ -19921,6 +22040,103 @@ mod tests {
                 "missing cataloged NumberInput divider fill"
             );
         }
+    }
+
+    #[test]
+    fn code_editor_and_dropdown_renderers_consume_field_and_caret_parts() {
+        let theme = Theme::dark();
+
+        let mut editor = node("editor", WidgetKind::CodeEditor);
+        editor.style.parts.parts.insert(
+            "field".to_string(),
+            PartStyle {
+                visual: VisualStyle {
+                    background: Some(rgba(0.12, 0.23, 0.34)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        editor.style.parts.parts.insert(
+            "caret".to_string(),
+            PartStyle {
+                layout: PartLayoutStyle {
+                    width: Some(3.0),
+                    ..Default::default()
+                },
+                visual: VisualStyle {
+                    background: Some(rgba(0.91, 0.72, 0.13)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        let mut editor_layout = LayoutResult::default();
+        editor_layout.rects.insert(
+            editor.id.clone(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 180.0,
+                h: 90.0,
+            },
+        );
+        let editor_state = WidgetState {
+            focused: Some(editor.id.clone()),
+            ..WidgetState::from_tree(&editor)
+        };
+        let mut editor_out = Vec::new();
+        emit_rects(
+            &editor,
+            &editor_layout,
+            &theme,
+            1.0,
+            &editor_state,
+            &HashMap::new(),
+            &mut editor_out,
+        );
+        assert!(editor_out
+            .iter()
+            .any(|instance| instance.color == [0.12, 0.23, 0.34, 1.0]));
+        assert!(editor_out.iter().any(|instance| {
+            instance.color == [0.91, 0.72, 0.13, 1.0] && instance.rect[2] == 3.0
+        }));
+
+        let mut dropdown = node("region", WidgetKind::Dropdown);
+        dropdown.style.parts.parts.insert(
+            "field".to_string(),
+            PartStyle {
+                visual: VisualStyle {
+                    background: Some(rgba(0.18, 0.42, 0.31)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        let mut dropdown_layout = LayoutResult::default();
+        dropdown_layout.rects.insert(
+            dropdown.id.clone(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 140.0,
+                h: 34.0,
+            },
+        );
+        let dropdown_state = WidgetState::from_tree(&dropdown);
+        let mut dropdown_out = Vec::new();
+        emit_rects(
+            &dropdown,
+            &dropdown_layout,
+            &theme,
+            1.0,
+            &dropdown_state,
+            &HashMap::new(),
+            &mut dropdown_out,
+        );
+        assert!(dropdown_out
+            .iter()
+            .any(|instance| instance.color == [0.18, 0.42, 0.31, 1.0]));
     }
 
     #[test]

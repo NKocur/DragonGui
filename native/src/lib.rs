@@ -5,6 +5,7 @@ mod document;
 mod error;
 pub(crate) mod events;
 pub(crate) mod html_report_webview;
+pub(crate) mod icons;
 pub(crate) mod image_widget;
 pub(crate) mod layout;
 pub(crate) mod overlays;
@@ -18,6 +19,7 @@ pub(crate) mod table;
 pub(crate) mod text;
 pub(crate) mod theme;
 pub(crate) mod toast;
+pub(crate) mod widget_capabilities;
 
 pub(crate) const DEPTH_STENCIL_FORMAT: wgpu::TextureFormat =
     wgpu::TextureFormat::Depth24PlusStencil8;

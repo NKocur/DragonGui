@@ -1,16 +1,26 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
+use std::io::Cursor;
 use std::path::Path;
 
 use bytemuck::{Pod, Zeroable};
+use image::ImageReader;
 use serde_json::Value;
 
 use crate::document::{WidgetKind, WidgetNode};
 use crate::events::WidgetState;
 use crate::layout::{LayoutResult, Rect};
 use crate::primitives::visual_for as visual_for_widget;
-use crate::style::{PositionStyle, TransformStyle, BORDER_WIDTH_LP};
+use crate::resources::ResourceRegistry;
+use crate::style::{
+    BackgroundImage, BackgroundImageFit, BackgroundPaint, PositionStyle, TransformStyle,
+    BORDER_WIDTH_LP,
+};
 use crate::theme::Theme;
+
+const MAX_MANAGED_IMAGE_DIMENSION: u32 = 4096;
+const MAX_MANAGED_IMAGE_PIXELS: u64 = 16_000_000;
+const MAX_MANAGED_IMAGE_ALLOC_BYTES: u64 = 64 * 1024 * 1024;
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -20,9 +30,12 @@ struct ImageInstance {
     radii: [f32; 4],
     transform: [f32; 4],
     transform2: [f32; 4],
+    clip: [f32; 4],
+    params: [f32; 4],
+    fallback: [f32; 4],
 }
 
-static IMAGE_ATTRS: [wgpu::VertexAttribute; 5] = [
+static IMAGE_ATTRS: [wgpu::VertexAttribute; 8] = [
     wgpu::VertexAttribute {
         format: wgpu::VertexFormat::Float32x4,
         offset: 0,
@@ -48,6 +61,21 @@ static IMAGE_ATTRS: [wgpu::VertexAttribute; 5] = [
         offset: 64,
         shader_location: 4,
     },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 80,
+        shader_location: 5,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 96,
+        shader_location: 6,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 112,
+        shader_location: 7,
+    },
 ];
 
 fn instance_layout() -> wgpu::VertexBufferLayout<'static> {
@@ -67,13 +95,17 @@ struct Uniforms {
 
 struct ImageResource {
     bind_group: wgpu::BindGroup,
+    repeat_bind_group: wgpu::BindGroup,
     width: u32,
     height: u32,
+    version: Option<u64>,
 }
 
 #[derive(Clone)]
 struct ImageDraw {
-    path: String,
+    key: String,
+    repeat: bool,
+    background: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -81,6 +113,7 @@ enum ImageFit {
     Contain,
     Cover,
     Stretch,
+    Repeat,
 }
 
 impl ImageFit {
@@ -99,6 +132,7 @@ pub struct ImageRenderer {
     uniform_bind_group: wgpu::BindGroup,
     texture_bind_group_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
+    repeat_sampler: wgpu::Sampler,
     instance_buffer: wgpu::Buffer,
     instance_cap: u64,
     instances: Vec<ImageInstance>,
@@ -221,6 +255,15 @@ impl ImageRenderer {
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             ..Default::default()
         });
+        let repeat_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("image-repeat-sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            ..Default::default()
+        });
         let initial_cap = (8 * std::mem::size_of::<ImageInstance>()) as u64;
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("image-instances"),
@@ -235,6 +278,7 @@ impl ImageRenderer {
             uniform_bind_group,
             texture_bind_group_layout,
             sampler,
+            repeat_sampler,
             instance_buffer,
             instance_cap: initial_cap,
             instances: Vec::with_capacity(8),
@@ -255,8 +299,9 @@ impl ImageRenderer {
     }
 
     pub fn forget_path(&mut self, path: &str) {
-        self.images.remove(path);
-        self.failed_paths.remove(path);
+        let key = path_cache_key(path);
+        self.images.remove(&key);
+        self.failed_paths.remove(&key);
     }
 
     pub fn rebuild(
@@ -268,32 +313,93 @@ impl ImageRenderer {
         theme: &Theme,
         sf: f32,
         state: Option<&WidgetState>,
+        resources: &ResourceRegistry,
     ) {
         let mut specs = Vec::new();
         collect_image_specs(tree, layout, theme, sf, state, &mut specs);
 
-        let active_paths: HashSet<String> = specs.iter().map(|spec| spec.path.clone()).collect();
-        self.images.retain(|path, _| active_paths.contains(path));
-        self.failed_paths.retain(|path| active_paths.contains(path));
+        let active_keys: HashSet<String> = specs.iter().map(ImageSpec::cache_key).collect();
+        self.images.retain(|key, _| active_keys.contains(key));
+        self.failed_paths.retain(|key| active_keys.contains(key));
 
         for spec in &specs {
-            if self.failed_paths.contains(&spec.path) && Path::new(&spec.path).exists() {
-                self.failed_paths.remove(&spec.path);
+            let key = spec.cache_key();
+            let managed = spec
+                .resource_id
+                .as_deref()
+                .and_then(|id| resources.image(id));
+            let expected_version = managed.map(|resource| resource.version);
+            let stale = self
+                .images
+                .get(&key)
+                .is_some_and(|image| image.version != expected_version);
+            if stale {
+                self.images.remove(&key);
             }
-            if !self.images.contains_key(&spec.path) && !self.failed_paths.contains(&spec.path) {
-                match load_image_resource(
-                    device,
-                    queue,
-                    &self.texture_bind_group_layout,
-                    &self.sampler,
-                    &spec.path,
-                ) {
+            if spec
+                .path
+                .as_ref()
+                .is_some_and(|path| Path::new(path).exists())
+            {
+                self.failed_paths.remove(&key);
+            }
+            if managed.is_some() {
+                self.failed_paths.remove(&key);
+            }
+            if !self.images.contains_key(&key) && !self.failed_paths.contains(&key) {
+                let loaded = if let Some(resource) = managed {
+                    load_managed_image_resource(
+                        device,
+                        queue,
+                        &self.texture_bind_group_layout,
+                        &self.sampler,
+                        &self.repeat_sampler,
+                        &resource.bytes,
+                        resource.version,
+                    )
+                } else if spec.resource_id.is_some() {
+                    load_transparent_image_resource(
+                        device,
+                        queue,
+                        &self.texture_bind_group_layout,
+                        &self.sampler,
+                        &self.repeat_sampler,
+                        None,
+                    )
+                } else if let Some(path) = spec.path.as_deref() {
+                    load_path_image_resource(
+                        device,
+                        queue,
+                        &self.texture_bind_group_layout,
+                        &self.sampler,
+                        &self.repeat_sampler,
+                        path,
+                    )
+                } else {
+                    continue;
+                };
+                match loaded {
                     Ok(resource) => {
-                        self.images.insert(spec.path.clone(), resource);
+                        self.images.insert(key, resource);
                     }
                     Err(err) => {
-                        eprintln!("DragonGUI: failed to load image {:?}: {err}", spec.path);
-                        self.failed_paths.insert(spec.path.clone());
+                        eprintln!(
+                            "DragonGUI: failed to load image {:?}: {err}",
+                            spec.source_name()
+                        );
+                        if spec.resource_id.is_some() {
+                            if let Ok(resource) = load_transparent_image_resource(
+                                device,
+                                queue,
+                                &self.texture_bind_group_layout,
+                                &self.sampler,
+                                &self.repeat_sampler,
+                                expected_version,
+                            ) {
+                                self.images.insert(key.clone(), resource);
+                            }
+                        }
+                        self.failed_paths.insert(key);
                     }
                 }
             }
@@ -302,7 +408,8 @@ impl ImageRenderer {
         self.instances.clear();
         self.draws.clear();
         for spec in specs {
-            let Some(resource) = self.images.get(&spec.path) else {
+            let key = spec.cache_key();
+            let Some(resource) = self.images.get(&key) else {
                 continue;
             };
             let (rect, uv) = fit_rect_and_uv(spec.rect, resource.width, resource.height, spec.fit);
@@ -319,8 +426,24 @@ impl ImageRenderer {
                 radii,
                 transform,
                 transform2,
+                clip: [spec.clip.x, spec.clip.y, spec.clip.w, spec.clip.h],
+                params: [
+                    spec.opacity.clamp(0.0, 1.0),
+                    if spec.fit == ImageFit::Contain {
+                        1.0
+                    } else {
+                        0.0
+                    },
+                    0.0,
+                    0.0,
+                ],
+                fallback: spec.fallback,
             });
-            self.draws.push(ImageDraw { path: spec.path });
+            self.draws.push(ImageDraw {
+                key,
+                repeat: spec.fit == ImageFit::Repeat,
+                background: spec.background,
+            });
         }
 
         if self.instances.is_empty() {
@@ -345,7 +468,15 @@ impl ImageRenderer {
         );
     }
 
-    pub fn render(&self, pass: &mut wgpu::RenderPass<'_>) {
+    pub fn render_backgrounds(&self, pass: &mut wgpu::RenderPass<'_>) {
+        self.render_layer(pass, true);
+    }
+
+    pub fn render_content(&self, pass: &mut wgpu::RenderPass<'_>) {
+        self.render_layer(pass, false);
+    }
+
+    fn render_layer(&self, pass: &mut wgpu::RenderPass<'_>, background: bool) {
         if self.instances.is_empty() {
             return;
         }
@@ -354,10 +485,18 @@ impl ImageRenderer {
         pass.set_bind_group(0, &self.uniform_bind_group, &[]);
         pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
         for (index, draw) in self.draws.iter().enumerate() {
-            let Some(resource) = self.images.get(&draw.path) else {
+            if draw.background != background {
+                continue;
+            }
+            let Some(resource) = self.images.get(&draw.key) else {
                 continue;
             };
-            pass.set_bind_group(1, &resource.bind_group, &[]);
+            let bind_group = if draw.repeat {
+                &resource.repeat_bind_group
+            } else {
+                &resource.bind_group
+            };
+            pass.set_bind_group(1, bind_group, &[]);
             let start = index as u64 * stride;
             let end = start + stride;
             pass.set_vertex_buffer(0, self.instance_buffer.slice(start..end));
@@ -367,11 +506,41 @@ impl ImageRenderer {
 }
 
 struct ImageSpec {
-    path: String,
+    path: Option<String>,
+    resource_id: Option<String>,
     rect: Rect,
+    clip: Rect,
     fit: ImageFit,
     radii: [f32; 4],
     transform: Option<TransformStyle>,
+    opacity: f32,
+    background: bool,
+    fallback: [f32; 4],
+}
+
+impl ImageSpec {
+    fn cache_key(&self) -> String {
+        if let Some(id) = &self.resource_id {
+            resource_cache_key(id)
+        } else {
+            path_cache_key(self.path.as_deref().unwrap_or_default())
+        }
+    }
+
+    fn source_name(&self) -> &str {
+        self.resource_id
+            .as_deref()
+            .or(self.path.as_deref())
+            .unwrap_or("<missing>")
+    }
+}
+
+fn path_cache_key(path: &str) -> String {
+    format!("path:{path}")
+}
+
+fn resource_cache_key(id: &str) -> String {
+    format!("resource:{id}")
 }
 
 fn value_f32(value: &Value) -> Option<f32> {
@@ -477,11 +646,16 @@ fn collect_extension_display_list_image_specs(
         };
         let radius = object_f32(command, "radius").unwrap_or(0.0).max(0.0) * sx.min(sy).abs();
         out.push(ImageSpec {
-            path: path.to_string(),
+            path: Some(path.to_string()),
+            resource_id: None,
             rect: image_rect,
+            clip: layout.visible_rect(&node.id).unwrap_or(rect),
             fit: image_fit_from_value(command.get("fit")),
             radii: [radius; 4],
             transform: None,
+            opacity: 1.0,
+            background: false,
+            fallback: [0.0; 4],
         });
     }
 }
@@ -495,9 +669,43 @@ fn collect_image_specs(
     out: &mut Vec<ImageSpec>,
 ) {
     let subtree_start = out.len();
+    if let (Some(rect), Some(clip)) = (
+        layout.rects.get(&node.id).copied(),
+        layout.visible_rect(&node.id),
+    ) {
+        let visual = state
+            .map(|state| visual_for_widget(node, state, theme))
+            .unwrap_or_else(|| Cow::Borrowed(&node.style.visual));
+        if let Some(image) = background_image(&visual.background_paint) {
+            let border_w = visual.border_width.unwrap_or(BORDER_WIDTH_LP).max(0.0) * sf;
+            let content = inset_rect(rect, border_w);
+            let radius = visual.border_radius.unwrap_or(theme.radius).max(0.0);
+            let radii = visual
+                .corner_radii
+                .resolve(radius)
+                .map(|radius| (radius.max(0.0) * sf - border_w).max(0.0));
+            out.push(ImageSpec {
+                path: None,
+                resource_id: Some(image.resource_id.clone()),
+                rect: content,
+                clip,
+                fit: background_image_fit(image.fit),
+                radii,
+                transform: None,
+                opacity: visual.opacity.unwrap_or(1.0),
+                background: true,
+                fallback: background_fallback(
+                    &visual.background_paint,
+                    visual.background.as_ref(),
+                    theme,
+                ),
+            });
+        }
+    }
     if matches!(node.kind, WidgetKind::Image | WidgetKind::ImageButton) {
-        if let (Some(path), Some(rect)) = (
+        if let (Some(path), Some(rect), Some(clip)) = (
             node.props.image_path.as_ref(),
+            layout.rects.get(&node.id).copied(),
             layout.visible_rect(&node.id),
         ) {
             let visual = state
@@ -516,11 +724,16 @@ fn collect_image_specs(
                 .resolve(radius)
                 .map(|radius| (radius.max(0.0) * sf - border_w).max(0.0));
             out.push(ImageSpec {
-                path: path.clone(),
+                path: Some(path.clone()),
+                resource_id: None,
                 rect: content,
+                clip,
                 fit: ImageFit::from_node(node),
                 radii,
                 transform: None,
+                opacity: visual.opacity.unwrap_or(1.0),
+                background: false,
+                fallback: [0.0; 4],
             });
         }
     }
@@ -539,6 +752,43 @@ fn collect_image_specs(
             [rect.x + rect.w * 0.5, rect.y + rect.h * 0.5],
         );
     }
+}
+
+fn background_image(paint: &Option<BackgroundPaint>) -> Option<&BackgroundImage> {
+    match paint.as_ref()? {
+        BackgroundPaint::Image(image) => Some(image),
+        BackgroundPaint::Layers(layers) => layers.iter().find_map(|paint| match paint {
+            BackgroundPaint::Image(image) => Some(image),
+            _ => None,
+        }),
+        _ => None,
+    }
+}
+
+fn background_image_fit(fit: BackgroundImageFit) -> ImageFit {
+    match fit {
+        BackgroundImageFit::Contain => ImageFit::Contain,
+        BackgroundImageFit::Cover => ImageFit::Cover,
+        BackgroundImageFit::Stretch => ImageFit::Stretch,
+        BackgroundImageFit::Repeat => ImageFit::Repeat,
+    }
+}
+
+fn background_fallback(
+    paint: &Option<BackgroundPaint>,
+    background: Option<&crate::style::ColorRef>,
+    theme: &Theme,
+) -> [f32; 4] {
+    let from_layers = match paint {
+        Some(BackgroundPaint::Layers(layers)) => layers.iter().find_map(|paint| match paint {
+            BackgroundPaint::Color(color) => Some(color.resolve(theme)),
+            _ => None,
+        }),
+        _ => None,
+    };
+    from_layers
+        .or_else(|| background.map(|color| color.resolve(theme)))
+        .unwrap_or([0.0; 4])
 }
 
 fn apply_transform_to_specs(
@@ -632,14 +882,86 @@ fn inset_rect(rect: Rect, inset: f32) -> Rect {
     }
 }
 
-fn load_image_resource(
+fn load_path_image_resource(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
+    repeat_sampler: &wgpu::Sampler,
     path: &str,
 ) -> Result<ImageResource, String> {
     let image = image::open(Path::new(path)).map_err(|err| err.to_string())?;
+    upload_image_resource(device, queue, layout, sampler, repeat_sampler, image, None)
+}
+
+fn load_managed_image_resource(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    repeat_sampler: &wgpu::Sampler,
+    bytes: &[u8],
+    version: u64,
+) -> Result<ImageResource, String> {
+    let mut reader = ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|err| err.to_string())?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_MANAGED_IMAGE_DIMENSION);
+    limits.max_image_height = Some(MAX_MANAGED_IMAGE_DIMENSION);
+    limits.max_alloc = Some(MAX_MANAGED_IMAGE_ALLOC_BYTES);
+    reader.limits(limits);
+    let image = reader.decode().map_err(|err| err.to_string())?;
+    let pixels = u64::from(image.width()).saturating_mul(u64::from(image.height()));
+    if image.width() > MAX_MANAGED_IMAGE_DIMENSION
+        || image.height() > MAX_MANAGED_IMAGE_DIMENSION
+        || pixels > MAX_MANAGED_IMAGE_PIXELS
+    {
+        return Err(format!(
+            "managed image dimensions {}x{} exceed the 4096x4096 / 16M-pixel limit",
+            image.width(),
+            image.height()
+        ));
+    }
+    upload_image_resource(
+        device,
+        queue,
+        layout,
+        sampler,
+        repeat_sampler,
+        image,
+        Some(version),
+    )
+}
+
+fn load_transparent_image_resource(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    repeat_sampler: &wgpu::Sampler,
+    version: Option<u64>,
+) -> Result<ImageResource, String> {
+    upload_image_resource(
+        device,
+        queue,
+        layout,
+        sampler,
+        repeat_sampler,
+        image::DynamicImage::new_rgba8(1, 1),
+        version,
+    )
+}
+
+fn upload_image_resource(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    repeat_sampler: &wgpu::Sampler,
+    image: image::DynamicImage,
+    version: Option<u64>,
+) -> Result<ImageResource, String> {
     let rgba = image.to_rgba8();
     let width = rgba.width().max(1);
     let height = rgba.height().max(1);
@@ -691,10 +1013,26 @@ fn load_image_resource(
             },
         ],
     });
+    let repeat_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("image-repeat-texture-bg"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(repeat_sampler),
+            },
+        ],
+    });
     Ok(ImageResource {
         bind_group,
+        repeat_bind_group,
         width,
         height,
+        version,
     })
 }
 
@@ -709,20 +1047,28 @@ fn fit_rect_and_uv(rect: Rect, image_w: u32, image_h: u32, fit: ImageFit) -> ([f
 
     match fit {
         ImageFit::Stretch => (slot, [0.0, 0.0, 1.0, 1.0]),
+        ImageFit::Repeat => (
+            slot,
+            [0.0, 0.0, slot[2] / image_w as f32, slot[3] / image_h as f32],
+        ),
         ImageFit::Contain => {
             let (draw_w, draw_h) = if image_aspect > slot_aspect {
                 (slot[2], slot[2] / image_aspect)
             } else {
                 (slot[3] * image_aspect, slot[3])
             };
+            let draw_fraction_x = (draw_w / slot[2]).max(f32::EPSILON);
+            let draw_fraction_y = (draw_h / slot[3]).max(f32::EPSILON);
+            let offset_x = (1.0 - draw_fraction_x) * 0.5;
+            let offset_y = (1.0 - draw_fraction_y) * 0.5;
             (
+                slot,
                 [
-                    slot[0] + (slot[2] - draw_w) * 0.5,
-                    slot[1] + (slot[3] - draw_h) * 0.5,
-                    draw_w,
-                    draw_h,
+                    -offset_x / draw_fraction_x,
+                    -offset_y / draw_fraction_y,
+                    1.0 / draw_fraction_x,
+                    1.0 / draw_fraction_y,
                 ],
-                [0.0, 0.0, 1.0, 1.0],
             )
         }
         ImageFit::Cover => {
@@ -826,13 +1172,66 @@ mod tests {
         collect_image_specs(&extension, &layout, &Theme::dark(), 1.0, None, &mut specs);
 
         assert_eq!(specs.len(), 1);
-        assert_eq!(specs[0].path, "examples/logo.png");
+        assert_eq!(specs[0].path.as_deref(), Some("examples/logo.png"));
         assert_eq!(specs[0].rect.x, 20.0);
         assert_eq!(specs[0].rect.y, 10.0);
         assert_eq!(specs[0].rect.w, 80.0);
         assert_eq!(specs[0].rect.h, 40.0);
         assert_eq!(specs[0].fit, ImageFit::Cover);
         assert_eq!(specs[0].radii, [6.0; 4]);
+    }
+
+    #[test]
+    fn managed_background_spec_uses_resource_fit_clip_and_fallback() {
+        let mut panel = node("surface", WidgetKind::Panel);
+        panel.style.visual.background = Some(crate::style::ColorRef::Rgba([0.1, 0.2, 0.3, 1.0]));
+        panel.style.visual.background_paint = Some(BackgroundPaint::Layers(vec![
+            BackgroundPaint::Image(BackgroundImage {
+                resource_id: "linen".to_string(),
+                fit: BackgroundImageFit::Repeat,
+            }),
+            BackgroundPaint::Color(crate::style::ColorRef::Rgba([0.1, 0.2, 0.3, 1.0])),
+        ]));
+        panel.style.visual.opacity = Some(0.75);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "surface".to_string(),
+            Rect {
+                x: 10.0,
+                y: 20.0,
+                w: 120.0,
+                h: 80.0,
+            },
+        );
+        let mut specs = Vec::new();
+        collect_image_specs(&panel, &layout, &Theme::dark(), 1.0, None, &mut specs);
+
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].resource_id.as_deref(), Some("linen"));
+        assert_eq!(specs[0].fit, ImageFit::Repeat);
+        assert!(specs[0].background);
+        assert_eq!(specs[0].opacity, 0.75);
+        assert_eq!(specs[0].fallback, [0.1, 0.2, 0.3, 1.0]);
+        assert_eq!(specs[0].clip.w, 120.0);
+    }
+
+    #[test]
+    fn managed_background_fit_uvs_are_bounded_and_repeatable() {
+        let slot = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 50.0,
+        };
+        let (repeat_rect, repeat_uv) = fit_rect_and_uv(slot, 10, 10, ImageFit::Repeat);
+        assert_eq!(repeat_rect, [0.0, 0.0, 100.0, 50.0]);
+        assert_eq!(repeat_uv, [0.0, 0.0, 10.0, 5.0]);
+
+        let (contain_rect, contain_uv) = fit_rect_and_uv(slot, 10, 20, ImageFit::Contain);
+        assert_eq!(contain_rect, [0.0, 0.0, 100.0, 50.0]);
+        assert!(contain_uv[0] < 0.0);
+        assert!(contain_uv[2] > 1.0);
     }
 
     #[test]

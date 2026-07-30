@@ -138,13 +138,15 @@ Visual properties:
 - `foreground`
 - `border-color`
 - `border-width`
-- `border-style: solid`, `border-style: none`, or `border-style: hidden`
+- `border-style: solid`, `dotted`, `dashed`, `double`, `none`, or `hidden`
+- `border-top`, `border-right`, `border-bottom`, `border-left`, and their
+  `-color`, `-width`, and `-style` longhands
 - `border-radius`
 - `border-top-left-radius`
 - `border-top-right-radius`
 - `border-bottom-right-radius`
 - `border-bottom-left-radius`
-- `border: none`, `border: 0`, or `border: <width> solid <color>`
+- `border: none`, `border: 0`, or `border: <width> <style> <color>`
 - `box-shadow`
 - `opacity`
 - `accent`
@@ -204,6 +206,10 @@ Supported background paint values:
   four soft fields.
 - DragonGUI-specific `mesh-gradient(...)` four-corner background paint for
   smooth image-like gradients.
+- DragonGUI-specific
+  `dg-pattern(kind, foreground, background, tile-size)` paint for bounded
+  `checker`, `pinstripe`, `dot`/`stipple`, and `diagonal-hatch` surfaces.
+  Tile size accepts `2px` through `128px`.
 - Subtle procedural gradient noise through `background-noise`, usually with
   values around `0.01..0.03`.
 - Gradient stop interpolation through `gradient-interpolation`, with `srgb`,
@@ -273,8 +279,11 @@ Methods:
 | --- | --- |
 | `document(window)` | Builds the JSON-safe app document. |
 | `stylesheet(css)` | Adds or applies a user stylesheet. |
+| `set_stylesheet(id, css)` | Adds or replaces a named user stylesheet in place. |
+| `remove_stylesheet(id)` | Removes one named user stylesheet. |
 | `load_stylesheet(path)` | Reads UTF-8 CSS from disk and applies it. |
 | `clear_stylesheets()` | Clears user stylesheets. |
+| `set_theme(theme)` | Atomically replaces the active design-token theme. |
 | `run(window)` | Starts the native event loop. Accepts `Window` or component instance. |
 | `run_with_loading(build_window, title=None, width=1024, height=768)` | Starts the native event loop with a placeholder window, shows the startup loading frame, then calls `build_window()` and swaps in the returned `Window` or component root before the first real redraw. |
 | `call_soon_threadsafe(fn)` | Schedules a callable on the live DragonGUI runtime. |
@@ -331,6 +340,12 @@ CSS:
   other theme tokens or `var(...)`.
 - `radius`, `font_size`, and the derived spacing scale feed built-in framework
   stylesheet variables, including `--dg-space-xs` through `--dg-space-xl`.
+- System typography and geometry fields (`font_family`,
+  `monospace_font_family`, `base_line_height`, `control_height`,
+  `compact_control_height`, `default_border_width`, `focus_width`,
+  `focus_offset`, `panel_padding`, and `toolbar_gap`) feed matching `--dg-*`
+  variables and framework defaults. Theme/application rules and inline style
+  keep their normal higher cascade precedence.
 
 ### Toast Notifications
 
@@ -426,8 +441,71 @@ CSS:
 Constructor:
 
 ```python
-dg.Window(title, width=1024, height=768, id=None, key=None, class_=None, style=None)
+dg.Window(
+    title,
+    width=1024,
+    height=768,
+    decorations="native",
+    id=None,
+    key=None,
+    class_=None,
+    style=None,
+)
 ```
+
+`decorations="native"` keeps the operating system titlebar and frame and remains
+the default. `decorations="client"` opts into DragonGUI's retained client
+titlebar. Client chrome exposes stable `Window::titlebar`, `Window::title`,
+`Window::minimize`, `Window::maximize`, and `Window::close` aliases. The
+concrete `WindowTitlebar`, `WindowTitle`, `WindowMinimize`, `WindowMaximize`,
+and `WindowClose` type selectors remain available, including for direct
+`:hover`, `:active`, and `:focus` styling. For example:
+
+```css
+Window::titlebar { background: #1d2335; }
+Window::title { color: #e8ebf5; font-weight: 600; }
+Window::close { width: 46px; background: transparent; }
+Window::resize-border { width: 6px; }
+Window[window-state="maximized"]::maximize { background: #343d59; }
+WindowClose:hover { background: #d94b64; color: white; }
+```
+
+`Window::resize-border` is a structural part. Its `width` sets the client
+resize hit region in logical pixels rather than painting or consuming layout
+space. The default is `6px`; values are clamped to `0px`–`24px`, and `0px`
+disables client edge and corner resize hits.
+
+Client chrome supports native window dragging,
+minimize/maximize/close, DPI-aware edge and corner resizing on platforms where
+winit supports it, and the Windows titlebar system menu. Winit does not provide
+client resize dragging on macOS, so DragonGUI automatically uses native
+decorations there even when `decorations="client"` was requested. The retained
+titlebar is removed while application content is preserved. Runtime metadata
+records `requested_decorations="client"`, effective `decorations="native"`, and
+`decoration_fallback="macos-client-resize-unsupported"`, and startup emits a
+matching diagnostic. Double-clicking the retained title or empty titlebar area
+on supported platforms toggles maximize/restore. The three controls are in
+normal keyboard traversal; Enter and Space invoke their native actions, and
+descriptive tooltips identify
+their glyph-only buttons. On Windows, Alt+Space and a titlebar right-click open
+the native window system menu. Client windows expose
+`window-state="normal" | "maximized"` to CSS. The maximize control changes to a
+restore glyph and “Restore window” tooltip while maximized, including when the
+state change originates from the operating system.
+
+On Windows, titlebar double-click detection uses the operating system's
+configured double-click interval and horizontal/vertical movement rectangle.
+The interval is defensively bounded to 100–2000 ms and each half-rectangle
+distance to 1–64 physical pixels. Other supported platforms use a 500 ms,
+4-logical-pixel DPI-scaled fallback because Winit does not expose their native
+double-click settings.
+
+The retained minimize, maximize/restore, and close controls carry explicit
+`accessible_name` metadata and an `accessibility_role` of `button`. They occur
+in document-order Tab traversal before application content. DragonGUI does not
+yet expose its retained widgets through a platform accessibility tree, so this
+metadata is internal groundwork and is not currently announced by operating
+system screen readers.
 
 Options:
 
@@ -436,6 +514,7 @@ Options:
 | `title` | Window title. |
 | `width` | Initial width in logical pixels. |
 | `height` | Initial height in logical pixels. |
+| `decorations` | `"native"` (default) or opt-in `"client"` retained chrome. |
 
 CSS:
 
@@ -1191,6 +1270,61 @@ CSS:
 - Parts: `badge`.
 - Supports `:hover`, `:active`, `:focus`, and `:disabled`.
 
+### `IconButton`
+
+Constructor:
+
+```python
+dg.IconButton(icon, on_click=None, disabled=False, size=None, width=None,
+              height=None, id=None, key=None, class_=None, style=None,
+              tooltip=None, parent=...)
+```
+
+`icon` is a semantic name. The built-in vector family uses canonical names
+published as `dg.BUILTIN_ICONS`; compatibility spellings are published as
+`dg.ICON_ALIASES`. Use `dg.resolve_icon(name)` to obtain an `IconResolution`
+containing the normalized request, canonical identity, and alias/fallback
+flags. Unknown names retain their requested identity for diagnostics and paint
+the `more` fallback.
+
+Applications can replace geometry without replacing the widget:
+
+```python
+search_icon = dg.IconResource(
+    [
+        dg.IconStroke([(4, 4), (16, 16)], closed=True),
+        dg.IconStroke([(15, 15), (21, 21)]),
+    ],
+    view_box=(0, 0, 24, 24),
+    stroke_width=2,
+)
+app.set_icon_theme({"search": search_icon, "run": "play"})
+```
+
+The Phase 9.2 resource tier is monochrome: `view_box` defines logical geometry,
+`stroke_width` scales with it, and each `IconStroke` is an open or closed
+polyline. A resource is limited to 64 strokes and 256 total points. Color,
+disabled state, and interaction styling still come from `IconButton::icon`;
+the override does not change the button's layout box. `set_icon_theme()` may be
+called before startup or while the app is running. Live replacement is atomic,
+reconciles retained icon nodes, and requests text/paint work without layout.
+`IconButton.set_icon()` also resolves its new semantic name against the current
+application registry immediately.
+
+Live methods:
+
+- `set_icon(name)`
+- `click()`
+
+CSS:
+
+- Type selector: `IconButton`.
+- Part: `IconButton::icon`.
+- Icon color follows the part foreground/background paint contract; changing
+  semantic identity does not change button layout.
+- Native computed-style snapshots include an `icon` object with `requested`,
+  `resolved`, `recognized`, `alias`, `fallback`, and `source` fields.
+
 ### `TextInput`
 
 Constructor:
@@ -1741,28 +1875,57 @@ Notable non-selectors:
 
 ## CSS Part Inventory
 
-| Widget | Parts |
-| --- | --- |
-| `HLayout` | `scrollbar-track`, `scrollbar-thumb` |
-| `VLayout` | `scrollbar-track`, `scrollbar-thumb` |
-| `ScrollArea` | `scrollbar-track`, `scrollbar-thumb` |
-| `Pages` | `scrollbar-track`, `scrollbar-thumb` |
-| `Page` | `scrollbar-track`, `scrollbar-thumb` |
-| `Sidebar` | `scrollbar-track`, `scrollbar-thumb` |
-| `Panel` | `accent`, `scrollbar-track`, `scrollbar-thumb` |
-| `Collapsible` | `header`, `indicator`, `body`, `scrollbar-track`, `scrollbar-thumb` |
-| `Modal` | `scrim`, `scrollbar-track`, `scrollbar-thumb` |
-| `Button` | `badge` |
-| `NumberInput` | `field`, `stepper`, `stepper-up`, `stepper-down`, `stepper-divider`, `divider`, `caret` |
-| `Dropdown` | `field`, `chevron`, `menu`, `item`, `item-selected`, `item-hover` |
-| `Checkbox` | `row`, `box`, `indicator`, `label` |
-| `Slider` | `track`, `fill`, `thumb` |
-| `ProgressBar` | `track`, `fill`, `label` |
-| `Tabs` | `header` (opt-in strip/divider; unstyled tabs do not paint a header box) |
-| `Tab` | `tab`, `accent`, `badge` |
-| `NavItem` | `item`, `accent`, `badge` |
-| `PieChart` | `label` |
-| `DataFrameTable` | `header`, `row`, `row-selected`, `grid-line` |
+<!-- BEGIN GENERATED WIDGET CSS CAPABILITIES -->
+
+_Generated from `python/dragongui/widget_css_capabilities.json`. Do not edit this table manually._
+
+Global generated-content hooks: `::before`, `::after` (text renderer).
+
+| Widget | Supported states | Parts and renderer support |
+| --- | --- | --- |
+| `ArrowButton` | `:hover`, `:active`, `:focus`, `:disabled` | `icon` (paint) |
+| `BarChart` | `:hover`, `:active`, `:focus`, `:disabled` | `label` (text), `value-label` (text) |
+| `Button` | `:hover`, `:active`, `:focus`, `:disabled` | `badge` (paint) |
+| `Checkbox` | `:hover`, `:active`, `:focus`, `:disabled`, `:checked` | `box` (paint), `indicator` (paint), `row` (paint), `label` (text) |
+| `CodeEditor` | `:hover`, `:active`, `:focus`, `:disabled` | `caret` (paint), `field` (paint), `gutter` (paint), `line-number` (text) |
+| `Collapsible` | `:hover`, `:active`, `:focus`, `:disabled`, `:open`, `:expanded`, `:collapsed` | `header` (paint), `indicator` (paint), `scrollbar-thumb` (paint), `scrollbar-track` (paint), `body` (structural) |
+| `ContextMenu` | `:hover`, `:active`, `:focus`, `:disabled`, `:open`, `:expanded`, `:collapsed` | `item` (paint), `item-disabled` (paint), `item-hover` (paint), `menu` (paint) |
+| `DataFrameTable` | `:hover`, `:active`, `:focus`, `:disabled`, `:selected` | `grid-line` (paint), `header` (paint), `row` (paint), `row-selected` (paint), `scrollbar-thumb` (paint), `scrollbar-track` (paint) |
+| `DragNumber` | `:hover`, `:active`, `:focus`, `:disabled` | `field` (paint), `grip` (paint), `value` (text) |
+| `Dropdown` | `:hover`, `:active`, `:focus`, `:disabled`, `:open`, `:expanded`, `:collapsed` | `chevron` (paint), `field` (paint), `item` (paint), `item-hover` (paint), `item-selected` (paint), `menu` (paint) |
+| `HLayout` | `:hover`, `:active`, `:focus`, `:disabled` | `scrollbar-thumb` (paint), `scrollbar-track` (paint) |
+| `Heatmap` | `:hover`, `:active`, `:focus`, `:disabled` | `cell` (paint), `grid` (paint), `hover` (paint), `scalar-bar` (paint), `label` (text) |
+| `IconButton` | `:hover`, `:active`, `:focus`, `:disabled` | `icon` (paint) |
+| `LED` | `:hover`, `:active`, `:focus`, `:disabled` | `dot` (paint), `glow` (paint), `highlight` (paint) |
+| `LoadingSpinner` | `:hover`, `:active`, `:focus`, `:disabled` | `arc` (paint), `track` (paint), `label` (text) |
+| `LogView` | `:hover`, `:active`, `:focus`, `:disabled` | `debug` (text), `error` (text), `info` (text), `line` (text), `warning` (text) |
+| `Menu` | `:hover`, `:active`, `:focus`, `:disabled`, `:open`, `:expanded`, `:collapsed` | `item` (paint), `item-disabled` (paint), `item-hover` (paint), `menu` (paint) |
+| `Modal` | `:hover`, `:active`, `:focus`, `:disabled`, `:open`, `:expanded`, `:collapsed` | `body` (paint), `header` (paint), `scrim` (paint), `scrollbar-thumb` (paint), `scrollbar-track` (paint), `title` (text) |
+| `NavItem` | `:hover`, `:active`, `:focus`, `:disabled`, `:selected` | `accent` (paint), `badge` (paint), `item` (paint) |
+| `NumberInput` | `:hover`, `:active`, `:focus`, `:disabled` | `caret` (paint), `divider` (paint), `field` (paint), `stepper` (paint), `stepper-divider` (paint), `stepper-down` (paint), `stepper-up` (paint) |
+| `Page` | `:hover`, `:active`, `:focus`, `:disabled` | `scrollbar-thumb` (paint), `scrollbar-track` (paint) |
+| `Pages` | `:hover`, `:active`, `:focus`, `:disabled` | `scrollbar-thumb` (paint), `scrollbar-track` (paint) |
+| `Pane` | `:hover`, `:active`, `:focus`, `:disabled` | `pane` (structural) |
+| `Panel` | `:hover`, `:active`, `:focus`, `:disabled` | `accent` (paint), `body` (paint), `header` (paint), `scrollbar-thumb` (paint), `scrollbar-track` (paint), `title` (text) |
+| `PieChart` | `:hover`, `:active`, `:focus`, `:disabled` | `label` (text) |
+| `ProgressBar` | `:hover`, `:active`, `:focus`, `:disabled` | `fill` (paint), `track` (paint), `label` (text) |
+| `RadioButton` | `:hover`, `:active`, `:focus`, `:disabled`, `:checked` | `dot` (paint), `indicator` (paint), `label` (text) |
+| `RangeSlider` | `:hover`, `:active`, `:focus`, `:disabled` | `range` (paint), `thumb-max` (paint), `thumb-min` (paint), `track` (paint), `label` (text) |
+| `ScrollArea` | `:hover`, `:active`, `:focus`, `:disabled` | `scrollbar-thumb` (paint), `scrollbar-track` (paint) |
+| `SearchBox` | `:hover`, `:active`, `:focus`, `:disabled` | `clear` (forwarded), `field` (forwarded), `icon` (forwarded) |
+| `Selectable` | `:hover`, `:active`, `:focus`, `:disabled`, `:selected` | `indicator` (paint), `row` (paint), `label` (text) |
+| `Sidebar` | `:hover`, `:active`, `:focus`, `:disabled` | `body` (paint), `header` (paint), `scrollbar-thumb` (paint), `scrollbar-track` (paint), `title` (text) |
+| `Slider` | `:hover`, `:active`, `:focus`, `:disabled` | `fill` (paint), `thumb` (paint), `track` (paint) |
+| `SmallButton` | `:hover`, `:active`, `:focus`, `:disabled` | `badge` (paint) |
+| `Splitter` | `:hover`, `:active`, `:focus`, `:disabled` | `gutter` (paint) |
+| `Tab` | `:hover`, `:active`, `:focus`, `:disabled`, `:selected` | `accent` (paint), `badge` (paint), `tab` (paint) |
+| `Tabs` | `:hover`, `:active`, `:focus`, `:disabled` | `header` (paint) |
+| `ToggleSwitch` | `:hover`, `:active`, `:focus`, `:disabled`, `:checked` | `row` (paint), `thumb` (paint), `track` (paint), `label` (text) |
+| `TreeNode` | `:hover`, `:active`, `:focus`, `:disabled`, `:open`, `:expanded`, `:collapsed` | `guide` (paint), `indicator` (paint), `row` (paint), `label` (text) |
+| `VLayout` | `:hover`, `:active`, `:focus`, `:disabled` | `scrollbar-thumb` (paint), `scrollbar-track` (paint) |
+| `Window` | `:hover`, `:active`, `:focus`, `:disabled` | `close` (forwarded), `maximize` (forwarded), `minimize` (forwarded), `title` (forwarded), `titlebar` (forwarded), `resize-border` (structural) |
+
+<!-- END GENERATED WIDGET CSS CAPABILITIES -->
 
 Widgets without parts still support normal type/class/id CSS styling.
 

@@ -790,6 +790,130 @@
     "manual": true
   },
   {
+    "id": "client-window-chrome",
+    "name": "Client Window Chrome",
+    "script": "examples/client_window_chrome_demo.py",
+    "category": "layout",
+    "features": [
+      "Window::titlebar",
+      "Window::title",
+      "Window::minimize",
+      "Window::maximize",
+      "Window::close",
+      "Window::resize-border",
+      "DPI scaling"
+    ],
+    "sizes": [[720, 520], [940, 620], [1280, 800]],
+    "scales": [1.0, 1.5, 2.0],
+    "resize_checkpoints": [[720, 520], [940, 620]],
+    "manual": true,
+    "notes": "Automated captures cover retained-chrome geometry at three viewports and DPI scales. Companion Windows targets cover pointer and keyboard maximize/restore, keyboard traversal/activation, and the Alt+Space system-menu path. Title dragging, edge/corner resize gestures, double-click/right-click, minimize/close, and off-Windows behavior remain in the platform matrix."
+  },
+  {
+    "id": "client-window-chrome-maximized",
+    "name": "Client Window Chrome - Maximized",
+    "script": "examples/client_window_chrome_demo.py",
+    "category": "layout",
+    "features": [
+      "Window::maximize",
+      "Window[window-state=\"maximized\"]",
+      "retained chrome input"
+    ],
+    "sizes": [[940, 620]],
+    "scales": [1.0],
+    "manual": true,
+    "strict_css": true,
+    "states": [
+      {
+        "name": "maximized",
+        "actions": ["click:#client-chrome-window--dg-window-maximize"]
+      }
+    ],
+    "notes": "Synthetic native pointer input verifies that the retained maximize control enters the maximized state and activates the state-specific CSS selector. Companion targets cover restore and additional Windows input parity."
+  },
+  {
+    "id": "client-window-chrome-transitions",
+    "name": "Client Window Chrome - State Transitions",
+    "script": "examples/client_window_chrome_demo.py",
+    "category": "layout",
+    "features": [
+      "Window::maximize",
+      "maximize/restore",
+      "Win32 state assertions"
+    ],
+    "sizes": [[940, 620]],
+    "scales": [1.0],
+    "manual": true,
+    "states": [
+      {
+        "name": "button-restore",
+        "actions": [
+          "click:#client-chrome-window--dg-window-maximize",
+          "assert-window-state:maximized",
+          "click:#client-chrome-window--dg-window-maximize",
+          "assert-window-state:normal"
+        ]
+      }
+    ],
+    "notes": "Native Windows pointer input plus Win32 IsZoomed assertions verify maximize/restore through the retained button. A companion target covers keyboard activation, focus traversal, and the Alt+Space system-menu path."
+  },
+  {
+    "id": "client-window-chrome-windows-input",
+    "name": "Client Window Chrome - Windows Input Parity",
+    "script": "examples/client_window_chrome_demo.py",
+    "category": "layout",
+    "features": [
+      "keyboard focus traversal",
+      "Enter/Space activation",
+      "Alt+Space system menu",
+      "Win32 outcome assertions"
+    ],
+    "sizes": [[940, 620]],
+    "scales": [1.0],
+    "manual": false,
+    "states": [
+      {
+        "name": "keyboard-traversal",
+        "actions": [
+          "native-click:#client-chrome-app-button",
+          "assert-focus:#client-chrome-app-button",
+          "key:tab",
+          "assert-focus:#client-chrome-window--dg-window-minimize",
+          "key:tab",
+          "assert-focus:#client-chrome-window--dg-window-maximize",
+          "key:tab",
+          "assert-focus:#client-chrome-window--dg-window-close",
+          "key:tab",
+          "assert-focus:#client-chrome-checkbox"
+        ]
+      },
+      {
+        "name": "keyboard-maximize-restore",
+        "actions": [
+          "native-click:#client-chrome-app-button",
+          "key:tab",
+          "key:tab",
+          "assert-focus:#client-chrome-window--dg-window-maximize",
+          "key:enter",
+          "assert-window-state:maximized",
+          "key:space",
+          "assert-window-state:normal"
+        ]
+      },
+      {
+        "name": "alt-space-system-menu",
+        "actions": [
+          "native-click:#client-chrome-app-button",
+          "key:alt-space",
+          "assert-system-menu:open",
+          "key:escape",
+          "assert-system-menu:closed"
+        ]
+      }
+    ],
+    "notes": "Outcome-checked Windows keyboard and system-menu coverage. Human testing remains required for title dragging, edge/corner resize gestures, titlebar double-click/right-click, minimize, and close."
+  },
+  {
     "id": "semantic-css-identity",
     "name": "Semantic CSS Identity Baseline",
     "script": "examples/css_feature_probes/semantic_css_identity_probe.py",
@@ -835,5 +959,51 @@
     "resize_checkpoints": [[640, 480], [1024, 768]],
     "manual": false,
     "notes": "Phase 0 baseline for explicit responsive columns and optional final-row balancing."
+  },
+  {
+    "id": "icon-theme",
+    "name": "Application Icon Theme",
+    "script": "examples/icon_theme_demo.py",
+    "category": "css",
+    "features": ["IconButton", "IconResource", "IconStroke", "semantic icon aliases"],
+    "sizes": [[620, 320]],
+    "scales": [1.0, 1.5, 2.0],
+    "states": [
+      {"name": "default"},
+      {"name": "live-theme-swapped", "actions": ["click:#swap-icon-theme", "wait:200"]},
+      {"name": "live-icon-changed", "actions": ["click:#change-icon-identity", "wait:200"]}
+    ],
+    "manual": false,
+    "strict_css": true,
+    "notes": "Phase 9 regression for resource-backed monochrome icon overrides and built-in fallback."
+  },
+  {
+    "id": "background-patterns",
+    "name": "Procedural Background Patterns",
+    "script": "examples/css_feature_probes/background_patterns_probe.py",
+    "category": "css",
+    "features": ["dg-pattern", "checker", "pinstripe", "dot", "stipple", "diagonal-hatch", "rounded clipping", "transforms"],
+    "sizes": [[760, 470]],
+    "scales": [1.0, 1.5, 2.0],
+    "manual": false,
+    "strict_css": true,
+    "notes": "Phase 10.1 regression for bounded one-instance procedural background paints."
+  },
+  {
+    "id": "managed-background-images",
+    "name": "Managed Application Background Images",
+    "script": "examples/css_feature_probes/managed_background_images_probe.py",
+    "category": "css",
+    "features": ["app-resource", "contain", "cover", "stretch", "repeat", "rounded clipping", "child paint order"],
+    "sizes": [[760, 470]],
+    "scales": [1.0, 1.5, 2.0],
+    "states": [
+      {"name": "default"},
+      {"name": "live-replaced", "actions": ["click:#replace-resource", "wait:200"]},
+      {"name": "live-released", "actions": ["click:#release-resource", "wait:200"]}
+    ],
+    "manual": false,
+    "strict_css": true,
+    "notes": "Phase 10.2 regression for app-owned encoded PNG/JPEG resources and bounded background sampling."
   }
 ]

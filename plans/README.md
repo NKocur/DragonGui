@@ -23,8 +23,10 @@ full widget system exists.
 Working note:
 
 - [DragonSci Inventory](./dragonsci-inventory.md)
+- [CATHODE-7 Performance Profiling and Remediation](./cathode-performance-remediation.md)
 - [Layout System Remediation](./layout-system-remediation.md)
 - [Layout and Styling Evolution](./layout-styling-evolution.md)
+- [Runtime Startup and Backpressure Remediation](./runtime-startup-backpressure-remediation.md)
 
 ## Current Status
 

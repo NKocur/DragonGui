@@ -29,6 +29,13 @@ width is 340 logical pixels, it shrinks to a 180-pixel minimum, and
 intrinsic starting size, `max_width` to cap growth, and `clearable=False` to
 release the clear-button slot. Inline `style` sizing overrides these defaults.
 
+`IconButton` uses semantic native-vector names. `resolve_icon(name)` reports
+the canonical built-in identity, alias use, and whether the request will fall
+back to `more`; `BUILTIN_ICONS` and `ICON_ALIASES` expose the current catalog.
+Use `IconResource` and `IconStroke` with `App.set_icon_theme()` to replace
+monochrome geometry before startup or live while retaining CSS tint and
+layout. Live `IconButton.set_icon()` changes use the same retained registry.
+
 ## Data And Visualization
 
 - `DataFrameTable`

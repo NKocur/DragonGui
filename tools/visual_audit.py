@@ -197,7 +197,20 @@ def target_states(target: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def validate_state_action(action: str) -> None:
-    if re.fullmatch(r"(?:click|hover):#[A-Za-z_][A-Za-z0-9_.:-]*", action):
+    if re.fullmatch(
+        r"(?:click|native-click|right-click|hover):#[A-Za-z_][A-Za-z0-9_.:-]*",
+        action,
+    ):
+        return
+    if re.fullmatch(r"assert-window-state:(?:normal|maximized|minimized)", action):
+        return
+    if re.fullmatch(r"set-window-state:normal", action):
+        return
+    if re.fullmatch(r"assert-focus:#[A-Za-z_][A-Za-z0-9_.:-]*", action):
+        return
+    if re.fullmatch(r"assert-system-menu:(?:open|closed)", action):
+        return
+    if re.fullmatch(r"key:(?:tab|enter|space|escape|alt-space)", action):
         return
     if re.fullmatch(r"type:#[A-Za-z_][A-Za-z0-9_.:-]*=.+", action):
         return
@@ -472,6 +485,7 @@ def run_target(
             "scale": float(scale_factor),
             "screenshot": None,
             "snapshot": None,
+            "error": None,
             "diagnostic_counts": {},
         }
         if run_result["screenshot"]:
@@ -482,6 +496,15 @@ def run_target(
             snapshot_artifact = relative_artifact(snapshot_path, out_dir)
             result["snapshots"].append(snapshot_artifact)
             capture_record["snapshot"] = snapshot_artifact
+            capture_error = snapshot_capture_error(snapshot_path)
+            if capture_error:
+                capture_record["error"] = capture_error
+                capture_record["diagnostic_counts"]["capture-error"] = 1
+                run_result["status"] = "fail"
+                run_result["notes"] = combine_notes(
+                    run_result["notes"],
+                    f"Capture action or snapshot failed: {capture_error}",
+                )
             screenshot_artifact = (
                 relative_artifact(screenshot_path, out_dir)
                 if run_result["screenshot"]
@@ -678,6 +701,15 @@ def unmatched_user_selectors(snapshot_path: Path) -> list[str]:
             if isinstance(selector, str) and selector
         }
     )
+
+
+def snapshot_capture_error(snapshot_path: Path) -> str | None:
+    try:
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    error = snapshot.get("error") if isinstance(snapshot, dict) else None
+    return error.strip() if isinstance(error, str) and error.strip() else None
 
 
 def _snapshot_rect(value: object) -> tuple[float, float, float, float] | None:
@@ -2004,24 +2036,118 @@ def _audited_run(self, window):
         ctypes.windll.user32.EnumWindows(callback_type(callback), 0)
         return found[0] if found else None
 
-    def pointer_action(selector, click=False):
+    def pointer_action(selector, click_count=0, button="left", post_message=False):
         if os.name != "nt":
             return False
-        snapshot = self.debug_snapshot(timeout_ms=3000)
+        snapshot = debug_snapshot_with_retry()
         rect = snapshot.get("gpu", {{}}).get("layout", {{}}).get("rects", {{}}).get(selector.lstrip("#"))
         hwnd = current_window_handle()
         if not isinstance(rect, dict) or not hwnd:
             return False
-        point = wintypes.POINT(
-            round(float(rect.get("x", 0)) + float(rect.get("w", 0)) * 0.5),
-            round(float(rect.get("y", 0)) + float(rect.get("h", 0)) * 0.5),
-        )
+        client_x = round(float(rect.get("x", 0)) + float(rect.get("w", 0)) * 0.5)
+        client_y = round(float(rect.get("y", 0)) + float(rect.get("h", 0)) * 0.5)
+        point = wintypes.POINT(client_x, client_y)
         ctypes.windll.user32.ClientToScreen(hwnd, ctypes.byref(point))
+        ctypes.windll.user32.SetForegroundWindow(hwnd)
         ctypes.windll.user32.SetCursorPos(point.x, point.y)
-        if click:
-            ctypes.windll.user32.mouse_event(0x0002, 0, 0, 0, 0)
-            ctypes.windll.user32.mouse_event(0x0004, 0, 0, 0, 0)
+        if click_count:
+            if post_message:
+                down_message, up_message, down_wparam = (
+                    (0x0204, 0x0205, 0x0002)
+                    if button == "right"
+                    else (0x0201, 0x0202, 0x0001)
+                )
+                packed_point = (
+                    (int(client_y) & 0xFFFF) << 16
+                ) | (int(client_x) & 0xFFFF)
+                ctypes.windll.user32.PostMessageW(hwnd, 0x0200, 0, packed_point)
+                for index in range(click_count):
+                    ctypes.windll.user32.PostMessageW(
+                        hwnd, down_message, down_wparam, packed_point
+                    )
+                    ctypes.windll.user32.PostMessageW(
+                        hwnd, up_message, 0, packed_point
+                    )
+                    if index + 1 < click_count:
+                        time.sleep(0.12)
+                return True
+            down_flag, up_flag = (
+                (0x0008, 0x0010) if button == "right" else (0x0002, 0x0004)
+            )
+            interval_ms = min(
+                max(int(ctypes.windll.user32.GetDoubleClickTime()) // 3, 100),
+                200,
+            )
+            for index in range(click_count):
+                ctypes.windll.user32.mouse_event(down_flag, 0, 0, 0, 0)
+                ctypes.windll.user32.mouse_event(up_flag, 0, 0, 0, 0)
+                if index + 1 < click_count:
+                    time.sleep(interval_ms / 1000.0)
         return True
+
+    def key_action(name):
+        if os.name != "nt":
+            return False
+        hwnd = current_window_handle()
+        if not hwnd:
+            return False
+        ctypes.windll.user32.SetForegroundWindow(hwnd)
+        key_codes = {{
+            "tab": 0x09,
+            "enter": 0x0D,
+            "space": 0x20,
+            "escape": 0x1B,
+        }}
+        if name == "alt-space":
+            ctypes.windll.user32.PostMessageW(hwnd, 0x0104, 0x12, 0x20000001)
+            ctypes.windll.user32.PostMessageW(hwnd, 0x0104, 0x20, 0x20390001)
+            ctypes.windll.user32.PostMessageW(hwnd, 0x0105, 0x20, 0xE0390001)
+            ctypes.windll.user32.PostMessageW(hwnd, 0x0105, 0x12, 0xC0000001)
+            return True
+        virtual_key = key_codes.get(name)
+        if virtual_key is None:
+            return False
+        if name == "escape":
+            # A native system-menu loop owns keyboard dispatch while it is open.
+            # WM_CANCELMODE reaches that loop reliably from the audit worker,
+            # whereas a posted WM_KEYDOWN remains queued on the client window.
+            ctypes.windll.user32.PostMessageW(hwnd, 0x001F, 0, 0)
+        ctypes.windll.user32.PostMessageW(hwnd, 0x0100, virtual_key, 0x00000001)
+        ctypes.windll.user32.PostMessageW(hwnd, 0x0101, virtual_key, 0xC0000001)
+        return True
+
+    def window_system_menu_open(hwnd):
+        class GuiThreadInfo(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wintypes.DWORD),
+                ("flags", wintypes.DWORD),
+                ("hwndActive", wintypes.HWND),
+                ("hwndFocus", wintypes.HWND),
+                ("hwndCapture", wintypes.HWND),
+                ("hwndMenuOwner", wintypes.HWND),
+                ("hwndMoveSize", wintypes.HWND),
+                ("hwndCaret", wintypes.HWND),
+                ("rcCaret", wintypes.RECT),
+            ]
+        process_id = wintypes.DWORD()
+        thread_id = ctypes.windll.user32.GetWindowThreadProcessId(
+            hwnd, ctypes.byref(process_id)
+        )
+        info = GuiThreadInfo()
+        info.cbSize = ctypes.sizeof(GuiThreadInfo)
+        if not ctypes.windll.user32.GetGUIThreadInfo(thread_id, ctypes.byref(info)):
+            raise RuntimeError("GetGUIThreadInfo failed while checking the system menu")
+        return bool(info.flags & (0x0004 | 0x0008)) and bool(info.hwndMenuOwner)
+
+    def debug_snapshot_with_retry():
+        last_error = None
+        for _attempt in range(2):
+            try:
+                return self.debug_snapshot(timeout_ms=3000)
+            except RuntimeError as exc:
+                last_error = exc
+                time.sleep(0.15)
+        raise last_error
 
     def initialize_route(route):
         if not route:
@@ -2046,7 +2172,7 @@ def _audited_run(self, window):
             return
         command, payload = action.split(":", 1)
         if command == "hover":
-            if not pointer_action(payload, click=False):
+            if not pointer_action(payload):
                 raise RuntimeError(f"could not hover visual audit target {{payload}}")
             time.sleep(0.65)
             return
@@ -2060,10 +2186,81 @@ def _audited_run(self, window):
             )
             if callable(callback):
                 callback()
-            elif not pointer_action(payload, click=True):
-                raise RuntimeError(f"visual audit click target {{payload}} is not clickable")
+            elif not pointer_action(payload, click_count=1):
+                raise RuntimeError(f"visual audit {{command}} target {{payload}} is not clickable")
             time.sleep(0.15)
             return
+        if command == "native-click":
+            if not pointer_action(payload, click_count=1, post_message=True):
+                raise RuntimeError(f"could not native-click visual audit target {{payload}}")
+            time.sleep(0.2)
+            return
+        if command == "right-click":
+            if not pointer_action(
+                payload, click_count=1, button="right", post_message=True
+            ):
+                raise RuntimeError(f"could not right-click visual audit target {{payload}}")
+            time.sleep(0.15)
+            return
+        if command == "key":
+            if not key_action(payload):
+                raise RuntimeError(f"could not send visual audit key {{payload!r}}")
+            time.sleep(0.15)
+            return
+        if command == "assert-focus":
+            snapshot = debug_snapshot_with_retry()
+            focused = snapshot.get("gpu", {{}}).get("state", {{}}).get("focused")
+            expected = payload.lstrip("#")
+            if focused != expected:
+                raise RuntimeError(
+                    f"expected focus {{expected!r}}, observed {{focused!r}}"
+                )
+            return
+        if command == "assert-system-menu":
+            if os.name != "nt":
+                raise RuntimeError("assert-system-menu currently requires Windows")
+            hwnd = current_window_handle()
+            if not hwnd:
+                raise RuntimeError("assert-system-menu could not find the DragonGUI window")
+            actual_open = window_system_menu_open(hwnd)
+            expected_open = payload == "open"
+            if actual_open != expected_open:
+                actual = "open" if actual_open else "closed"
+                raise RuntimeError(
+                    f"expected system menu {{payload!r}}, observed {{actual!r}}"
+                )
+            return
+        if command == "assert-window-state":
+            if os.name != "nt":
+                raise RuntimeError("assert-window-state currently requires Windows")
+            hwnd = current_window_handle()
+            if not hwnd:
+                raise RuntimeError("assert-window-state could not find the DragonGUI window")
+            deadline = time.monotonic() + 3.0
+            actual = None
+            while time.monotonic() < deadline:
+                minimized = bool(ctypes.windll.user32.IsIconic(hwnd))
+                maximized = bool(ctypes.windll.user32.IsZoomed(hwnd))
+                actual = "minimized" if minimized else ("maximized" if maximized else "normal")
+                if actual == payload:
+                    return
+                time.sleep(0.025)
+            raise RuntimeError(
+                f"expected window state {{payload!r}}, observed {{actual!r}}"
+            )
+        if command == "set-window-state":
+            if os.name != "nt" or payload != "normal":
+                raise RuntimeError("set-window-state:normal currently requires Windows")
+            hwnd = current_window_handle()
+            if not hwnd:
+                raise RuntimeError("set-window-state could not find the DragonGUI window")
+            ctypes.windll.user32.ShowWindow(hwnd, 9)
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline:
+                if not ctypes.windll.user32.IsIconic(hwnd) and not ctypes.windll.user32.IsZoomed(hwnd):
+                    return
+                time.sleep(0.025)
+            raise RuntimeError("window did not return to normal state")
         selector, value = payload.split("=", 1)
         widget = find_widget(selector)
         if widget is None:
@@ -2284,7 +2481,10 @@ def move_window(hwnd: int, width: int, height: int) -> None:
 def capture_window(rect: tuple[int, int, int, int], path: Path) -> bool:
     from PIL import ImageGrab
 
-    image = ImageGrab.grab(bbox=rect, all_screens=True)
+    try:
+        image = ImageGrab.grab(bbox=rect, all_screens=True)
+    except OSError:
+        return False
     path.parent.mkdir(parents=True, exist_ok=True)
     image.save(path)
     return path.exists()

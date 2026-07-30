@@ -7,10 +7,21 @@
     --dg-space-md: 10px;
     --dg-space-lg: 15px;
     --dg-space-xl: 20px;
+    --dg-font-family: sans-serif;
+    --dg-monospace-font-family: "Consolas", monospace;
+    --dg-line-height: 1.384615;
+    --dg-control-height: 25px;
+    --dg-compact-control-height: 22px;
+    --dg-border-width: 1px;
+    --dg-focus-width: 2px;
+    --dg-focus-offset: 1px;
+    --dg-panel-padding: 7px;
+    --dg-toolbar-gap: 6px;
 }
 
 Window {
     background: background;
+    font-family: var(--dg-font-family);
 }
 
 Panel,
@@ -18,7 +29,7 @@ Collapsible,
 Tooltip,
 Modal {
     background: surface;
-    border: 1px solid border;
+    border: var(--dg-border-width) solid border;
     border-radius: var(--dg-radius);
     accent: accent;
 }
@@ -36,7 +47,7 @@ MenuBar,
 Tabs {
     background: background;
     border-color: border;
-    border-width: 1px;
+    border-width: var(--dg-border-width);
 }
 
 StatusBar,
@@ -53,7 +64,7 @@ Heatmap,
 Scatter3D {
     background: border;
     border-color: border;
-    border-width: 1px;
+    border-width: var(--dg-border-width);
 }
 
 Button,
@@ -63,7 +74,7 @@ ImageButton,
 ArrowButton,
 Dropdown {
     background: surface_alt;
-    border: 1px solid border;
+    border: var(--dg-border-width) solid border;
     border-radius: var(--dg-radius);
     accent: accent;
     color: text;
@@ -72,7 +83,7 @@ Dropdown {
 
 Selectable {
     background: transparent;
-    border: 1px solid transparent;
+    border: var(--dg-border-width) solid transparent;
     border-radius: var(--dg-radius);
     accent: accent;
     color: text;
@@ -80,7 +91,7 @@ Selectable {
 
 RadioButton {
     background: transparent;
-    border: 1px solid transparent;
+    border: var(--dg-border-width) solid transparent;
     border-radius: var(--dg-radius);
     accent: accent;
     color: text;
@@ -93,7 +104,7 @@ TreeView {
 
 TreeNode {
     background: transparent;
-    border: 1px solid transparent;
+    border: var(--dg-border-width) solid transparent;
     border-radius: 2px;
     accent: accent;
     color: text;
@@ -106,15 +117,15 @@ Tag {
 }
 
 SmallButton {
-    height: 22px;
+    height: var(--dg-compact-control-height);
     padding: 2px 7px;
 }
 
 IconButton,
 ImageButton,
 ArrowButton {
-    width: 25px;
-    height: 25px;
+    width: var(--dg-control-height);
+    height: var(--dg-control-height);
     padding: 3px;
 }
 
@@ -156,6 +167,8 @@ LogView:focus,
 NumberInput:focus,
 DragNumber:focus {
     border-color: focus;
+    outline: var(--dg-focus-width) solid focus;
+    outline-offset: var(--dg-focus-offset);
 }
 
 Button:active,
@@ -220,7 +233,7 @@ LogView,
 NumberInput,
 DragNumber {
     background: surface;
-    border: 1px solid border;
+    border: var(--dg-border-width) solid border;
     border-radius: var(--dg-radius);
     accent: accent;
     color: text;
@@ -237,12 +250,12 @@ DragNumber:hover {
 }
 
 CodeEditor {
-    font-family: "Consolas";
+    font-family: var(--dg-monospace-font-family);
     font-size: 12px;
 }
 
 LogView {
-    font-family: "Consolas";
+    font-family: var(--dg-monospace-font-family);
     font-size: 12px;
 }
 
@@ -278,7 +291,7 @@ RangeSlider {
 
 ProgressBar,
 Image {
-    border: 1px solid border;
+    border: var(--dg-border-width) solid border;
     border-radius: var(--dg-radius);
     accent: accent;
 }
@@ -290,7 +303,7 @@ LoadingSpinner {
 
 DropTarget.drop-zone {
     background: surface_alt;
-    border: 1px solid border;
+    border: var(--dg-border-width) solid border;
     border-radius: var(--dg-radius);
     color: text;
 }
@@ -381,7 +394,7 @@ Menu:open {
 Menu::menu,
 ContextMenu::menu {
     background: surface;
-    border: 1px solid border;
+    border: var(--dg-border-width) solid border;
     border-radius: var(--dg-radius);
 }
 
@@ -403,7 +416,7 @@ ContextMenu::item-disabled {
 
 DataFrameTable {
     background: surface;
-    border: 1px solid border;
+    border: var(--dg-border-width) solid border;
     border-radius: var(--dg-radius);
     color: text;
     table-header-height: 24px;
@@ -498,9 +511,10 @@ WorkbenchMain {
 
 .toolbar {
     background: surface;
-    border: 1px solid border;
+    border: var(--dg-border-width) solid border;
     border-radius: var(--dg-radius);
     padding: 3px;
+    gap: var(--dg-toolbar-gap);
     flex-grow: 0;
     flex-shrink: 0;
     min-width: 0;

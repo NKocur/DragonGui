@@ -529,7 +529,7 @@ fn parse_css_hex_color(value: &str) -> Option<Color> {
 }
 
 /// Design-token set for primitive and text drawing.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Theme {
     /// Window / outermost background.
     pub background: Color,
@@ -561,6 +561,26 @@ pub struct Theme {
     pub spacing: f32,
     /// Base font size in logical pixels.
     pub font_size: f32,
+    /// Ordered CSS font-family stack for application text.
+    pub font_family: String,
+    /// Ordered CSS font-family stack for code and log text.
+    pub monospace_font_family: String,
+    /// Unitless default line-height multiplier.
+    pub base_line_height: f32,
+    /// Standard control height in logical pixels.
+    pub control_height: f32,
+    /// Compact control height in logical pixels.
+    pub compact_control_height: f32,
+    /// Default framework border width in logical pixels.
+    pub default_border_width: f32,
+    /// Default keyboard focus outline width in logical pixels.
+    pub focus_width: f32,
+    /// Default keyboard focus outline offset in logical pixels.
+    pub focus_offset: f32,
+    /// Default titled-panel inset in logical pixels.
+    pub panel_padding: f32,
+    /// Default gap between toolbar items in logical pixels.
+    pub toolbar_gap: f32,
 }
 
 impl Theme {
@@ -581,11 +601,21 @@ impl Theme {
             radius: 3.0,
             spacing: 5.0,
             font_size: 13.0,
+            font_family: "sans-serif".to_string(),
+            monospace_font_family: "Consolas, monospace".to_string(),
+            base_line_height: 18.0 / 13.0,
+            control_height: 25.0,
+            compact_control_height: 22.0,
+            default_border_width: 1.0,
+            focus_width: 2.0,
+            focus_offset: 1.0,
+            panel_padding: 7.0,
+            toolbar_gap: 6.0,
         }
     }
 
     pub fn control_height(&self) -> f32 {
-        (self.font_size + self.spacing * 2.0 + 2.0).max(25.0)
+        self.control_height.max(1.0)
     }
 
     /// Extra-small spacing token.
@@ -667,7 +697,16 @@ mod tests {
         assert_eq!(theme.radius, 3.0);
         assert_eq!(theme.spacing, 5.0);
         assert_eq!(theme.font_size, 13.0);
+        assert_eq!(theme.font_family, "sans-serif");
+        assert_eq!(theme.monospace_font_family, "Consolas, monospace");
+        assert_eq!(theme.base_line_height, 18.0 / 13.0);
         assert_eq!(theme.control_height(), 25.0);
+        assert_eq!(theme.compact_control_height, 22.0);
+        assert_eq!(theme.default_border_width, 1.0);
+        assert_eq!(theme.focus_width, 2.0);
+        assert_eq!(theme.focus_offset, 1.0);
+        assert_eq!(theme.panel_padding, 7.0);
+        assert_eq!(theme.toolbar_gap, 6.0);
         assert_eq!(theme.space_xs(), 2.5);
         assert_eq!(theme.space_sm(), 5.0);
         assert_eq!(theme.space_md(), 10.0);

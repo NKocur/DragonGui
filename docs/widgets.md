@@ -107,7 +107,14 @@ Helper builders:
 | `Tag(text, level="neutral")` | Compact bordered status label with the same API as `Badge`. |
 | `LED(state=False, states=None, on_color="success", off_color="disabled", size=14)` | Compact status light. Boolean state maps to `on`/`off`; string state names resolve through `states`. Supports `set_state()`, `set_on()`, `set_color()`, and `set_size()`. |
 | `Button(text, on_click=None, badge=None, disabled=False)` | Clickable button. Emits `click` when `on_click` is supplied and not disabled. `click()` invokes the Python callback directly. Optional badge supports `set_badge(value)`. |
+| `IconButton(icon, on_click=None, disabled=False, size=None, width=None, height=None)` | Compact button using a semantic native vector icon. Use `resolve_icon(name)` to inspect canonical aliases and fallback behavior; unknown names render the built-in `more` glyph. Supports live `set_icon(name)` and `IconButton::icon`. |
 | `TextInput(value="", placeholder="", on_change=None, disabled=False)` | Editable text field. `set_value(value)` updates text. |
+
+Application icon geometry can be replaced before startup or live with
+`App.set_icon_theme({"search": IconResource([...])})`. The bounded monochrome
+resource uses `IconStroke` polylines; CSS continues to own tint, state, size,
+and spacing. Live `IconButton.set_icon()` changes are reconciled against the
+same retained registry. See `examples/icon_theme_demo.py`.
 | `SearchBox(value="", placeholder="Search...", width=340, min_width=180, max_width=None, grow=False, shrink=True, clearable=True)` | Composite search field with fixed search/clear chrome and a flexible inner input. It uses a 340-pixel standalone preferred width, shrinks safely to 180 pixels, and fills remaining toolbar or row space with `grow=True`. `clearable=False` releases the clear-button slot. Explicit `style` sizing remains authoritative. |
 | `TextArea(value="", placeholder="", rows=4, wrap=True, on_change=None, disabled=False)` | Editable multiline text field. Newlines are preserved; `rows` controls preferred height; overflow scrolls inside the field; `wrap` controls long-line wrapping. `set_value(value)` updates text. |
 | `Checkbox(label, checked=False, on_change=None, disabled=False)` | Boolean control. `set_checked(checked)` updates state. Supports `Checkbox::row`, `box`, `indicator`, and `label`. |
@@ -174,20 +181,57 @@ and `z`.
 These widgets expose named renderer parts for CSS selectors and inline
 `style={"parts": ...}` dictionaries.
 
-| Widget | Parts |
-| --- | --- |
-| `Panel` | `accent` |
-| `Collapsible` | `header`, `indicator`, `body` |
-| `Button` | `badge` |
-| `NumberInput` | `field`, `stepper`, `stepper-up`, `stepper-down`, `stepper-divider`, `divider`, `caret` |
-| `Dropdown` | `field`, `chevron`, `menu`, `item`, `item-selected`, `item-hover` |
-| `Checkbox` | `row`, `box`, `indicator`, `label` |
-| `Slider` | `track`, `fill`, `thumb` |
-| `ProgressBar` | `track`, `fill`, `label` |
-| `Tabs` | `header` (opt-in strip/divider; unstyled tabs do not paint a header box) |
-| `Tab` | `tab`, `accent`, `badge` |
-| `NavItem` | `item`, `accent`, `badge` |
-| `DataFrameTable` | `header`, `row`, `row-selected`, `grid-line` |
+<!-- BEGIN GENERATED WIDGET CSS CAPABILITIES -->
+
+_Generated from `python/dragongui/widget_css_capabilities.json`. Do not edit this table manually._
+
+Global generated-content hooks: `::before`, `::after` (text renderer).
+
+| Widget | Supported states | Parts and renderer support |
+| --- | --- | --- |
+| `ArrowButton` | `:hover`, `:active`, `:focus`, `:disabled` | `icon` (paint) |
+| `BarChart` | `:hover`, `:active`, `:focus`, `:disabled` | `label` (text), `value-label` (text) |
+| `Button` | `:hover`, `:active`, `:focus`, `:disabled` | `badge` (paint) |
+| `Checkbox` | `:hover`, `:active`, `:focus`, `:disabled`, `:checked` | `box` (paint), `indicator` (paint), `row` (paint), `label` (text) |
+| `CodeEditor` | `:hover`, `:active`, `:focus`, `:disabled` | `caret` (paint), `field` (paint), `gutter` (paint), `line-number` (text) |
+| `Collapsible` | `:hover`, `:active`, `:focus`, `:disabled`, `:open`, `:expanded`, `:collapsed` | `header` (paint), `indicator` (paint), `scrollbar-thumb` (paint), `scrollbar-track` (paint), `body` (structural) |
+| `ContextMenu` | `:hover`, `:active`, `:focus`, `:disabled`, `:open`, `:expanded`, `:collapsed` | `item` (paint), `item-disabled` (paint), `item-hover` (paint), `menu` (paint) |
+| `DataFrameTable` | `:hover`, `:active`, `:focus`, `:disabled`, `:selected` | `grid-line` (paint), `header` (paint), `row` (paint), `row-selected` (paint), `scrollbar-thumb` (paint), `scrollbar-track` (paint) |
+| `DragNumber` | `:hover`, `:active`, `:focus`, `:disabled` | `field` (paint), `grip` (paint), `value` (text) |
+| `Dropdown` | `:hover`, `:active`, `:focus`, `:disabled`, `:open`, `:expanded`, `:collapsed` | `chevron` (paint), `field` (paint), `item` (paint), `item-hover` (paint), `item-selected` (paint), `menu` (paint) |
+| `HLayout` | `:hover`, `:active`, `:focus`, `:disabled` | `scrollbar-thumb` (paint), `scrollbar-track` (paint) |
+| `Heatmap` | `:hover`, `:active`, `:focus`, `:disabled` | `cell` (paint), `grid` (paint), `hover` (paint), `scalar-bar` (paint), `label` (text) |
+| `IconButton` | `:hover`, `:active`, `:focus`, `:disabled` | `icon` (paint) |
+| `LED` | `:hover`, `:active`, `:focus`, `:disabled` | `dot` (paint), `glow` (paint), `highlight` (paint) |
+| `LoadingSpinner` | `:hover`, `:active`, `:focus`, `:disabled` | `arc` (paint), `track` (paint), `label` (text) |
+| `LogView` | `:hover`, `:active`, `:focus`, `:disabled` | `debug` (text), `error` (text), `info` (text), `line` (text), `warning` (text) |
+| `Menu` | `:hover`, `:active`, `:focus`, `:disabled`, `:open`, `:expanded`, `:collapsed` | `item` (paint), `item-disabled` (paint), `item-hover` (paint), `menu` (paint) |
+| `Modal` | `:hover`, `:active`, `:focus`, `:disabled`, `:open`, `:expanded`, `:collapsed` | `body` (paint), `header` (paint), `scrim` (paint), `scrollbar-thumb` (paint), `scrollbar-track` (paint), `title` (text) |
+| `NavItem` | `:hover`, `:active`, `:focus`, `:disabled`, `:selected` | `accent` (paint), `badge` (paint), `item` (paint) |
+| `NumberInput` | `:hover`, `:active`, `:focus`, `:disabled` | `caret` (paint), `divider` (paint), `field` (paint), `stepper` (paint), `stepper-divider` (paint), `stepper-down` (paint), `stepper-up` (paint) |
+| `Page` | `:hover`, `:active`, `:focus`, `:disabled` | `scrollbar-thumb` (paint), `scrollbar-track` (paint) |
+| `Pages` | `:hover`, `:active`, `:focus`, `:disabled` | `scrollbar-thumb` (paint), `scrollbar-track` (paint) |
+| `Pane` | `:hover`, `:active`, `:focus`, `:disabled` | `pane` (structural) |
+| `Panel` | `:hover`, `:active`, `:focus`, `:disabled` | `accent` (paint), `body` (paint), `header` (paint), `scrollbar-thumb` (paint), `scrollbar-track` (paint), `title` (text) |
+| `PieChart` | `:hover`, `:active`, `:focus`, `:disabled` | `label` (text) |
+| `ProgressBar` | `:hover`, `:active`, `:focus`, `:disabled` | `fill` (paint), `track` (paint), `label` (text) |
+| `RadioButton` | `:hover`, `:active`, `:focus`, `:disabled`, `:checked` | `dot` (paint), `indicator` (paint), `label` (text) |
+| `RangeSlider` | `:hover`, `:active`, `:focus`, `:disabled` | `range` (paint), `thumb-max` (paint), `thumb-min` (paint), `track` (paint), `label` (text) |
+| `ScrollArea` | `:hover`, `:active`, `:focus`, `:disabled` | `scrollbar-thumb` (paint), `scrollbar-track` (paint) |
+| `SearchBox` | `:hover`, `:active`, `:focus`, `:disabled` | `clear` (forwarded), `field` (forwarded), `icon` (forwarded) |
+| `Selectable` | `:hover`, `:active`, `:focus`, `:disabled`, `:selected` | `indicator` (paint), `row` (paint), `label` (text) |
+| `Sidebar` | `:hover`, `:active`, `:focus`, `:disabled` | `body` (paint), `header` (paint), `scrollbar-thumb` (paint), `scrollbar-track` (paint), `title` (text) |
+| `Slider` | `:hover`, `:active`, `:focus`, `:disabled` | `fill` (paint), `thumb` (paint), `track` (paint) |
+| `SmallButton` | `:hover`, `:active`, `:focus`, `:disabled` | `badge` (paint) |
+| `Splitter` | `:hover`, `:active`, `:focus`, `:disabled` | `gutter` (paint) |
+| `Tab` | `:hover`, `:active`, `:focus`, `:disabled`, `:selected` | `accent` (paint), `badge` (paint), `tab` (paint) |
+| `Tabs` | `:hover`, `:active`, `:focus`, `:disabled` | `header` (paint) |
+| `ToggleSwitch` | `:hover`, `:active`, `:focus`, `:disabled`, `:checked` | `row` (paint), `thumb` (paint), `track` (paint), `label` (text) |
+| `TreeNode` | `:hover`, `:active`, `:focus`, `:disabled`, `:open`, `:expanded`, `:collapsed` | `guide` (paint), `indicator` (paint), `row` (paint), `label` (text) |
+| `VLayout` | `:hover`, `:active`, `:focus`, `:disabled` | `scrollbar-thumb` (paint), `scrollbar-track` (paint) |
+| `Window` | `:hover`, `:active`, `:focus`, `:disabled` | `close` (forwarded), `maximize` (forwarded), `minimize` (forwarded), `title` (forwarded), `titlebar` (forwarded), `resize-border` (structural) |
+
+<!-- END GENERATED WIDGET CSS CAPABILITIES -->
 
 Runtime `Toast` overlays and simple string `tooltip="..."` overlays do not have
 parts, but they can be styled with `Toast`, `Toast.error`, `Tooltip`, and

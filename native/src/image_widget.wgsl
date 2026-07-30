@@ -18,6 +18,9 @@ struct Instance {
     @location(2) radii: vec4<f32>,
     @location(3) transform: vec4<f32>, // x/y translation pixels, z/w scale
     @location(4) transform2: vec4<f32>, // x rotation radians
+    @location(5) clip_rect: vec4<f32>,
+    @location(6) params: vec4<f32>, // x opacity
+    @location(7) fallback: vec4<f32>,
 };
 
 struct VsOut {
@@ -26,6 +29,11 @@ struct VsOut {
     @location(1) local_px: vec2<f32>,
     @location(2) @interpolate(flat) half_size: vec2<f32>,
     @location(3) @interpolate(flat) radii: vec4<f32>,
+    @location(4) screen_px: vec2<f32>,
+    @location(5) @interpolate(flat) clip_rect: vec4<f32>,
+    @location(6) @interpolate(flat) opacity: f32,
+    @location(7) @interpolate(flat) contain: f32,
+    @location(8) @interpolate(flat) fallback: vec4<f32>,
 };
 
 @vertex
@@ -61,6 +69,11 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32, instance: Instance) -> VsOu
     out.local_px = corner * instance.rect.zw;
     out.half_size = instance.rect.zw * 0.5;
     out.radii = instance.radii;
+    out.screen_px = transformed_pixel;
+    out.clip_rect = instance.clip_rect;
+    out.opacity = instance.params.x;
+    out.contain = instance.params.y;
+    out.fallback = instance.fallback;
     return out;
 }
 
@@ -90,12 +103,26 @@ fn rounded_rect_sdf(p: vec2<f32>, half_size: vec2<f32>, radii: vec4<f32>) -> f32
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    let clip_end = in.clip_rect.xy + in.clip_rect.zw;
+    if (in.screen_px.x < in.clip_rect.x || in.screen_px.y < in.clip_rect.y ||
+        in.screen_px.x > clip_end.x || in.screen_px.y > clip_end.y) {
+        discard;
+    }
     let p = in.local_px - in.half_size;
     let sdf = rounded_rect_sdf(p, in.half_size, in.radii);
     let edge_alpha = clamp(1.0 - sdf, 0.0, 1.0);
     if (edge_alpha < 0.001) {
         discard;
     }
-    let tex = textureSample(image_texture, image_sampler, in.uv);
-    return vec4<f32>(tex.rgb, tex.a * edge_alpha);
+    let outside_image = in.uv.x < 0.0 || in.uv.y < 0.0 || in.uv.x > 1.0 || in.uv.y > 1.0;
+    var tex = textureSample(image_texture, image_sampler, in.uv);
+    if (in.contain > 0.5 && outside_image) {
+        tex = vec4<f32>(0.0);
+    }
+    let alpha = tex.a + in.fallback.a * (1.0 - tex.a);
+    var rgb = in.fallback.rgb;
+    if (alpha > 0.0001) {
+        rgb = (tex.rgb * tex.a + in.fallback.rgb * in.fallback.a * (1.0 - tex.a)) / alpha;
+    }
+    return vec4<f32>(rgb, alpha * edge_alpha * in.opacity);
 }
