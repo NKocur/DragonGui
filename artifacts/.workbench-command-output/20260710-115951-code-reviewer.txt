@@ -1,85 +1,0 @@
-artifacts/.workbench-command-output\20260709-232904-spec-writer.txt:301:.\docs\widgets-reference.md:1532:- `opacity`, `transform`, `translate`, `scale`, and `rotate` affect the border/background primitive only; the actual 3D viewport is layout-rect anchored and is not transformed or faded in this release.
-artifacts/.workbench-command-output\20260709-232904-spec-writer.txt:378:.\plans\V5\03-general-app-completeness.md:892:- [ ] CI or release gate runs `tools/smoke_css_demos.py --strict-layout`
-artifacts/.workbench-command-output\20260709-232904-spec-writer.txt:410:.\artifacts\TEST_RESULTS.md:225:4. Run full native tests before release or before broader layout changes.
-artifacts/.workbench-command-output\20260709-232904-spec-writer.txt:2056:.\plans\V2\scatter3d-completion-plan.md:390:is under the release point after a drag or layout change.
-artifacts/.workbench-command-output\20260709-232904-spec-writer.txt:4782:.\docs\dragon-gui-benchmark-audit.md:15:cargo test --release --manifest-path native\Cargo.toml bench_layout_many_controls --lib -- --ignored --nocapture
-artifacts/.workbench-command-output\20260709-232911-spec-writer-2.txt:1447:native\src\runtime.rs:20081:                            let released_scatter_pan = self.finish_scatter_pan(MouseButton::Left);
-artifacts/.workbench-command-output\20260709-232911-spec-writer.txt:195:If native code is edited and the Python extension must be used by the visual harness, rebuild/copy the native extension into `python/dragongui/_dragongui.pyd` using the existing repo workflow. Prior artifacts used `native/target/release/_dragongui.dll` copied to `python/dragongui/_dragongui.pyd`.
-artifacts/.workbench-command-output\20260709-232921-spec-writer.txt:24:- Rebuilt and copied `native/target/release/_dragongui.dll` to `python/dragongui/_dragongui.pyd`.
-artifacts/.workbench-command-output\20260709-233111-spec-writer.txt:172:Copy-Item native/target/release/_dragongui.dll python/dragongui/_dragongui.pyd -Force
-artifacts/.workbench-command-output\20260709-233129-code-implementer-2.txt:225:4. Run full native tests before release or before broader layout changes.
-artifacts/.workbench-command-output\20260709-233129-code-implementer.txt:172:Copy-Item native/target/release/_dragongui.dll python/dragongui/_dragongui.pyd -Force
-artifacts/.workbench-command-output\20260709-234132-test-writer-2.txt:225:4. Run full native tests before release or before broader layout changes.
-artifacts/.workbench-command-output\20260709-234132-test-writer.txt:172:Copy-Item native/target/release/_dragongui.dll python/dragongui/_dragongui.pyd -Force
-artifacts/.workbench-command-output\20260709-234351-test-writer.txt:164:1. Run full native tests before release or before merging a broader layout batch.
-artifacts/.workbench-command-output\20260709-234420-maintainability-reviewer.txt:319:            dg.Tag("release-candidate")
-artifacts/.workbench-command-output\20260709-234547-code-implementer-2.txt:172:Copy-Item native/target/release/_dragongui.dll python/dragongui/_dragongui.pyd -Force
-artifacts/.workbench-command-output\20260709-235313-code-implementer.txt:55:+  - `native/target/release/_dragongui.dll`
-artifacts/.workbench-command-output\20260709-235313-code-implementer.txt:56:+  - `python/dragongui/_dragongui.pyd`
-artifacts/.workbench-command-output\20260709-235409-maintainability-reviewer.txt:37:  - `native/target/release/_dragongui.dll`
-artifacts/.workbench-command-output\20260709-235409-maintainability-reviewer.txt:38:  - `python/dragongui/_dragongui.pyd`
-artifacts/.workbench-command-output\20260709-235536-code-implementer-2.txt:37:  - `native/target/release/_dragongui.dll`
-artifacts/.workbench-command-output\20260709-235536-code-implementer-2.txt:38:  - `python/dragongui/_dragongui.pyd`
-artifacts/.workbench-command-output\20260710-000012-code-implementer.txt:37:  - `native/target/release/_dragongui.dll`
-artifacts/.workbench-command-output\20260710-000012-code-implementer.txt:38:  - `python/dragongui/_dragongui.pyd`
-artifacts/.workbench-command-output\20260710-000101-maintainability-reviewer.txt:45:  - `native/target/release/_dragongui.dll`
-artifacts/.workbench-command-output\20260710-000101-maintainability-reviewer.txt:46:  - `python/dragongui/_dragongui.pyd`
-artifacts/.workbench-command-output\20260710-000209-code-reviewer-2.txt:172:Copy-Item native/target/release/_dragongui.dll python/dragongui/_dragongui.pyd -Force
-artifacts/.workbench-command-output\20260710-000209-code-reviewer.txt:45:  - `native/target/release/_dragongui.dll`
-artifacts/.workbench-command-output\20260710-000209-code-reviewer.txt:46:  - `python/dragongui/_dragongui.pyd`
-artifacts/.workbench-command-output\20260710-000210-code-reviewer.txt:164:1. Run full native tests before release or before merging a broader layout batch.
-artifacts/.workbench-command-output\20260710-000223-code-reviewer.txt:319:            dg.Tag("release-candidate")
-artifacts/.workbench-command-output\20260710-000248-code-reviewer.txt:11625:                        "text": "release-candidate",
-artifacts/.workbench-command-output\20260710-000411-code-implementer.txt:172:Copy-Item native/target/release/_dragongui.dll python/dragongui/_dragongui.pyd -Force
-artifacts/.workbench-command-output\20260710-000810-code-implementer.txt:45:  - `native/target/release/_dragongui.dll`
-artifacts/.workbench-command-output\20260710-000810-code-implementer.txt:46:  - `python/dragongui/_dragongui.pyd`
-artifacts/.workbench-command-output\20260710-000838-code-implementer.txt:79:+  - `native/target/release/_dragongui.dll`
-artifacts/.workbench-command-output\20260710-000838-code-implementer.txt:80:+  - `python/dragongui/_dragongui.pyd`
-artifacts/.workbench-command-output\20260710-000901-code-reviewer-2.txt:172:Copy-Item native/target/release/_dragongui.dll python/dragongui/_dragongui.pyd -Force
-artifacts/.workbench-command-output\20260710-000901-code-reviewer-3.txt:164:1. Run full native tests before release or before merging a broader layout batch.
-artifacts/.workbench-command-output\20260710-000901-code-reviewer.txt:49:  - `native/target/release/_dragongui.dll`
-artifacts/.workbench-command-output\20260710-000901-code-reviewer.txt:50:  - `python/dragongui/_dragongui.pyd`
-artifacts/.workbench-command-output\20260710-085515-spec-writer-2.txt:172:Copy-Item native/target/release/_dragongui.dll python/dragongui/_dragongui.pyd -Force
-artifacts/.workbench-command-output\20260710-085515-spec-writer.txt:549:plans\V1\06-packaging-release.md
-artifacts/.workbench-command-output\20260710-085621-spec-writer.txt:1193:docs\widgets-reference.md:1532:- `opacity`, `transform`, `translate`, `scale`, and `rotate` affect the border/background primitive only; the actual 3D viewport is layout-rect anchored and is not transformed or faded in this release.
-artifacts/.workbench-command-output\20260710-085814-spec-writer-2.txt:280: Copy-Item native/target/release/_dragongui.dll python/dragongui/_dragongui.pyd -Force
-artifacts/.workbench-command-output\20260710-085814-spec-writer.txt:166:Copy-Item native/target/release/_dragongui.dll python/dragongui/_dragongui.pyd -Force
-artifacts/.workbench-command-output\20260710-085849-code-implementer-2.txt:49:  - `native/target/release/_dragongui.dll`
-artifacts/.workbench-command-output\20260710-085849-code-implementer-2.txt:50:  - `python/dragongui/_dragongui.pyd`
-artifacts/.workbench-command-output\20260710-085849-code-implementer-3.txt:164:1. Run full native tests before release or before merging a broader layout batch.
-artifacts/.workbench-command-output\20260710-085849-code-implementer.txt:166:Copy-Item native/target/release/_dragongui.dll python/dragongui/_dragongui.pyd -Force
-artifacts/.workbench-command-output\20260710-085902-code-implementer-3.txt:2460:native/src\runtime.rs:20081:                            let released_scatter_pan = self.finish_scatter_pan(MouseButton::Left);
-artifacts/.workbench-command-output\20260710-091205-code-implementer-2.txt:78:   - `native/target/release/_dragongui.dll`
-artifacts/.workbench-command-output\20260710-091205-code-implementer-2.txt:79:   - `python/dragongui/_dragongui.pyd`
-artifacts/.workbench-command-output\20260710-091205-code-implementer-2.txt:151:+  - `cargo build --manifest-path native/Cargo.toml --release`
-artifacts/.workbench-command-output\20260710-091205-code-implementer.txt:28:  - `native/target/release/_dragongui.dll`
-artifacts/.workbench-command-output\20260710-091205-code-implementer.txt:29:  - `python/dragongui/_dragongui.pyd`
-artifacts/.workbench-command-output\20260710-091205-code-implementer.txt:56:  - `cargo build --manifest-path native/Cargo.toml --release`
-artifacts/.workbench-command-output\20260710-091234-code-reviewer-2.txt:28:  - `native/target/release/_dragongui.dll`
-artifacts/.workbench-command-output\20260710-091234-code-reviewer-2.txt:29:  - `python/dragongui/_dragongui.pyd`
-artifacts/.workbench-command-output\20260710-091234-code-reviewer-2.txt:56:  - `cargo build --manifest-path native/Cargo.toml --release`
-artifacts/.workbench-command-output\20260710-091234-code-reviewer-4.txt:166:Copy-Item native/target/release/_dragongui.dll python/dragongui/_dragongui.pyd -Force
-artifacts/.workbench-command-output\20260710-091234-code-reviewer.txt:164:1. Run full native tests before release or before merging a broader layout batch.
-artifacts/.workbench-command-output\20260710-091312-code-reviewer.txt:78:   - `native/target/release/_dragongui.dll`
-artifacts/.workbench-command-output\20260710-091312-code-reviewer.txt:79:   - `python/dragongui/_dragongui.pyd`
-artifacts/.workbench-command-output\20260710-091312-code-reviewer.txt:151:+  - `cargo build --manifest-path native/Cargo.toml --release`
-artifacts/.workbench-command-output\20260710-091312-code-reviewer.txt:483: Copy-Item native/target/release/_dragongui.dll python/dragongui/_dragongui.pyd -Force
-artifacts/.workbench-command-output\20260710-091907-spec-writer-2.txt:28:  - `native/target/release/_dragongui.dll`
-artifacts/.workbench-command-output\20260710-091907-spec-writer-2.txt:29:  - `python/dragongui/_dragongui.pyd`
-artifacts/.workbench-command-output\20260710-091907-spec-writer-2.txt:56:  - `cargo build --manifest-path native/Cargo.toml --release`
-artifacts/.workbench-command-output\20260710-091907-spec-writer.txt:166:Copy-Item native/target/release/_dragongui.dll python/dragongui/_dragongui.pyd -Force
-artifacts/.workbench-command-output\20260710-092153-spec-writer-2.txt:364:+cargo build --manifest-path native/Cargo.toml --release
-artifacts/.workbench-command-output\20260710-092153-spec-writer-2.txt:365: Copy-Item native/target/release/_dragongui.dll python/dragongui/_dragongui.pyd -Force
-artifacts/.workbench-command-output\20260710-092153-spec-writer.txt:232:cargo build --manifest-path native/Cargo.toml --release
-artifacts/.workbench-command-output\20260710-092153-spec-writer.txt:233:Copy-Item native/target/release/_dragongui.dll python/dragongui/_dragongui.pyd -Force
-artifacts/.workbench-command-output\20260710-093137-code-implementer-2.txt:28:  - `native/target/release/_dragongui.dll`
-artifacts/.workbench-command-output\20260710-093137-code-implementer-2.txt:29:  - `python/dragongui/_dragongui.pyd`
-artifacts/.workbench-command-output\20260710-093137-code-implementer-2.txt:56:  - `cargo build --manifest-path native/Cargo.toml --release`
-artifacts/.workbench-command-output\20260710-093137-code-implementer.txt:232:cargo build --manifest-path native/Cargo.toml --release
-artifacts/.workbench-command-output\20260710-093137-code-implementer.txt:233:Copy-Item native/target/release/_dragongui.dll python/dragongui/_dragongui.pyd -Force
-artifacts/.workbench-command-output\20260710-115557-code-implementer-2.txt:164:1. Run full native tests before release or before merging a broader layout batch.
-artifacts/.workbench-command-output\20260710-115557-code-implementer.txt:28:  - `native/target/release/_dragongui.dll`
-artifacts/.workbench-command-output\20260710-115557-code-implementer.txt:29:  - `python/dragongui/_dragongui.pyd`
-artifacts/.workbench-command-output\20260710-115557-code-implementer.txt:56:  - `cargo build --manifest-path native/Cargo.toml --release`
-artifacts/.workbench-command-output\20260710-115843-code-reviewer.txt:232:cargo build --manifest-path native/Cargo.toml --release
-artifacts/.workbench-command-output\20260710-115843-code-reviewer.txt:233:Copy-Item native/target/release/_dragongui.dll python/dragongui/_dragongui.pyd -Force

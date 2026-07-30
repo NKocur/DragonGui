@@ -1,2 +1,0 @@
-glyphon prepare error: Prepare error: glyph texture atlas is full
-glyphon prepare error: Prepare error: glyph texture atlas is full

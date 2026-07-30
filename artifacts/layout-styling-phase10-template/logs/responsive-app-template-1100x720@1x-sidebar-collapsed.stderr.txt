@@ -1,1 +1,0 @@
-DragonGUI: ignoring unsupported live SetProp for widget "template-sidebar" (Sidebar).state

@@ -14,6 +14,7 @@ pytest-cache-files-*/
 __pycache__/
 .venv/
 venv/
+artifacts/
 
 # Local assistant and IDE work-session state
 .serena/
