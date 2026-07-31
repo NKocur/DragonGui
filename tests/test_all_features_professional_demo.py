@@ -7,7 +7,7 @@ from types import ModuleType
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEMO_PATH = ROOT / "examples" / "all_features_professional_demo.py"
+DEMO_PATH = ROOT / "examples" / "older" / "all_features_professional_demo.py"
 GENERATED_DIR = ROOT / "artifacts" / "generated" / "all_features_professional_demo"
 
 

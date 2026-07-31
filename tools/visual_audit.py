@@ -34,6 +34,7 @@ LAYOUT_TORTURE_TARGETS = {
     "layout-plot-embedding",
     "overflow-scrollbar",
     "responsive-layout",
+    "theme-forge-extreme-layout",
 }
 
 
@@ -1195,6 +1196,44 @@ def validate_layout_target_relationships(snapshot_path: Path, target_id: str) ->
                     f"{snapshot_path.name}: percent child escapes its owning panel"
                 )
         require_children_nonoverlap("named-grid")
+    elif target_id == "theme-forge-extreme-layout":
+        by_id = {
+            node_id: node
+            for node in nodes
+            if isinstance(node_id := node.get("id"), str)
+        }
+        grid = _snapshot_rect(rects.get("extreme-hostile-grid"))
+        malformed = _snapshot_rect(rects.get("extreme-malformed-panel"))
+        if grid is None or malformed is None:
+            violations.append(
+                f"{snapshot_path.name}: missing extreme grid or malformed-panel geometry"
+            )
+        elif malformed[1] < grid[1] + grid[3] - 0.75:
+            violations.append(
+                f"{snapshot_path.name}: malformed sheets panel overlaps the extreme grid"
+            )
+        for index in range(6):
+            target_id = f"extreme-thrash-target-{index}"
+            target_node = by_id.get(target_id)
+            target_rect = _snapshot_rect(rects.get(target_id))
+            children = target_node.get("children") if isinstance(target_node, dict) else None
+            label = children[0] if isinstance(children, list) and children else None
+            label_rect = node_rect(label) if isinstance(label, dict) else None
+            if target_rect is None or label_rect is None:
+                violations.append(
+                    f"{snapshot_path.name}: {target_id} lacks target or label geometry"
+                )
+                continue
+            if not _rect_contains(target_rect, label_rect, 0.75):
+                violations.append(
+                    f"{snapshot_path.name}: {target_id} label escapes its box"
+                )
+            target_center = target_rect[1] + target_rect[3] * 0.5
+            label_center = label_rect[1] + label_rect[3] * 0.5
+            if abs(target_center - label_center) > 1.0:
+                violations.append(
+                    f"{snapshot_path.name}: {target_id} label is not vertically centered"
+                )
     return violations
 
 
@@ -2026,7 +2065,11 @@ def _audited_run(self, window):
         float(os.environ.get("DRAGONGUI_AUDIT_SCALE_FACTOR", "1")),
         1.0,
     )
-    snapshot_timeout_ms = max(3000, round(5000 * audit_scale))
+    # Stress probes can retain thousands of nodes and serialize very large
+    # computed-style maps. A short timeout incorrectly classifies a healthy,
+    # still-responsive render as a snapshot deadlock while that payload is
+    # being assembled.
+    snapshot_timeout_ms = max(5000, round(15000 * audit_scale))
 
     def walk_widgets(widget):
         yield widget

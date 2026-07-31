@@ -93,3 +93,12 @@ def test_theme_forge_builds_all_pages_and_named_stylesheets_headlessly() -> None
         "icon_button",
         "icon_button",
     ]
+
+    thrash_targets = [
+        next(node for node in nodes if node["id"] == f"extreme-thrash-target-{index}")
+        for index in range(6)
+    ]
+    assert all(node["class"] == "xt-thrash-target" for node in thrash_targets)
+    assert all(node["children"][0]["props"]["wrap"] is False for node in thrash_targets)
+    assert any(node["id"] == "extreme-hostile-grid" for node in nodes)
+    assert any(node["id"] == "extreme-malformed-panel" for node in nodes)

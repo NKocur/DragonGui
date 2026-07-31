@@ -1755,6 +1755,12 @@ _LAB_EXTREME_HOST = """
 Panel.xt-host { background: var(--tf-surface-2); gap: 8px; }
 Panel.xt-empty { border: 2px dashed var(--tf-bad); min-height: 0; height: 0; padding: 0; }
 Panel.xt-zero { height: 0; width: 0; min-height: 0; min-width: 0; padding: 0; border: 0; }
+Panel.xt-thrash-target {
+    min-height: 48px;
+    padding: 10px;
+    align-items: center;
+    justify-content: center;
+}
 Label.xt-warning { color: var(--tf-warn); font-weight: 750; }
 """
 
@@ -2268,6 +2274,16 @@ Panel.xt-conflict-reverse {
     border: 1px solid var(--tf-ok);
     padding-left: 40px;
     padding: 4px;
+}
+
+/* --- repeatable replacement targets: hostile paint, stable alignment ----- */
+Panel.xt-thrash-target {
+    border: 9px solid var(--tf-bad);
+    border-left: 2px dotted var(--tf-warn);
+    border-radius: 40px;
+    background:
+        linear-gradient(90deg, var(--tf-bad), transparent),
+        var(--tf-surface);
 }
 
 /* --- percent/auto where they are not accepted (must warn) --------------- */
@@ -4504,7 +4520,12 @@ def build_extreme_page() -> None:
             "panel or disappears entirely."
         )
 
-    with dg.GridLayout(columns={"default": 3, 1050: 2, 680: 1}, min_column_width=280, gap=12):
+    with dg.GridLayout(
+        columns={"default": 3, 1050: 2, 680: 1},
+        min_column_width=280,
+        gap=12,
+        id="extreme-hostile-grid",
+    ):
         with dg.Panel("Oversized box model", class_="card xt-host"):
             with dg.Panel(class_="xt-fat"):
                 dg.Label("64-76px padding inside a 26px double border", class_="mono")
@@ -4589,10 +4610,13 @@ def build_extreme_page() -> None:
                 class_="muted",
             )
             for index in range(6):
-                with dg.Panel(class_="xt-conflict"):
+                with dg.Panel(
+                    class_="xt-thrash-target",
+                    id=f"extreme-thrash-target-{index}",
+                ):
                     dg.Label(f"thrash target {index}", class_="mono", wrap=False)
 
-    with dg.Panel("Malformed sheets", class_="card"):
+    with dg.Panel("Malformed sheets", class_="card", id="extreme-malformed-panel"):
         dg.Label(
             "These sheets are broken at the token level rather than merely unsupported, "
             "so they are kept out of the hostile sheet and installed on demand. Two "

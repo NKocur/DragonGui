@@ -535,6 +535,21 @@ def test_theme_forge_visual_audits_cover_all_routes_and_long_title_matrix() -> N
         {"name": "chrome", "route": "chrome", "actions": []}
     ]
 
+    extreme = targets["theme-forge-extreme-layout"]
+    assert extreme["category"] == "layout"
+    assert "--extreme" in extreme["args"]
+    assert visual_audit.target_states(extreme) == [
+        {
+            "name": "extreme-bottom",
+            "route": "extreme",
+            "actions": [
+                "wait:500",
+                "scroll:#scroll-extreme=0,4000",
+                "wait:300",
+            ],
+        }
+    ]
+
 
 def test_client_window_chrome_maximized_interaction_is_registered() -> None:
     visual_audit = load_visual_audit()

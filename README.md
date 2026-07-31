@@ -342,7 +342,6 @@ Run any example from the source tree without installing (see
 | `aurora_command_center_demo.py` | Sleek responsive command center used to stress layout, styling, diagnostics, and visual-audit states |
 | `nexus_studio_stress_demo.py` | Five-workspace flagship stress demo with dense dashboards, plots, tables, workflows, controls, diagnostics, overlays, and responsive audit states |
 | `cathode_ops_stress_demo.py` | Six-workspace vintage-CRT stress demo: scanline/phosphor CSS with three palettes, custom `PaintWidget` scope and core map, a load-bank page, and live worker-thread updates |
-| `all_features_professional_demo.py` | Broad professional application demonstrating the current public widget and layout contracts |
 | `all_features_v3_demo.py` | Full app: scatter, tables, charts, streaming, overlays, chrome, theming, and CSS |
 | `node_graph_editor_probe.py` | Node-graph editor widget |
 | `node_graph_binding_playground_probe.py` | Binding node-graph outputs to live widgets |
@@ -358,9 +357,10 @@ one-feature-per-file programs used for visual verification. A sampling:
 | Layout | `layout_containers_probe`, `layout_grid_masonry_probe`, `responsive_layout_probe`, `overflow_scrollbar_probe`, `positioning_zindex_probe`, `splitter_probe` |
 | Custom drawing | `paint_widget_events_probe`, `paint_widget_sparkline_probe`, `custom_composite_widget_probe` |
 
-**Legacy demos and tools** (`examples/older/`) — earlier single-feature demos:
-scatter/table tools, live-update tools, CSS theme galleries, component demos, a
-terminal wrapper, the `meridian` application demo, and more.
+**Legacy demos and tools** (`examples/older/`) — earlier demos and tools,
+including `all_features_professional_demo.py`, scatter/table tools, live-update
+tools, CSS theme galleries, component demos, a terminal wrapper, the `meridian`
+application demo, and more.
 
 ## Architecture
 

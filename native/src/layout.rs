@@ -2212,10 +2212,7 @@ fn grow_and_repack_ordinary_grid_rows(
     }
 
     let row_gap = grid_row_gap_px(grid, sf, Some(grid_rect.h));
-    let padding_bottom = result
-        .resolved_box(&grid.id)
-        .map(|resolved| resolved.padding.bottom)
-        .unwrap_or(0.0);
+    let bottom_inset = resolved_bottom_outer_inset(result, &grid.id);
     let mut cursor_y = first.1.y;
     let mut changed = false;
     for row in rows {
@@ -2234,7 +2231,7 @@ fn grow_and_repack_ordinary_grid_rows(
         cursor_y += row_height + row_gap;
     }
     let content_bottom = cursor_y - row_gap.max(0.0);
-    let new_height = (content_bottom + padding_bottom - grid_rect.y)
+    let new_height = (content_bottom + bottom_inset - grid_rect.y)
         .max(
             stretched_height_floors
                 .get(&grid.id)
@@ -2283,11 +2280,8 @@ fn auto_height_container_can_grow_to_overflowing_content(
         .filter_map(|child| result.rects.get(&child.id))
         .map(|child| child.y + child.h)
         .fold(rect.y, f32::max);
-    let padding_bottom = result
-        .resolved_box(&node.id)
-        .map(|resolved| resolved.padding.bottom)
-        .unwrap_or(0.0);
-    content_bottom + padding_bottom > rect.y + rect.h + 0.5
+    let bottom_inset = resolved_bottom_outer_inset(result, &node.id);
+    content_bottom + bottom_inset > rect.y + rect.h + 0.5
 }
 
 fn pack_grid_masonry_columns(
@@ -2345,10 +2339,7 @@ fn pack_grid_masonry_columns(
     columns.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
     let row_gap = grid_row_gap_px(grid, sf, Some(grid_rect.h));
-    let padding_bottom = result
-        .resolved_box(&grid.id)
-        .map(|resolved| resolved.padding.bottom)
-        .unwrap_or(0.0);
+    let bottom_inset = resolved_bottom_outer_inset(result, &grid.id);
     let content_top = entries
         .iter()
         .map(|(_, rect)| rect.y)
@@ -2387,7 +2378,7 @@ fn pack_grid_masonry_columns(
 
     let content_bottom = column_bottoms.into_iter().fold(content_top, f32::max) - row_gap.max(0.0);
     if let Some(rect) = result.rects.get_mut(&grid.id) {
-        let new_height = (content_bottom + padding_bottom - grid_rect.y)
+        let new_height = (content_bottom + bottom_inset - grid_rect.y)
             .max(
                 stretched_height_floors
                     .get(&grid.id)
@@ -2685,11 +2676,8 @@ fn resize_auto_height_container_to_children(
         return false;
     };
 
-    let padding_bottom = result
-        .resolved_box(&node.id)
-        .map(|resolved| resolved.padding.bottom)
-        .unwrap_or(0.0);
-    let mut new_height = (content_bottom + padding_bottom - rect.y)
+    let bottom_inset = resolved_bottom_outer_inset(result, &node.id);
+    let mut new_height = (content_bottom + bottom_inset - rect.y)
         .max(height_floor.unwrap_or(0.0))
         .max(0.0);
     if let Some(min_height) = authored_axis_size_px(
@@ -2715,6 +2703,20 @@ fn resize_auto_height_container_to_children(
         current.h = new_height;
     }
     true
+}
+
+fn resolved_bottom_outer_inset(result: &LayoutResult, node_id: &str) -> f32 {
+    let padding = result
+        .resolved_padding
+        .get(node_id)
+        .map(|edges| edges.bottom)
+        .unwrap_or(0.0);
+    let border = result
+        .resolved_borders
+        .get(node_id)
+        .map(|edges| edges.bottom)
+        .unwrap_or(0.0);
+    padding + border
 }
 
 fn is_reflowable_normal_child(child: &WidgetNode) -> bool {
@@ -12363,6 +12365,7 @@ mod tests {
         );
         panel.style.layout.padding = Some(15.0);
         panel.style.layout.gap = Some(10.0);
+        panel.style.visual.border_bottom_width = Some(9.0);
 
         let grid = node(
             "grid",
@@ -12381,14 +12384,26 @@ mod tests {
             vec![grid],
         );
 
-        let layout = compute_layout(&root, 750.0, 700.0, 1.0, &Theme::dark(), None);
+        let mut layout = compute_layout(&root, 750.0, 700.0, 1.0, &Theme::dark(), None);
+        let code_bottom = {
+            let code = layout.rects.get("code").unwrap();
+            code.y + code.h
+        };
+        let panel_y = layout.rects.get("panel").unwrap().y;
+        layout.rects.get_mut("panel").unwrap().h = code_bottom - panel_y + 1.0;
+        assert!(resize_auto_height_container_to_children(
+            &root.children[0].children[0],
+            &mut layout,
+            1.0,
+            None,
+        ));
         let panel = layout.rects.get("panel").unwrap();
         let code = layout.rects.get("code").unwrap();
         let bottom_gap = panel.y + panel.h - (code.y + code.h);
 
         assert!(
-            bottom_gap >= 14.5,
-            "auto-height grid panel must include its authored bottom padding: panel={panel:?} code={code:?} gap={bottom_gap}"
+            bottom_gap >= 23.5,
+            "auto-height grid panel must include its authored bottom padding and border: panel={panel:?} code={code:?} gap={bottom_gap}"
         );
     }
 

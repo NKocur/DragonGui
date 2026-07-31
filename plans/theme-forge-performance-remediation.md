@@ -453,6 +453,31 @@ The focused THEME FORGE snapshot now reports:
 - CodeEditor bottom: `925 px`;
 - retained authored bottom inset: `14 px`.
 
+### Extreme-grid replacement targets and bordered auto-height
+
+- [x] Separated the rapid-replacement targets from the intentionally
+      destructive `.xt-conflict` shorthand fixture. The targets now retain a
+      stable centered box model while the hostile sheet changes their paint
+      and asymmetric borders.
+- [x] Gave the extreme grid, all six replacement targets, and the malformed
+      sheets panel stable IDs for layout regression inspection.
+- [x] Corrected native post-layout auto-height reconciliation to include the
+      resolved bottom border as well as bottom padding. This applies to normal
+      auto-height containers, ordinary grids, and masonry grids; omitting the
+      border made thick hostile boxes a few pixels too short and allowed the
+      following panel to overlap their content.
+- [x] Added a native regression that forces the reconciliation path and checks
+      that a 15 px bottom padding plus 9 px bottom border are both retained.
+- [x] Registered an extreme-page visual audit state that enables the hostile
+      sheet and scrolls to the replacement/malformed-sheet boundary.
+- [x] Rebuilt the release extension and completed the hostile extreme-page
+      snapshot/geometry verification. All six labels are contained and centered
+      within 0.5 px, the malformed-sheets panel begins 10 px below the grid,
+      and the snapshot reports zero layout diagnostics.
+- [x] Increased the visual-audit debug-snapshot allowance for very large stress
+      documents so serializing thousands of computed-style records is not
+      mistaken for a deadlocked UI.
+
 ### DropZone label alignment and flex CSS
 
 Classification: **library flex-property plumbing defect**.

@@ -1046,5 +1046,20 @@
     ],
     "manual": false,
     "notes": "Regression: a long retained client title shrinks and ellipsizes while minimize/maximize/close remain visible and clickable."
+  },
+  {
+    "id": "theme-forge-extreme-layout",
+    "name": "THEME FORGE Extreme Grid Layout",
+    "script": "examples/theme_forge_stress_demo.py",
+    "args": ["--no-live", "--rows", "24", "--extreme"],
+    "category": "layout",
+    "features": ["GridLayout auto rows", "Panel intrinsic height", "wrapped labels", "large padding", "large borders"],
+    "sizes": [[1024, 768]],
+    "scales": [1.0],
+    "states": [
+      {"name": "extreme-bottom", "route": "extreme", "actions": ["wait:500", "scroll:#scroll-extreme=0,4000", "wait:300"]}
+    ],
+    "manual": false,
+    "notes": "Regression: final hostile-grid row fully contains the rapid-replacement card and the following malformed-sheets panel starts below it."
   }
 ]
