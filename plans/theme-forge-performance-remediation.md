@@ -479,6 +479,168 @@ rasterization allowance beyond the measured text advance. This is scoped to
 `Label`; it does not change `Tab` or `NavItem` sizing. The DropZone regression
 now verifies both center alignment and usable text width.
 
+### Built-in help synchronization
+
+Classification: **documentation drift found after the library changes**.
+
+`dg.help` was checked against the live public export list, exported class
+members, widget CSS capability registry, example/probe paths, and the current
+layout/style implementation. All 176 public exports and all registered CSS
+parts remain represented. The audit corrected stale links for demos moved into
+`examples/older/`, replaced an obsolete drag/drop recipe with constructors that
+serialize successfully, and expanded the runtime help for:
+
+- client-decorated window dragging, vector controls, and shrinking titles;
+- static and rich tooltip sizing, wrapping, viewport promotion, and clipping;
+- standalone/styled Tabs header ownership;
+- Label wrapping and intrinsic text sizing;
+- DropZone centering and drag-kind acceptance;
+- flex direction/basis/wrapping, `align-items`, `align-self`,
+  `justify-content`, grid placement, positioning, and CSS warning behavior;
+- ordinary auto-row grid growth and scrolled plot/text clipping.
+
+Help-specific regression assertions now protect the recently added guidance.
+
+A corrective reverse audit then derived the finite CSS property set directly
+from `DgStylePropertyName::from_css_name` and compared it with the rendered
+manual. This found 63 accepted longhands that were described only by family and
+could not be found by exact name. `dg.help.reference.css_properties()` now
+publishes a machine-readable and rendered inventory of all 130 native
+properties, grouped into layout, visual, text/generated-content, motion, and
+widget-specific declarations. A source-derived regression requires this set to
+remain exactly synchronized with the native parser.
+
+The same pass corrected two behavioral prose remnants: Terminal assets are
+packaged locally rather than CDN-hosted, and the PyTorch dashboard recipe now
+uses the current `LogView.append_line(...)` method instead of the removed
+`LogView.append(...)` name.
+
+A third, enum-level audit derived pseudo-states, structural selectors, selector
+functions, attribute operators, common keyword-value enums, framework CSS
+variables, icon identities, and icon aliases from their implementation
+sources. It corrected `font-style: oblique` (not accepted), added the accepted
+`font-variant-numeric: tabular_nums` compatibility spelling, published the
+complete selector forms and 18 `--dg-*` variables, and made icon/alias catalogs
+machine-readable.
+
+The same audit removed duplicate machine-readable symbol leaves under
+`reference.drag_drop`. That focused section now aliases the canonical widget
+and dataclass nodes, so all 176 public symbols have exactly one canonical path
+while attribute navigation through `reference.drag_drop.*` remains available.
+Source-derived regressions now protect these finite sets and reject stale
+`Class.method(...)` or unknown `dg.*` names in hand-authored prose.
+
+A fourth, query-and-constructor audit compared the manual with the remaining
+finite capability sets exposed by the native parser and public widget classes.
+It added the exact 39 media-feature names, supported media/container query
+features, `@supports` functions and operators, supported at-rules, local font
+formats/technologies, gradient interpolation choices, and transition/animation
+keyword values. These sets are rendered for people and retained as structured
+metadata for tooling.
+
+Public constructor choice parameters are now derived from the live widget
+class constants and shown under each applicable reference page. The catalog
+covers 13 parameters on 10 widgets, including window decorations, toolbar and
+radio orientation, scroll axes, sidebar modes, selection modes, legend
+positions, toggle label positions, arrow direction, and flex direction and
+alignment. This pass also found a real Python/native mismatch:
+`FlexLayout(align_items="baseline")` was accepted by Python but discarded by
+the native layout parser. The unsupported choice is now rejected immediately
+with `ValueError`, keeping the constructor and stylesheet behavior aligned.
+
+The final audit expanded validation from symbol/member existence to executable
+documentation call shapes. All 36 fenced Python examples compile, and all
+`dg.*(...)` calls in fenced examples plus concrete inline constructor recipes
+are bound against the current public signatures. This found stale examples
+using `CommandPalette(close_button=...)`, `Panel(children=...)`,
+`DataFrameTable(selectable=...)`, a positional `Sidebar` title, positional
+keyword-only scatter columns, and ambiguous tooltip/drop/grid shorthand. The
+examples now use current constructor forms, including detached panels built
+with a context manager inside components. All 286 help nodes render with their
+expected heading, and all 176 canonical public symbols round-trip through
+`dg.help.find_symbol(...)`.
+
+A continued semantic audit then exercised claims that remain invisible to
+signature binding. It corrected the callback overview: selectable lists, tabs,
+and pages use `on_change`, while `on_select` belongs to tables, trees, and
+breadcrumbs; `NavItem` routes through `Pages` and has no callback parameter.
+It also corrected the PropertyGrid recipe from unsupported schema key
+`choices` to `options`, a failure found only by constructing the documented
+composite headlessly.
+
+The same pass expanded finite public-value discovery from class-local widget
+constants to module validators and live methods. Structured help now covers 43
+constructor/function parameters across 27 public symbols (214 rendered values)
+and 19 method parameters across 8 symbols (113 rendered values). Added areas
+include badge levels, log variants, toast levels/positions, queue states,
+node-graph runtime policies, scatter streaming modes, flow/splitter/image
+options, chart aggregation and interaction modes, all colormaps, PaintContext
+alignment/fit options, and Scatter3D legend, label-anchor, point-style, plane,
+stream, and scalar-bar choices. Literal catalogs are behavior-tested by
+constructing the API or invoking the live/drawing method with every documented
+value. Help example style keys and finite keyword values are also checked
+against the native-derived CSS inventory.
+
+The NodeGraph follow-up audit now labels the entire subsystem **not ready for
+usage**. The root manual index, LLM build rules, a dedicated
+`dg.help.node_graph()` page, all 21 canonical `NodeGraph*`/template reference
+leaves, search summaries, and structured metadata state that the APIs are
+experimental, incomplete, unsupported for application/production use, and not
+recommended for generated code. The warning covers graph models, templates,
+runtime sessions, bindings, persistence, schemas, and compatibility callbacks;
+public export status is explicitly not a readiness guarantee.
+
+The dedicated page records the current version-1 event contract only for
+internal development. Its mutation-event metadata is derived from
+`_GRAPH_MUTATION_EVENTS`, and regressions verify that `on_graph_event` receives
+all dispatched mappings while `on_node_select` and `on_node_move` remain the
+two compatibility callbacks accepted through `**callbacks`. The page warns
+that event names/payloads and runtime behavior may change without migration
+support and that durable graph data must not be shipped yet.
+
+The dialog/live-update audit documented behavior that signatures alone do not
+make obvious. File dialogs now state that omitting `on_select` is synchronous
+and returns path data or `None`, while callback mode returns `None` immediately
+and runs on a worker; passing `app` is required to marshal the callback through
+`call_soon_threadsafe` before touching live widgets. `alert` and `confirm` are
+documented as immediate `Modal` constructors, and `confirm` explicitly does not
+return a boolean.
+
+The same audit found stale LinePlot streaming guidance. The documented
+`append_points("series", xs, ys)` form passed three positional arguments even
+though `series` is keyword-only, and performance guidance recommended
+nonexistent `set_series` and prepared-payload replacement methods. Examples now
+use `append_points(xs, ys, series="name")`; replacement uses `set_data(...)`.
+The common live-method reference is generated from an implementation-checked
+inventory of public owners/methods. Python help examples now infer common
+receiver types (`plot`, `scatter`, `table`, and similar handles) and bind their
+method calls against live signatures, extending the prior constructor-only
+call-shape audit.
+
+The component/state lifecycle audit now documents the rules enforced by the
+runtime rather than describing keyed state only in general terms. Top-level
+component calls return `ComponentInstance`; nested calls render immediately
+and require an explicit non-empty key; state keys must be unique per render;
+defaults initialize only missing slots; setters cannot run during render; and
+failed mounted updates roll state back. Help also distinguishes ordinary
+component roots from `App.run(...)` roots, which must render a `Window`, and
+records when keyed child state is retained or pruned. Behavioral regressions
+exercise the missing-key, duplicate-state, render-time-set, and root-type
+failures.
+
+The validation and application-lifecycle follow-up corrected several semantic
+drifts. Finite-number guidance now names only controls that actually enforce
+it instead of incorrectly including Slider and ProgressBar. File dialogs are
+correctly described as usable without a running App, with synchronous and
+callback/thread behavior separated. Detached/removed-widget behavior and
+drag/drop JSON/kind validation are explicit. The App overview now covers
+component roots, blocking `run(...)` return behavior, `run_with_loading`, icon
+themes, retained buffers, which methods require a live app, and the fact that
+`document(...)` accepts a Window rather than a ComponentInstance. The Window
+signature now includes `decorations`, and generated widget reference pages say
+that live methods are used while the event loop is active—not after the
+blocking `run(...)` call has returned and detached native handles.
+
 ## Validation status
 
 - [x] Deterministic idle profile captured.
@@ -515,6 +677,68 @@ now verifies both center alignment and usable text width.
 - [x] DropZone label retains shaped-text padding plus a 2 logical-pixel
       rasterization allowance; complete native suite remains at 896 passed,
       12 ignored.
+- [x] `dg.help` covers 176/176 public exports, every exported class member, and
+      every registered widget CSS part; all real example/probe metadata paths
+      resolve.
+- [x] `dg.help` exact CSS inventory matches all 130 finite properties accepted
+      by the native parser, with no missing or extra names.
+- [x] Corrective prose audit finds no unknown `dg.*` symbols, stale moved-demo
+      paths, missing Theme fields, or invalid current method references.
+- [x] Native pseudo-state, structural-selector, selector-function, attribute
+      operator, common keyword-value, and 18-variable theme sets match `dg.help`
+      metadata exactly.
+- [x] Built-in icon identities and compatibility aliases are rendered and
+      machine-readable directly from the live public catalogs.
+- [x] All 176 public symbols have one canonical machine-readable help node;
+      drag/drop convenience paths resolve as aliases.
+- [x] Updated `dg.help` drag/drop recipe constructs and serializes successfully.
+- [x] All 39 native media features and finite media/container/supports
+      capabilities match structured `dg.help` metadata.
+- [x] All documented transition, animation, gradient-interpolation, and common
+      CSS keyword choices match their native parser functions.
+- [x] Choice metadata for 13 public constructor parameters matches the live
+      constants and rendered signatures; unsupported flex baseline alignment
+      is rejected at construction.
+- [x] Complete Python API suite passes after the fourth help audit:
+      443 passed.
+- [x] All 36 fenced Python help examples compile and all concrete public call
+      shapes bind against current signatures.
+- [x] All 286 help nodes render successfully; all 176 canonical public symbols
+      round-trip through `dg.help.find_symbol(...)`.
+- [x] Complete Python API suite passes after the final help audit:
+      444 passed.
+- [x] Callback-family claims match current `on_change`/`on_select` signatures;
+      the PropertyGrid schema example constructs headlessly with `options`.
+- [x] Structured help covers 43 finite public constructor/function parameters
+      and 19 finite live/drawing method parameters; literal values are accepted
+      by their implementations.
+- [x] Help example style keys and finite CSS keyword values match the
+      implementation-derived property/value catalogs.
+- [x] Complete Python API suite passes after the continued semantic audit:
+      450 passed.
+- [x] Root, LLM, topical, search, reference, and structured help surfaces mark
+      all 21 canonical NodeGraph-related APIs not ready for usage.
+- [x] NodeGraph mutation-event metadata matches the implementation and current
+      graph/compatibility callback dispatch claims are regression-tested.
+- [x] Complete Python API suite passes after the NodeGraph readiness audit:
+      452 passed.
+- [x] File-dialog synchronous/asynchronous return and callback-thread rules,
+      plus alert/confirm Modal semantics, match implementation-backed tests.
+- [x] Live-method inventory matches public owners; all LinePlot streaming
+      examples use the keyword-only `series` argument and no stale
+      `set_series`/prepared setter is recommended.
+- [x] Complete Python API suite passes after the dialog/live-method audit:
+      454 passed.
+- [x] Component identity, state initialization/rerender constraints, keyed
+      child lifetime, and component-root Window requirements are documented
+      and implementation-tested.
+- [x] Validation guidance matches enforced finite/range, detached-widget,
+      drag/drop, and dialog lifecycle behavior.
+- [x] App/Window help covers component run roots, blocking event-loop return,
+      loading builders, icon/image/buffer resources, live-only methods, and
+      client/native decorations.
+- [x] Complete Python API suite passes after the component, validation, and App
+      lifecycle audit: 456 passed.
 - [x] Rebuilt release extension copied into the source package; release DLL and
       installed PYD SHA-256 hashes match.
 - [x] Focused Python/API/demo suite passes; broader selected suite reaches

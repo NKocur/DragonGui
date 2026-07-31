@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import ast
 import base64
 import inspect
 import json
+import re
 import struct
 import threading
 import subprocess
@@ -17,8 +19,10 @@ import dragongui as dg
 import dragongui.agent_messages as agent_messages_module
 import dragongui.agent_session as agent_session_module
 import dragongui.app as app_module
+import dragongui.components as components_module
 import dragongui.dataframe as dataframe_module
 import dragongui.dialogs as dialogs_module
+import dragongui.manual as manual_module
 import dragongui.terminal as terminal_module
 import dragongui.node_graph as node_graph_module
 import dragongui.runtime as runtime_module
@@ -231,11 +235,19 @@ def test_builtin_help_manual_exposes_nested_sections() -> None:
     assert dg.help.search("thread safe updates")[0]["path"] == "live_updates.threads"
     assert "Dashboard Recipe" in dg.help.recipes.dashboard()
     assert "examples/older/pytorch_training_dashboard.py" in dg.help.recipes.pytorch_dashboard()
+    assert "LogView.append_line" in dg.help.recipes.pytorch_dashboard()
+    assert "LogView.append(" not in dg.help.recipes.pytorch_dashboard()
     assert "LinePlot.append_points" in dg.help.recipes.streaming_line_plot()
     assert dg.help("styling.parts").startswith("# CSS Parts")
     assert "DragSource" in dg.help.drag_drop()
     assert "ctx.rounded_rect" in dg.help.reference.widgets.paint_widget()
     assert "paint_widget_events_probe.py" in dg.help.reference.widgets.paint_widget()
+    assert "packaged" in dg.help.reference.widgets.terminal()
+    assert "does not depend on a CDN" in dg.help.reference.widgets.terminal()
+    icon_children = data["children"]["reference"]["children"]["icons"]["children"]
+    assert set(icon_children["builtin_icons"]["metadata"]["values"]) == set(dg.BUILTIN_ICONS)
+    assert icon_children["icon_aliases"]["metadata"]["aliases"] == dict(dg.ICON_ALIASES)
+    assert all(f"`{name}`" in dg.help.reference.icons.builtin_icons() for name in dg.BUILTIN_ICONS)
     assert "<object object at" not in dg.help.reference.widgets.paint_widget()
     assert "extension_type: str = 'paint'" in dg.help.reference.widgets.paint_widget()
     assert "parent: Container | None | object = _AUTO_PARENT" in dg.help.reference.widgets.button()
@@ -259,6 +271,25 @@ def test_builtin_help_manual_exposes_nested_sections() -> None:
     assert "PaintContext.polyline" in dg.help.validation.custom_widgets()
     assert "prepared payloads" in dg.help.performance.scatter()
     assert "repaint()" in dg.help.performance.paint_widgets()
+    css_properties = dg.help.reference.css_properties()
+    assert "`align-self`" in css_properties
+    assert "`space-evenly`" in css_properties
+    assert "`grid-template-areas`" in css_properties
+    assert "`position` (`static`, `relative`, `absolute`, or `fixed`)" in css_properties
+    assert "Unsupported declarations and selectors are skipped with stylesheet warnings" in css_properties
+    assert "WindowTitlebar" in dg.help.reference.widgets.window()
+    assert "draggable titlebar surface" in dg.help.reference.widgets.window()
+    assert "`Tooltip(target=widget, width=280, height=None)`" in dg.help.reference.widgets.tooltip()
+    assert "constrained to the window viewport" in " ".join(
+        dg.help.reference.widgets.tooltip().split()
+    )
+    assert "centers it on both axes" in dg.help.reference.widgets.drop_zone()
+    assert "small rasterization allowance" in dg.help.reference.widgets.label()
+    drag_recipe = dg.help.recipes.drag_drop()
+    assert 'with dg.DragSource({"metric": "latency"}, drag_kind="metric")' in drag_recipe
+    assert 'dg.DropZone("Drop metric here", accept="metric"' in drag_recipe
+    assert 'dg.DropTarget("lane-a"' not in drag_recipe
+    assert "examples/older/all_features_v3_demo.py" in dg.help.recipes.dashboard()
     grid_metadata = data["children"]["reference"]["children"]["widgets"]["children"]["grid_layout"]["metadata"]
     assert "examples/css_feature_probes/layout_grid_masonry_probe.py" in grid_metadata["probes"]
     progress_metadata = data["children"]["reference"]["children"]["widgets"]["children"]["progress_bar"]["metadata"]
@@ -266,9 +297,32 @@ def test_builtin_help_manual_exposes_nested_sections() -> None:
 
 
 def test_builtin_help_manual_reference_covers_public_exports() -> None:
-    symbol_paths = _help_symbol_paths(dg.help.to_dict())
+    data = dg.help.to_dict()
+    symbol_paths = _help_symbol_paths(data)
     missing = [name for name in dg.__all__ if name not in symbol_paths]
     assert missing == []
+
+    occurrences: dict[str, list[str]] = {}
+
+    def collect(node: dict[str, object]) -> None:
+        metadata = node.get("metadata", {})
+        assert isinstance(metadata, dict)
+        if "symbol" in metadata:
+            occurrences.setdefault(str(metadata["symbol"]), []).append(str(node["path"]))
+        children = node.get("children", {})
+        assert isinstance(children, dict)
+        for child in children.values():
+            assert isinstance(child, dict)
+            collect(child)
+
+    collect(data)
+    assert set(occurrences) == set(dg.__all__)
+    assert all(len(paths) == 1 for paths in occurrences.values())
+    assert dg.help.reference.drag_drop.drop_zone is dg.help.reference.widgets.drop_zone
+    assert (
+        dg.help.reference.drag_drop.drag_drop_payload
+        is dg.help.reference.dataclasses.drag_drop_payload
+    )
 
 
 def test_builtin_help_manual_example_and_probe_paths_exist() -> None:
@@ -292,8 +346,220 @@ def test_builtin_help_manual_example_and_probe_paths_exist() -> None:
             paths = metadata.get(key, [])
             assert isinstance(paths, list)
             missing.extend(str(path) for path in paths if not (project_root / str(path)).is_file())
+        body = str(node.get("body", ""))
+        body_paths = re.findall(r"examples/[A-Za-z0-9_./-]+\.py", body)
+        missing.extend(path for path in body_paths if not (project_root / path).is_file())
 
+    assert sorted(set(missing)) == []
+
+
+def test_builtin_help_manual_class_method_calls_in_prose_exist() -> None:
+    """Reject stale Class.method(...) names in hand-authored guidance."""
+
+    prose = _flatten_help_text(dg.help.to_dict())
+    unknown_dg_symbols = sorted(
+        name
+        for name in set(re.findall(r"\bdg\.([A-Za-z_][A-Za-z0-9_]*)", prose))
+        if not hasattr(dg, name)
+    )
+    assert unknown_dg_symbols == []
+
+    references = set(
+        re.findall(r"`([A-Z][A-Za-z0-9_]*)\.([a-z_][A-Za-z0-9_]*)\(", prose)
+    )
+    missing = [
+        f"{class_name}.{method_name}"
+        for class_name, method_name in sorted(references)
+        if not hasattr(getattr(dg, class_name, None), method_name)
+    ]
     assert missing == []
+
+
+def test_builtin_help_manual_python_examples_use_valid_public_call_shapes() -> None:
+    """Compile Python fences and reject stale dg call arguments."""
+
+    issues: list[tuple[str, str, str]] = []
+
+    def validate_call(path: str, symbol: str, call: ast.Call) -> None:
+        if not hasattr(dg, symbol):
+            issues.append((path, symbol, "missing public symbol"))
+            return
+        try:
+            signature = inspect.signature(getattr(dg, symbol))
+        except (TypeError, ValueError):
+            return
+        if any(isinstance(argument, ast.Starred) for argument in call.args) or any(
+            keyword.arg is None for keyword in call.keywords
+        ):
+            return
+        try:
+            signature.bind_partial(
+                *([None] * len(call.args)),
+                **{str(keyword.arg): None for keyword in call.keywords},
+            )
+        except TypeError as error:
+            issues.append((path, symbol, str(error)))
+
+    def validate_method_call(path: str, owner: str, method_name: str, call: ast.Call) -> None:
+        owner_type = getattr(dg, owner)
+        if not hasattr(owner_type, method_name):
+            issues.append((path, f"{owner}.{method_name}", "missing public method"))
+            return
+        try:
+            signature = inspect.signature(getattr(owner_type, method_name))
+        except (TypeError, ValueError):
+            return
+        if any(isinstance(argument, ast.Starred) for argument in call.args) or any(
+            keyword.arg is None for keyword in call.keywords
+        ):
+            return
+        positional = [None] * len(call.args)
+        first_parameter = next(iter(signature.parameters.values()), None)
+        if first_parameter is not None and first_parameter.name in {"self", "cls"}:
+            positional.insert(0, None)
+        try:
+            signature.bind_partial(
+                *positional,
+                **{str(keyword.arg): None for keyword in call.keywords},
+            )
+        except TypeError as error:
+            issues.append((path, f"{owner}.{method_name}", str(error)))
+
+    def walk(node: dict[str, object]) -> None:
+        body = str(node.get("body", ""))
+        path = str(node.get("path", ""))
+        for block in re.findall(r"```(?:python|py)\s*\n(.*?)```", body, re.DOTALL):
+            tree = ast.parse(block, filename=f"dg.help:{path}")
+            bound_symbols: dict[str, str] = {
+                "plot": "LinePlot",
+                "scatter": "Scatter3D",
+                "table": "DataFrameTable",
+                "progress": "ProgressBar",
+                "modal": "Modal",
+                "toast_handle": "ToastHandle",
+                "palette": "CommandPalette",
+            }
+            for assignment in (
+                candidate for candidate in ast.walk(tree) if isinstance(candidate, ast.Assign)
+            ):
+                if not (
+                    len(assignment.targets) == 1
+                    and isinstance(assignment.targets[0], ast.Name)
+                    and isinstance(assignment.value, ast.Call)
+                    and isinstance(assignment.value.func, ast.Attribute)
+                    and isinstance(assignment.value.func.value, ast.Name)
+                    and assignment.value.func.value.id == "dg"
+                    and hasattr(dg, assignment.value.func.attr)
+                ):
+                    continue
+                bound_symbols[assignment.targets[0].id] = assignment.value.func.attr
+            for call in (candidate for candidate in ast.walk(tree) if isinstance(candidate, ast.Call)):
+                function = call.func
+                if (
+                    isinstance(function, ast.Attribute)
+                    and isinstance(function.value, ast.Name)
+                    and function.value.id in bound_symbols
+                ):
+                    validate_method_call(
+                        path, bound_symbols[function.value.id], function.attr, call
+                    )
+                    continue
+                if not (
+                    isinstance(function, ast.Attribute)
+                    and isinstance(function.value, ast.Name)
+                    and function.value.id == "dg"
+                ):
+                    continue
+                validate_call(path, function.attr, call)
+        for inline_code in re.findall(r"`([^`\n]+)`", body):
+            if "..." in inline_code or not re.match(
+                r"(?:dg\.)?[A-Z][A-Za-z0-9_]*\s*\(", inline_code
+            ):
+                continue
+            try:
+                expression = ast.parse(inline_code, mode="eval").body
+            except SyntaxError:
+                continue
+            if not isinstance(expression, ast.Call):
+                continue
+            function = expression.func
+            if isinstance(function, ast.Name) and hasattr(dg, function.id):
+                validate_call(path, function.id, expression)
+            elif (
+                isinstance(function, ast.Attribute)
+                and isinstance(function.value, ast.Name)
+                and function.value.id == "dg"
+            ):
+                validate_call(path, function.attr, expression)
+        children = node.get("children", {})
+        assert isinstance(children, dict)
+        for child in children.values():
+            assert isinstance(child, dict)
+            walk(child)
+
+    walk(dg.help.to_dict())
+    assert issues == []
+
+
+def test_builtin_help_manual_examples_use_supported_style_properties() -> None:
+    css_metadata = dg.help.to_dict()["children"]["reference"]["children"]["css_properties"][
+        "metadata"
+    ]
+    assert isinstance(css_metadata, dict)
+    supported = set(css_metadata["properties"])
+    issues: list[tuple[str, str]] = []
+
+    def check_stylesheet(path: str, stylesheet: str) -> None:
+        for property_name in re.findall(
+            r"(?:\{|;)\s*([a-zA-Z_-][a-zA-Z0-9_-]*)\s*:", stylesheet
+        ):
+            if not property_name.startswith("--") and property_name not in supported:
+                issues.append((path, property_name))
+
+    def walk(node: dict[str, object]) -> None:
+        body = str(node.get("body", ""))
+        path = str(node.get("path", ""))
+        for stylesheet in re.findall(r"```css\s*\n(.*?)```", body, re.DOTALL):
+            check_stylesheet(path, stylesheet)
+        for block in re.findall(r"```(?:python|py)\s*\n(.*?)```", body, re.DOTALL):
+            tree = ast.parse(block, filename=f"dg.help:{path}")
+            for call in (candidate for candidate in ast.walk(tree) if isinstance(candidate, ast.Call)):
+                for keyword in call.keywords:
+                    if keyword.arg not in {"style", "_default_style"} or not isinstance(
+                        keyword.value, ast.Dict
+                    ):
+                        continue
+                    for key, value in zip(keyword.value.keys, keyword.value.values):
+                        if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                            property_name = key.value.replace("_", "-")
+                            if property_name not in supported:
+                                issues.append((path, key.value))
+                                continue
+                            allowed_values = manual_module._CSS_KEYWORD_VALUES.get(property_name)
+                            if (
+                                allowed_values
+                                and isinstance(value, ast.Constant)
+                                and isinstance(value.value, str)
+                                and value.value not in allowed_values
+                            ):
+                                issues.append((path, f"{property_name}: {value.value}"))
+                if not (
+                    isinstance(call.func, ast.Attribute)
+                    and call.func.attr
+                    in {"stylesheet", "add_stylesheet", "replace_stylesheet"}
+                ):
+                    continue
+                for argument in call.args:
+                    if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
+                        check_stylesheet(path, argument.value)
+        children = node.get("children", {})
+        assert isinstance(children, dict)
+        for child in children.values():
+            assert isinstance(child, dict)
+            walk(child)
+
+    walk(dg.help.to_dict())
+    assert issues == []
 
 
 def test_builtin_help_manual_reference_covers_exported_class_members() -> None:
@@ -324,6 +590,350 @@ def test_builtin_help_manual_reference_covers_exported_class_members() -> None:
     assert missing == {}
 
 
+def test_builtin_help_manual_widget_choice_metadata_matches_signatures_and_rendering() -> None:
+    symbol_nodes = _help_symbol_nodes(dg.help.to_dict())
+    choice_nodes = {
+        symbol: node
+        for symbol, node in symbol_nodes.items()
+        if "choices" in node.get("metadata", {})
+    }
+    assert choice_nodes
+
+    for symbol, node in choice_nodes.items():
+        widget_class = getattr(dg, symbol)
+        signature_parameters = inspect.signature(widget_class).parameters
+        metadata = node["metadata"]
+        assert isinstance(metadata, dict)
+        choices = metadata["choices"]
+        assert isinstance(choices, dict)
+        rendered = dg.help(str(node["path"]))
+        for parameter_name, values in choices.items():
+            assert parameter_name in signature_parameters
+            assert values
+            assert all(f"`{value}`" in rendered for value in values)
+
+    flex_choices = choice_nodes["FlexLayout"]["metadata"]["choices"]
+    assert "baseline" not in flex_choices["align_items"]
+
+
+def test_builtin_help_manual_method_choice_metadata_matches_live_methods() -> None:
+    symbol_nodes = _help_symbol_nodes(dg.help.to_dict())
+    choice_nodes = {
+        symbol: node
+        for symbol, node in symbol_nodes.items()
+        if "method_choices" in node.get("metadata", {})
+    }
+    assert choice_nodes
+
+    for symbol, node in choice_nodes.items():
+        owner = getattr(dg, symbol)
+        metadata = node["metadata"]
+        assert isinstance(metadata, dict)
+        method_choices = metadata["method_choices"]
+        assert isinstance(method_choices, dict)
+        rendered = dg.help(str(node["path"]))
+        for method_parameter, values in method_choices.items():
+            method_name, parameter_name = str(method_parameter).split(".", maxsplit=1)
+            method = getattr(owner, method_name)
+            assert parameter_name in inspect.signature(method).parameters
+            assert values
+            assert all(f"`{value}`" in rendered for value in values)
+
+
+def test_builtin_help_manual_literal_choice_catalogs_are_accepted_by_api() -> None:
+    scatter = lambda: dg.Scatter3D(None, x="x", y="y", z="z", parent=None)
+    payload = dg.ScatterPayload(b"", "packed_f32", "viridis", 0)
+
+    def validate_toast(parameter: str, value: str) -> None:
+        with pytest.raises(RuntimeError, match="app is not running"):
+            dg.toast("audit", duration=0, **{parameter: value})
+
+    factories = {
+        "AgentRouterQueueItem": lambda parameter, value: dg.AgentRouterQueueItem(
+            dg.AgentMessage("target", "source", "message", "1", "body"),
+            **{parameter: value},
+        ),
+        "Badge": lambda parameter, value: dg.Badge(
+            "status", **{parameter: value}, parent=None
+        ),
+        "LogView": lambda parameter, value: dg.LogView(
+            [], **{parameter: value}, parent=None
+        ),
+        "NodeGraph": lambda parameter, value: dg.NodeGraph(
+            [], **{parameter: value}, parent=None
+        ),
+        "toast": validate_toast,
+        "ScatterFrameStream": lambda parameter, value: dg.ScatterFrameStream(
+            scatter(), [payload], **{parameter: value}
+        ),
+        "ScatterLiveFrame": lambda parameter, value: dg.ScatterLiveFrame(
+            scatter(), **{parameter: value}
+        ),
+        "FlowLayout": lambda parameter, value: dg.FlowLayout(
+            **{parameter: value}, parent=None
+        ),
+        "Separator": lambda parameter, value: dg.Separator(
+            **{parameter: value}, parent=None
+        ),
+        "Splitter": lambda parameter, value: dg.Splitter(
+            **{parameter: value}, parent=None
+        ),
+        "Image": lambda parameter, value: dg.Image(
+            "missing.png", **{parameter: value}, parent=None
+        ),
+        "Heatmap": lambda parameter, value: dg.Heatmap(
+            [[1]], **{parameter: value}, parent=None
+        ),
+        "Scatter3D": lambda parameter, value: dg.Scatter3D(
+            None, x="x", y="y", z="z", **{parameter: value}, parent=None
+        ),
+        "ScatterPlot2D": lambda parameter, value: dg.ScatterPlot2D(
+            {"x": [1], "y": [2]},
+            x="x",
+            y="y",
+            **{parameter: value},
+            parent=None,
+        ),
+        "PieChart": lambda parameter, value: dg.PieChart(
+            labels=["a"], values=[1], **{parameter: value}, parent=None
+        ),
+        "Histogram": lambda parameter, value: dg.Histogram(
+            [1, 2], **{parameter: value}, parent=None
+        ),
+        "BarChart": lambda parameter, value: dg.BarChart(
+            labels=["a"], values=[1], **{parameter: value}, parent=None
+        ),
+        "LinePlot": lambda parameter, value: dg.LinePlot(
+            {"y": [1, 2]}, y="y", **{parameter: value}, parent=None
+        ),
+    }
+
+    assert set(factories) == set(manual_module._PUBLIC_PARAMETER_CHOICE_VALUES)
+    for symbol, parameter_choices in manual_module._PUBLIC_PARAMETER_CHOICE_VALUES.items():
+        for parameter, values in parameter_choices.items():
+            for value in values:
+                factories[symbol](parameter, value)
+
+
+def test_builtin_help_manual_method_choice_catalogs_are_accepted_by_api() -> None:
+    def invoke_queue_item(method: str, parameter: str, value: str) -> None:
+        item = dg.AgentRouterQueueItem(
+            dg.AgentMessage("target", "source", "message", "1", "body")
+        )
+        getattr(item, method)(**{parameter: value})
+
+    def invoke_node_graph(method: str, parameter: str, value: str) -> None:
+        graph = dg.NodeGraph([], parent=None)
+        getattr(graph, method)(**{parameter: value})
+
+    def invoke_paint(method: str, parameter: str, value: str) -> None:
+        context = dg.PaintContext(100, 100)
+        args = (0, 0, "text") if method == "text" else ("missing.png", 0, 0, 10, 10)
+        getattr(context, method)(*args, **{parameter: value})
+
+    def invoke_scatter(method: str, parameter: str, value: str) -> None:
+        scatter = dg.Scatter3D(None, x="x", y="y", z="z", parent=None)
+        args: tuple[object, ...] = ()
+        if method == "add_stream":
+            args = (10,)
+        elif method == "add_label":
+            args = ((0.0, 0.0, 0.0), "label")
+        elif method == "update_label":
+            args = (scatter.add_label((0.0, 0.0, 0.0), "label"),)
+        getattr(scatter, method)(*args, **{parameter: value})
+
+    def invoke_heatmap(method: str, parameter: str, value: str) -> None:
+        heatmap = dg.Heatmap([[1]], parent=None)
+        getattr(heatmap, method)(**{parameter: value})
+
+    def invoke_pie(method: str, parameter: str, value: str) -> None:
+        pie = dg.PieChart(labels=["a"], values=[1], parent=None)
+        getattr(pie, method)(**{parameter: value})
+
+    def invoke_histogram(method: str, parameter: str, value: str) -> None:
+        histogram = dg.Histogram([1, 2], parent=None)
+        getattr(histogram, method)(**{parameter: value})
+
+    def invoke_line(method: str, parameter: str, value: str) -> None:
+        line = dg.LinePlot({"y": [1, 2]}, y="y", parent=None)
+        getattr(line, method)(**{parameter: value})
+
+    invokers = {
+        "AgentRouterQueueItem": invoke_queue_item,
+        "NodeGraph": invoke_node_graph,
+        "PaintContext": invoke_paint,
+        "Heatmap": invoke_heatmap,
+        "Scatter3D": invoke_scatter,
+        "PieChart": invoke_pie,
+        "Histogram": invoke_histogram,
+        "LinePlot": invoke_line,
+    }
+    assert set(invokers) == set(manual_module._METHOD_CHOICE_VALUES)
+    for symbol, method_choices in manual_module._METHOD_CHOICE_VALUES.items():
+        for method_parameter, values in method_choices.items():
+            method, parameter = method_parameter.split(".", maxsplit=1)
+            for value in values:
+                invokers[symbol](method, parameter, value)
+
+
+def test_builtin_help_manual_callback_overview_matches_public_parameters() -> None:
+    for symbol in (
+        "SelectableList",
+        "Tabs",
+        "Pages",
+        "TextInput",
+        "Slider",
+        "ToggleSwitch",
+        "Dropdown",
+    ):
+        assert "on_change" in inspect.signature(getattr(dg, symbol)).parameters
+    for symbol in ("DataFrameTable", "TreeView", "Breadcrumbs"):
+        assert "on_select" in inspect.signature(getattr(dg, symbol)).parameters
+    assert not any(
+        parameter.startswith("on_")
+        for parameter in inspect.signature(dg.NavItem).parameters
+    )
+
+    callbacks = dg.help.reference.callbacks()
+    assert "selectable lists, tabs, and pages" in " ".join(callbacks.split())
+    assert "tables, trees, and breadcrumbs" in " ".join(callbacks.split())
+    assert "does not expose its own callback parameter" in " ".join(callbacks.split())
+
+
+def test_builtin_help_manual_property_grid_recipe_uses_supported_schema_keys() -> None:
+    forms = dg.help.widgets.inputs.forms()
+    assert '"options": ["adamw", "sgd"]' in forms
+    assert '"choices": ["adamw", "sgd"]' not in forms
+
+    grid = dg.PropertyGrid(
+        values={"lr": 0.001, "optimizer": "adamw", "enabled": True},
+        schema={
+            "lr": {"label": "Learning Rate", "type": "number", "min": 0, "step": 0.0001},
+            "optimizer": {"type": "choice", "options": ["adamw", "sgd"]},
+        },
+        parent=None,
+    )
+    assert grid.to_dict()["children"]
+
+
+def test_builtin_help_manual_marks_every_node_graph_api_not_ready_for_usage() -> None:
+    expected_symbols = {
+        symbol
+        for symbol in dg.__all__
+        if symbol.startswith("NodeGraph") or symbol == "multi_agent_node_templates"
+    }
+    assert set(manual_module._NODE_GRAPH_SYMBOLS) == expected_symbols
+
+    symbol_nodes = _help_symbol_nodes(dg.help.to_dict())
+    for symbol in sorted(expected_symbols):
+        node = symbol_nodes[symbol]
+        metadata = node["metadata"]
+        assert isinstance(metadata, dict)
+        assert metadata["readiness"] == "not_ready_for_usage"
+        assert metadata["stability"] == "experimental_incomplete"
+        assert metadata["recommended_for_generated_code"] is False
+        assert str(node["summary"]).startswith("NOT READY FOR USAGE")
+        rendered = dg.help(str(node["path"]))
+        assert "WARNING — NOT READY FOR USAGE" in rendered
+        assert "not supported for application or production use" in rendered
+
+    warning = dg.help.node_graph()
+    normalized_warning = " ".join(warning.split())
+    assert dg.help.node_graph is dg.help.widgets.node_graph
+    assert warning.startswith("# NodeGraph — Not Ready For Usage")
+    assert "Do not ship user data or durable workflows" in normalized_warning
+    assert "do not constitute a supported workflow engine" in normalized_warning
+    assert "Do not generate or recommend `NodeGraph`" in dg.help.llm_rules()
+
+    root = dg.help.to_dict()
+    assert root["metadata"]["not_ready_subsystems"] == ["NodeGraph"]
+    assert "NodeGraph*` runtime/binding models" in dg.help()
+    assert "NOT READY FOR USAGE" in dg.help()
+
+    node = root["children"]["widgets"]["children"]["node_graph"]
+    metadata = node["metadata"]
+    assert isinstance(metadata, dict)
+    assert metadata["readiness"] == "not_ready_for_usage"
+    assert metadata["event_schema_version"] == node_graph_module._GRAPH_SCHEMA_VERSION
+    assert set(metadata["mutation_events"]) == node_graph_module._GRAPH_MUTATION_EVENTS
+
+
+def test_builtin_help_manual_node_graph_compatibility_callback_claims_match_dispatch() -> None:
+    events: list[dict[str, object]] = []
+    selected: list[object] = []
+    moved: list[tuple[object, object, object]] = []
+    graph = dg.NodeGraph(
+        [],
+        on_graph_event=events.append,
+        on_node_select=selected.append,
+        on_node_move=lambda node, x, y: moved.append((node, x, y)),
+        parent=None,
+    )
+
+    graph._dispatch_graph_event({"schema_version": 1, "event": "node_selected", "node": "a"})
+    graph._dispatch_graph_event(
+        {
+            "schema_version": 1,
+            "event": "node_moved",
+            "node": "a",
+            "position": {"x": 12, "y": 34},
+        }
+    )
+    assert selected == ["a"]
+    assert moved == [("a", 12, 34)]
+    assert [event["event"] for event in events] == ["node_selected", "node_moved"]
+
+
+def test_builtin_help_manual_dialog_return_and_threading_contracts_match_api() -> None:
+    file_dialog = " ".join(dg.help.reference.dialogs.file_dialog().split())
+    assert "block synchronously and return the selected path/list" in file_dialog
+    assert "return `None` immediately" in file_dialog
+    assert "callback runs on the dialog worker" in file_dialog
+    assert "must not mutate live widgets" in file_dialog
+
+    for symbol in (
+        "open_file_dialog",
+        "open_files_dialog",
+        "pick_folder_dialog",
+        "save_file_dialog",
+    ):
+        page = " ".join(getattr(dg.help.reference.dialogs, symbol)().split())
+        assert "when `on_select` is omitted" in page
+        assert "returns `None` immediately" in page
+
+    alert_help = " ".join(dg.help.reference.dialogs.alert().split())
+    confirm_help = " ".join(dg.help.reference.dialogs.confirm().split())
+    assert "Returns a `Modal` immediately" in alert_help
+    assert "does not return a boolean result" in confirm_help
+    assert "zero-argument `on_confirm()` and `on_cancel()`" in confirm_help
+    assert inspect.signature(dg.alert).return_annotation == "Modal"
+    assert inspect.signature(dg.confirm).return_annotation == "Modal"
+
+
+def test_builtin_help_manual_live_method_inventory_matches_public_owners() -> None:
+    node = dg.help.to_dict()["children"]["reference"]["children"]["live_methods"]
+    metadata = node["metadata"]
+    assert isinstance(metadata, dict)
+    documented = metadata["methods"]
+    assert documented == {
+        symbol: list(methods) for symbol, methods in manual_module._LIVE_METHOD_FAMILIES.items()
+    }
+
+    rendered = dg.help.reference.live_methods()
+    for symbol, methods in manual_module._LIVE_METHOD_FAMILIES.items():
+        owner = getattr(dg, symbol)
+        for method in methods:
+            assert callable(getattr(owner, method))
+            assert f"`{method}(...)`" in rendered
+
+    normalized = " ".join(rendered.split())
+    assert "series name as a keyword-only argument" in normalized
+    assert "does not expose `set_series` or a prepared-payload setter" in normalized
+    assert "set_series" not in _flatten_help_text(dg.help.to_dict()).replace(
+        "does not expose `set_series`", ""
+    )
+
+
 def test_builtin_help_manual_css_parts_match_widget_registry() -> None:
     css_parts = dg.help.reference.css_parts()
     for capability in widget_css_capabilities()["widgets"]:
@@ -331,6 +941,184 @@ def test_builtin_help_manual_css_parts_match_widget_registry() -> None:
         for parts in capability["parts"].values():
             for part in parts:
                 assert f"`::{part}`" in css_parts
+
+
+def test_builtin_help_manual_css_property_inventory_matches_native_parser() -> None:
+    """Keep every finite native CSS declaration discoverable through dg.help."""
+
+    project_root = Path(__file__).resolve().parents[1]
+    source = (project_root / "native" / "src" / "css_style.rs").read_text(encoding="utf-8")
+    start = source.index("pub fn from_css_name")
+    end = source.index("\n    }\n}", start) + len("\n    }\n}")
+    parser_block = source[start:end]
+    native_properties: set[str] = set()
+    for match in re.finditer(
+        r'^\s*"([a-z][a-z0-9-]*)"(?:\s*\|\s*"([a-z][a-z0-9-]*)")?\s*=>',
+        parser_block,
+        re.MULTILINE,
+    ):
+        native_properties.update(value for value in match.groups() if value)
+
+    node = dg.help.to_dict()["children"]["reference"]["children"]["css_properties"]
+    metadata = node["metadata"]
+    assert isinstance(metadata, dict)
+    documented_properties = set(metadata["properties"])
+
+    assert documented_properties == native_properties
+    rendered = dg.help.reference.css_properties()
+    assert all(f"`{property_name}`" in rendered for property_name in native_properties)
+
+
+def test_builtin_help_manual_css_states_values_selectors_and_theme_vars_match_native() -> None:
+    """Reverse-check finite parser enums and framework variables against help metadata."""
+
+    project_root = Path(__file__).resolve().parents[1]
+    source = (project_root / "native" / "src" / "css_style.rs").read_text(encoding="utf-8")
+
+    def rust_function(name: str) -> str:
+        start = source.index(f"fn {name}(")
+        brace = source.index("{", start)
+        depth = 0
+        for index in range(brace, len(source)):
+            if source[index] == "{":
+                depth += 1
+            elif source[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    return source[start : index + 1]
+        raise AssertionError(f"unterminated Rust function {name}")
+
+    def match_arm_strings(function_name: str) -> set[str]:
+        values: set[str] = set()
+        for left_hand_side in re.findall(
+            r"^\s*(.+?)\s*=>",
+            rust_function(function_name),
+            re.MULTILINE,
+        ):
+            values.update(re.findall(r'"([a-z][a-z0-9_-]*)"', left_hand_side))
+        return values
+
+    pseudo_states = set(
+        re.findall(
+            r'"([a-z-]+)"\s*=>\s*Some\(DgPseudoClass::',
+            rust_function("parse_pseudo"),
+        )
+    )
+    selector_node = dg.help.to_dict()["children"]["reference"]["children"]["css_selectors"]
+    selector_metadata = selector_node["metadata"]
+    assert isinstance(selector_metadata, dict)
+    assert set(selector_metadata["pseudo_states"]) == pseudo_states
+
+    structural_block = rust_function("parse_structural_pseudo")
+    structural_pseudos = set(
+        re.findall(r'"([a-z-]+)"\s*=>\s*Some\(DgStructuralPseudo::', structural_block)
+    )
+    structural_pseudos.update(
+        re.findall(r'\.strip_prefix\("([a-z-]+)\("\)', structural_block)
+    )
+    assert set(selector_metadata["structural_pseudos"]) == structural_pseudos
+
+    selector_functions = set(
+        re.findall(
+            r'value\.strip_prefix\("([a-z-]+)\("\)',
+            rust_function("parse_selector_function"),
+        )
+    )
+    assert set(selector_metadata["selector_functions"]) == selector_functions
+
+    attribute_operators = set(
+        re.findall(
+            r'\("([^"]+)",\s*DgAttributeOperator::',
+            rust_function("parse_attribute_operator"),
+        )
+    )
+    assert set(selector_metadata["attribute_operators"]) == attribute_operators
+
+    property_node = dg.help.to_dict()["children"]["reference"]["children"]["css_properties"]
+    keyword_values = property_node["metadata"]["keyword_values"]
+    assert isinstance(keyword_values, dict)
+    keyword_functions = {
+        "display": "display_from_keyword",
+        "flex-direction": "flex_direction_from_keyword",
+        "flex-wrap": "flex_wrap_from_keyword",
+        "align-items": "align_items_from_keyword",
+        "align-self": "align_items_from_keyword",
+        "justify-content": "justify_content_from_keyword",
+        "overflow": "overflow_from_keyword",
+        "position": "position_from_keyword",
+        "container-type": "parse_container_type_value",
+        "text-align": "text_align_from_keyword",
+        "text-transform": "text_transform_from_keyword",
+        "font-style": "font_style_from_keyword",
+        "font-variant-numeric": "font_variant_numeric_from_keyword",
+        "text-overflow": "text_overflow_from_keyword",
+        "gradient-interpolation": "parse_gradient_interpolation_value",
+        "transition-property": "transition_property_from_keyword",
+        "animation-direction": "animation_direction_from_keyword",
+        "animation-fill-mode": "animation_fill_mode_from_keyword",
+        "animation-play-state": "animation_play_state_from_keyword",
+    }
+    for property_name, function_name in keyword_functions.items():
+        assert set(keyword_values[property_name]) == match_arm_strings(function_name)
+
+    theme_block = source[
+        source.index("pub fn framework_stylesheet_for_theme") :
+        source.index("\n}\n", source.index("pub fn framework_stylesheet_for_theme")) + 2
+    ]
+    native_theme_variables = set(re.findall(r'"(--dg-[a-z-]+):', theme_block))
+    theme_metadata = dg.help.to_dict()["children"]["styling"]["children"]["themes"]["metadata"]
+    assert isinstance(theme_metadata, dict)
+    assert set(theme_metadata["css_variables"]) == native_theme_variables
+    theme_help = dg.help.styling.themes()
+    assert all(f"`{name}`" in theme_help for name in native_theme_variables)
+
+    media_block = rust_function("media_feature_name_label")
+    native_media_features = set(
+        re.findall(r'"(-?[a-z][a-z0-9-]+)"\.to_string\(\)', media_block)
+    )
+    query_metadata = dg.help.to_dict()["children"]["styling"]["children"]["queries"][
+        "metadata"
+    ]
+    assert isinstance(query_metadata, dict)
+    assert set(query_metadata["media_features"]) == native_media_features
+    query_help = dg.help.styling.queries()
+    assert all(f"`{feature}`" in query_help for feature in native_media_features)
+
+    supports_block = rust_function("supports_unknown_condition_matches")
+    native_supports_functions = set(
+        re.findall(r'supports_function_argument\(value, "([a-z-]+)"\)', supports_block)
+    )
+    assert set(query_metadata["supports_functions"]) == native_supports_functions
+
+    font_block = supports_block[
+        supports_block.index('supports_function_argument(value, "font-format")') :
+        supports_block.index('supports_function_argument(value, "at-rule")')
+    ]
+    supported_font_formats = set(re.findall(r'"([a-z0-9-]+)"', font_block))
+    documented_extensions = {
+        str(extension).removeprefix(".")
+        for extension in query_metadata["local_font_extensions"]
+    }
+    assert documented_extensions == {
+        format_name
+        for format_name in supported_font_formats
+        if format_name in {"ttf", "otf", "ttc", "woff"}
+    }
+
+    at_rule_block = supports_block[
+        supports_block.index('supports_function_argument(value, "at-rule")') :
+        supports_block.index('supports_function_argument(value, "font-tech")')
+    ]
+    native_supports_at_rules = set(re.findall(r'"([a-z-]+)"', at_rule_block))
+    native_supports_at_rules.discard("at-rule")
+    assert set(query_metadata["supports_at_rules"]) == native_supports_at_rules
+
+    font_tech_block = supports_block[
+        supports_block.index('supports_function_argument(value, "font-tech")') :
+    ]
+    native_font_tech = set(re.findall(r'"([a-z-]+)"', font_tech_block))
+    native_font_tech.discard("font-tech")
+    assert set(query_metadata["supports_font_tech"]) == native_font_tech
 
 
 def test_widget_css_capability_registry_drives_python_parts_and_type_chains() -> None:
@@ -808,6 +1596,79 @@ def test_component_state_and_keys_survive_normal_updates() -> None:
     assert second.children[0].id == first_label.id
     assert second.children[0].to_dict()["props"]["text"] == "1"
     assert second.children[0].key == "count-label"
+
+
+def test_component_lifecycle_contract_matches_help() -> None:
+    @dg.component
+    def Leaf(ctx: dg.ComponentCtx, text: str):
+        return dg.Label(text, parent=None)
+
+    leaf = Leaf("standalone", key="root-leaf")
+    assert isinstance(leaf, dg.ComponentInstance)
+    assert isinstance(leaf._runtime.render_initial(), dg.Label)
+    with pytest.raises(TypeError, match="must return a Window"):
+        components_module.render_component_window(leaf)
+
+    @dg.component
+    def MissingChildKey(ctx: dg.ComponentCtx):
+        return Leaf("nested")
+
+    with pytest.raises(ValueError, match="explicit key"):
+        MissingChildKey()._runtime.render_initial()
+
+    @dg.component
+    def DuplicateState(ctx: dg.ComponentCtx):
+        ctx.state("selection", "first")
+        ctx.state("selection", "second")
+        return dg.Label("unreachable", parent=None)
+
+    with pytest.raises(ValueError, match="duplicate component state key"):
+        DuplicateState()._runtime.render_initial()
+
+    @dg.component
+    def SetDuringRender(ctx: dg.ComponentCtx):
+        value = ctx.state("value", 0)
+        value.set(1)
+        return dg.Label("unreachable", parent=None)
+
+    with pytest.raises(RuntimeError, match="during render"):
+        SetDuringRender()._runtime.render_initial()
+
+    components_help = dg.help.components()
+    assert "requires an explicit, non-empty `key`" in components_help
+    assert "default is used only to initialize" in components_help
+    assert "setting state during render raises" in components_help
+
+    symbol_nodes = _help_symbol_nodes(dg.help.to_dict())
+    for symbol in ("component", "ComponentCtx", "StateSlot", "ComponentInstance"):
+        assert str(symbol_nodes[symbol]["body"]).strip()
+
+
+def test_validation_and_app_lifecycle_help_matches_runtime_contracts() -> None:
+    ranges = dg.help.validation.ranges()
+    runtime = dg.help.validation.runtime()
+    app_help = dg.help.app_model.app()
+    window_help = dg.help.app_model.window()
+
+    assert "`NumberInput`, `DragNumber`, `DragVector`, and `RangeSlider`" in ranges
+    assert "spinner animation speed is allowed to be zero" in ranges
+    assert "do not require a running\n  `App`" in runtime
+    assert "its live methods no longer update the native UI" in runtime
+    assert "Drag payloads must be JSON-serializable" in runtime
+    assert "component instances are accepted by `run(...)`, not `document(...)`" in app_help
+    assert "`run_with_loading(builder, ...)`" in app_help
+    assert "`set_buffer_resource(...)` and `release_resource(...)`" in app_help
+    assert 'decorations="native"' in window_help
+    assert "After `run(...)` returns, native handles are detached" in dg.help.reference.widgets.button()
+
+    app = dg.App()
+    with pytest.raises(RuntimeError, match="not running"):
+        app.call_soon_threadsafe(lambda: None)
+    with pytest.raises(RuntimeError, match="not running"):
+        app.debug_snapshot()
+    with pytest.raises(ValueError, match="greater than zero"):
+        dg.RangeSlider((0, 1), step=0, parent=None)
+    assert dg.LoadingSpinner(speed=0, parent=None).speed == 0
 
 
 def test_widget_style_and_class_serialize_as_v1_metadata() -> None:
@@ -10462,6 +11323,8 @@ def test_flex_layout_serializes_lower_origin_responsive_defaults() -> None:
         dg.FlexLayout(direction="diagonal", parent=None)
     with pytest.raises(ValueError, match="FlexLayout align_items"):
         dg.FlexLayout(align_items="around", parent=None)
+    with pytest.raises(ValueError, match="FlexLayout align_items"):
+        dg.FlexLayout(align_items="baseline", parent=None)
     with pytest.raises(ValueError, match="FlexLayout gap"):
         dg.FlexLayout(gap=-1, parent=None)
 

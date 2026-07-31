@@ -2311,7 +2311,6 @@ class FlexLayout(HLayout):
         "start",
         "end",
         "center",
-        "baseline",
         "flex-start",
         "flex-end",
     }
@@ -2341,7 +2340,7 @@ class FlexLayout(HLayout):
         if alignment_value not in self._ALIGNMENTS:
             raise ValueError(
                 "FlexLayout align_items must be stretch, start, end, center, "
-                "baseline, flex-start, or flex-end"
+                "flex-start, or flex-end"
             )
         gap_value = None if gap is None else _non_negative_finite_value(
             gap,

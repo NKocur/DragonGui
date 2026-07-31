@@ -414,6 +414,20 @@ _PUBLIC_EXPORT_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("dataclasses", _DATACLASS_SYMBOLS),
 )
 
+_NODE_GRAPH_SYMBOLS = frozenset(
+    symbol
+    for _group_name, symbols in _PUBLIC_EXPORT_GROUPS
+    for symbol in symbols
+    if symbol.startswith("NodeGraph") or symbol == "multi_agent_node_templates"
+)
+_NODE_GRAPH_READINESS_WARNING = (
+    "WARNING — NOT READY FOR USAGE: NodeGraph and its runtime/binding APIs are "
+    "experimental, incomplete, and not supported for application or production use. "
+    "They remain public for internal development and testing, may change incompatibly, "
+    "and should not be selected by generated code unless the user explicitly requests "
+    "NodeGraph experimentation."
+)
+
 _SECTION_NAME_OVERRIDES = {
     "DataFrameTable": "dataframe_table",
     "DateTimeInput": "date_time_input",
@@ -475,7 +489,7 @@ _SIGNATURE_OVERRIDES = {
 
 _SYMBOL_NOTES = {
     "App": "Owns the native runtime bridge, stylesheets, loading screen, toasts, and thread-safe scheduling.",
-    "Window": "Top-level application shell passed to `app.run(window)`.",
+    "Window": "Top-level application shell passed to `app.run(window)`; supports native or retained client decorations.",
     "AppShell": "Bounded top-level layout for sidebar plus flexible body apps.",
     "Body": "Flexible main app region that owns scrolling and avoids accidental horizontal overflow.",
     "WorkbenchLayout": "Full-height vertical shell for prompt-first workbench applications.",
@@ -489,6 +503,10 @@ _SYMBOL_NOTES = {
     "ScrollArea": "Explicit scroll owner for content that can exceed the available viewport.",
     "Splitter": "Resizable split layout with one or more `Pane` children.",
     "Modal": "Overlay dialog container; use `show()` and `close()` at runtime.",
+    "Tooltip": "Rich hover overlay with viewport-bounded placement and auto-height content sizing.",
+    "Tabs": "Route-style tab container whose optional `::header` strip owns its styled layout height.",
+    "Label": "Wrapping text leaf with intrinsic sizing and live `set_value(...)` updates.",
+    "DropZone": "Styled `DropTarget` convenience widget with a centered, intrinsically sized label.",
     "Button": "Standard command button with `on_click`.",
     "IconResolution": "Describes canonical built-in icon resolution, alias use, and fallback behavior.",
     "IconResource": "Bounded monochrome stroke geometry used for an application icon override.",
@@ -555,7 +573,206 @@ _SYMBOL_NOTES = {
     "ToastHandle": "Runtime handle returned from `toast(...)` for updating or dismissing notifications.",
 }
 
+_WIDGET_CHOICE_SOURCES: dict[str, dict[str, str]] = {
+    "ArrowButton": {"direction": "_DIRECTIONS"},
+    "FlexLayout": {
+        "direction": "_DIRECTIONS",
+        "align_items": "_ALIGNMENTS",
+    },
+    "RadioGroup": {"orientation": "_ORIENTATIONS"},
+    "Scatter3D": {"legend_position": "_LEGEND_POSITIONS"},
+    "ScrollArea": {"axis": "_AXES"},
+    "SelectableList": {"selection_mode": "_MODES"},
+    "Sidebar": {
+        "state": "_STATES",
+        "compact_mode": "_COMPACT_MODES",
+        "mobile_mode": "_MOBILE_MODES",
+    },
+    "ToggleSwitch": {"label_position": "_LABEL_POSITIONS"},
+    "Toolbar": {"orientation": "_ORIENTATIONS"},
+    "Window": {"decorations": "_DECORATION_MODES"},
+}
+
+_COLORMAP_VALUES = (
+    "blues", "cividis", "coolwarm", "gray", "greens", "grey", "hot",
+    "inferno", "magma", "plasma", "reds", "turbo", "viridis",
+)
+
+_PUBLIC_PARAMETER_CHOICE_VALUES: dict[str, dict[str, tuple[str, ...]]] = {
+    "AgentRouterQueueItem": {"status": ("delivered", "failed", "held", "queued")},
+    "Badge": {"level": ("danger", "error", "info", "neutral", "success", "warning")},
+    "LogView": {"variant": ("activity", "conversation", "debug", "default")},
+    "NodeGraph": {"runtime_policy": ("auto", "ephemeral", "manual", "persistent")},
+    "toast": {
+        "level": ("error", "info", "success", "warning"),
+        "position": ("bottom-left", "bottom-right", "top-left", "top-right"),
+    },
+    "ScatterFrameStream": {"handoff": ("callback", "direct")},
+    "ScatterLiveFrame": {"mode": ("actor", "primary")},
+    "FlowLayout": {
+        "align": ("center", "end", "start"),
+        "cross_align": ("center", "end", "start", "stretch"),
+    },
+    "Separator": {"orientation": ("auto", "horizontal", "vertical")},
+    "Splitter": {
+        "orientation": ("column", "h", "horizontal", "row", "v", "vertical", "x", "y")
+    },
+    "Image": {"fit": ("contain", "cover", "stretch")},
+    "Heatmap": {"colormap": _COLORMAP_VALUES},
+    "Scatter3D": {
+        "colormap": _COLORMAP_VALUES,
+        "scalar_bar_colormap": _COLORMAP_VALUES,
+    },
+    "ScatterPlot2D": {
+        "colormap": _COLORMAP_VALUES,
+        "scalar_bar_colormap": _COLORMAP_VALUES,
+    },
+    "PieChart": {
+        "aggregate": ("count", "max", "mean", "min", "sum"),
+        "label_mode": ("auto", "inside", "legend", "none", "outside"),
+        "value_mode": ("both", "none", "percent", "value"),
+        "legend_position": ("bottom", "left", "none", "right", "top"),
+    },
+    "Histogram": {
+        "mode": ("count", "density", "percent", "probability"),
+        "interaction": ("box_zoom", "inspect", "pan", "zoom"),
+    },
+    "BarChart": {
+        "aggregate": ("count", "max", "mean", "min", "sum"),
+        "orientation": ("horizontal", "vertical"),
+    },
+    "LinePlot": {
+        "interaction": ("box_zoom", "inspect", "pan", "zoom"),
+        "legend_position": ("bottom-left", "bottom-right", "top-left", "top-right"),
+        "line_style": ("dash", "dash-dot", "dashed", "dashdot", "dot", "dotted", "solid"),
+        "line_styles": ("dash", "dash-dot", "dashed", "dashdot", "dot", "dotted", "solid"),
+    },
+}
+
+_METHOD_CHOICE_VALUES: dict[str, dict[str, tuple[str, ...]]] = {
+    "AgentRouterQueueItem": {
+        "set_status.status": ("delivered", "failed", "held", "queued")
+    },
+    "NodeGraph": {
+        "resolved_runtime_policy.policy": ("auto", "ephemeral", "manual", "persistent")
+    },
+    "PaintContext": {
+        "text.align": ("center", "left", "right"),
+        "image.fit": ("contain", "cover", "stretch"),
+    },
+    "Heatmap": {"set_colormap.colormap": _COLORMAP_VALUES},
+    "Scatter3D": {
+        "add_stream.mode": ("append", "ring"),
+        "add_label.anchor": ("bottom", "center", "left", "right", "top"),
+        "update_label.anchor": ("bottom", "center", "left", "right", "top"),
+        "show_legend.position": ("bottom-left", "bottom-right", "top-left", "top-right"),
+        "set_point_style.style": ("circle", "gaussian", "square"),
+        "flatten_view.plane": ("xy", "xy-", "xz", "xz-", "yz", "yz-"),
+        "set_colormap.colormap": _COLORMAP_VALUES,
+        "show_scalar_bar.colormap": _COLORMAP_VALUES,
+        "scalar_bar.colormap": _COLORMAP_VALUES,
+    },
+    "PieChart": {
+        "set_label_mode.mode": ("auto", "inside", "legend", "none", "outside"),
+        "set_legend_position.position": ("bottom", "left", "none", "right", "top"),
+        "set_value_mode.mode": ("both", "none", "percent", "value"),
+    },
+    "Histogram": {"set_interaction.interaction": ("box_zoom", "inspect", "pan", "zoom")},
+    "LinePlot": {"set_interaction.interaction": ("box_zoom", "inspect", "pan", "zoom")},
+}
+
+_LIVE_METHOD_FAMILIES: dict[str, tuple[str, ...]] = {
+    "Label": ("set_value", "set_style", "set_class"),
+    "TextInput": ("set_value",),
+    "Checkbox": ("set_checked",),
+    "Dropdown": ("set_value",),
+    "DataFrameTable": ("set_frame",),
+    "LinePlot": ("set_data", "append_points", "clear", "fit"),
+    "Scatter3D": (
+        "set_points",
+        "set_prepared_points",
+        "enqueue_prepared_points",
+        "create_live_frame",
+        "fit",
+        "set_camera",
+    ),
+    "Modal": ("show", "close"),
+    "CommandPalette": ("show", "close"),
+    "ToastHandle": ("update", "dismiss"),
+}
+
 _REFERENCE_DETAILS = {
+    "Window": """
+`Window(..., decorations="native")` uses the platform titlebar.
+`decorations="client"` builds retained DragonGUI titlebar nodes so the chrome
+can be themed with CSS:
+
+- `WindowTitlebar` is the draggable titlebar surface.
+- `WindowTitle` shrinks to preserve the controls and uses ellipsis for a long
+  title.
+- `WindowMinimize`, `WindowMaximize`, and `WindowClose` are vector
+  `IconButton` controls with accessible names and wrapped tooltips.
+
+Client-decorated windows can be moved by dragging an unoccupied part of the
+titlebar. Interactive titlebar descendants keep their normal click behavior.
+Keep the titlebar in normal window flow; do not add a second application
+titlebar above it.
+""",
+    "Tooltip": """
+There are two tooltip forms:
+
+- Pass `tooltip="Short help text"` to a widget for a framework-managed static
+  tooltip. Static tooltips wrap and size their surface from the shaped text,
+  padding, border, and available viewport.
+- Use `Tooltip(target=widget, width=280, height=None)` for rich arbitrary
+  content. A missing height is content-sized; pass a positive height only when
+  the rich surface must be explicitly bounded.
+
+Tooltip clipping behavior: tooltips are promoted to window overlay space. They
+may extend beyond the target's panel or scroll clip, but remain constrained to
+the window viewport.
+Do not compensate for a parent panel with oversized fixed heights or negative
+margins.
+""",
+    "Tabs": """
+`Tabs` may own `Tab` page content or act as a standalone route strip. An
+unstyled container paints only the individual tab buttons. If CSS gives
+`Tabs::header` a height, background, border, or divider, the `Tabs` layout box
+owns that header height and subsequent siblings start below it.
+
+Use `Tab::tab`, `Tab::accent`, and `Tab::badge` for individual buttons. Use
+`Tabs::header` only for shared strip chrome. In scrollable workspaces, keep the
+tab strip outside the scroll owner when it should remain pinned.
+""",
+    "Label": """
+`Label(text, wrap=True)` wraps by default and contributes its shaped text size
+to normal layout. Use `wrap=False` for one-line status or chrome labels and
+pair constrained text with `text-overflow: ellipsis` plus hidden overflow when
+truncation is intentional.
+
+Intrinsic labels reserve their normal text insets and a small rasterization allowance,
+so examples should not add one-off width or padding hacks merely to
+keep the final character visible. Use `set_value(...)` for live text changes.
+""",
+    "DropZone": """
+`DropZone(label, accept=..., on_drop=...)` is a styled `DropTarget` convenience
+widget. It creates a child label and centers it on both axes with the same
+`align-items`/`justify-content` layout path available to other flex
+containers.
+
+```python
+dg.DropZone(
+    "Drop a sheet name here",
+    accept="forge-sheet",
+    style={"height": 96},
+    on_drop=handle_drop,
+)
+```
+
+The label retains intrinsic text width and rasterization room. Set the zone's
+height or padding for visual density; do not position the label manually.
+Use `DropTarget` instead when the target must contain arbitrary child widgets.
+""",
     "Terminal": """
 Use `Terminal` to embed an interactive command-line program in a DragonGUI app.
 It renders xterm.js inside `HtmlReport` and connects it to a localhost WebSocket
@@ -574,8 +791,9 @@ Runtime rules:
 - The widget starts a localhost bridge when it is constructed.
 - Call `terminal.stop()` when manually tearing down long-lived instances.
 - Interactive tools such as Codex and Claude Code need `pywinpty` on Windows.
-- The first implementation depends on WebView2 script support and CDN-hosted
-  xterm.js assets.
+- The embedded view needs WebView2 script support. DragonGUI loads its packaged
+  xterm.js, fit-addon, and stylesheet assets locally; normal terminal startup
+  does not depend on a CDN.
 """,
     "ExtensionWidget": """
 Use `ExtensionWidget` when a third-party/native leaf needs a stable serialized
@@ -687,9 +905,74 @@ their parent panel.
 Return `Size(width, height)` from `PaintWidget.measure(...)`. Width and height
 must be positive finite logical pixel values.
 """,
+    "component": """
+`@component` turns a function of `(ctx, *args, **kwargs)` into a reusable
+component definition. Calling it outside another component render returns a
+`ComponentInstance`. Calling it during a render immediately returns the child
+widget and requires an explicit, non-empty `key`.
+
+Every component function must return one DragonGUI `Widget`. When a component
+instance is passed as the root of `App.run(...)`, that widget must be a
+`Window`.
+""",
+    "ComponentCtx": """
+Call `ctx.state(key, default)` once per unique, non-empty key during each
+render. The default initializes a missing slot; later renders retain the
+current value rather than reapplying the default.
+
+`ctx.app` is `None` until the component tree is attached to a running app.
+Nested component identity is the component definition plus its explicit
+`key`.
+""",
+    "StateSlot": """
+Read state through `slot.value` and update it with `slot.set(value)`. A shallowly
+equal value is a no-op. Set state from event callbacks or scheduled work, not
+while the component function is rendering.
+
+For a mounted component, a changed value rerenders and patches its retained
+widget tree. A failed render or patch rolls the state value back and reraises
+the error. Before mounting, a setter updates stored state but has no live tree
+to patch.
+""",
+    "ComponentInstance": """
+A top-level component call produces a `ComponentInstance`; its optional `key`
+must be a non-empty string. `App.run(instance)` requires the component to
+render a `Window`. Nested components are rendered directly and must always be
+called with an explicit stable key.
+""",
 }
 
 _PARAMETER_NOTES = {
+    "FileDialog": (
+        "Without `on_select`, methods block synchronously and return the selected path/list, or `None` on cancel.",
+        "With `on_select`, methods return `None` immediately and run the native dialog on a background thread.",
+        "Pass `app` with an asynchronous callback to schedule it through `app.call_soon_threadsafe`; without `app`, the callback runs on the dialog worker and must not mutate live widgets.",
+        "`filters` is a sequence of `(label, extensions)` pairs with non-empty labels and extension lists.",
+    ),
+    "open_file_dialog": (
+        "Returns one path or `None` synchronously when `on_select` is omitted.",
+        "With `on_select`, returns `None` immediately; pass `app` before mutating live widgets in the callback.",
+    ),
+    "open_files_dialog": (
+        "Returns a list of paths or `None` synchronously when `on_select` is omitted.",
+        "With `on_select`, returns `None` immediately; pass `app` before mutating live widgets in the callback.",
+    ),
+    "pick_folder_dialog": (
+        "Returns one folder path or `None` synchronously when `on_select` is omitted.",
+        "With `on_select`, returns `None` immediately; pass `app` before mutating live widgets in the callback.",
+    ),
+    "save_file_dialog": (
+        "Returns one save path or `None` synchronously when `on_select` is omitted.",
+        "With `on_select`, returns `None` immediately; pass `app` before mutating live widgets in the callback.",
+    ),
+    "alert": (
+        "Returns a `Modal` immediately; it does not block for a result.",
+        "`on_close()` is the completion notification and receives no arguments.",
+    ),
+    "confirm": (
+        "Returns a `Modal` immediately; it does not return a boolean result.",
+        "Use zero-argument `on_confirm()` and `on_cancel()` callbacks for the decision.",
+    ),
     "Terminal": (
         "`command` is the executable or argv sequence to wrap.",
         "Install `pywinpty` on Windows for Codex/Claude-style interactive PTY behavior.",
@@ -703,6 +986,7 @@ _PARAMETER_NOTES = {
     "Window": (
         "`title` is required.",
         "`width` and `height` are startup size hints; layout should still be responsive.",
+        "`decorations` is `native` or `client`; client chrome is CSS-styleable and its titlebar is draggable.",
     ),
     "AppShell": (
         "Use directly inside `Window` for app-style layouts.",
@@ -733,7 +1017,7 @@ _PARAMETER_NOTES = {
     "Tabs": (
         "`value` selects the active child tab; omit it to select the first tab.",
         "`Tabs::header` is opt-in chrome: unstyled tabs render without a full-width colored header band.",
-        "Style `Tabs::header` only when you want a strip, divider, or custom background behind the tab buttons.",
+        "A styled `Tabs::header` height is owned by the Tabs layout box, so following content starts below the strip.",
     ),
     "Tab": (
         "`label` is the visible tab text.",
@@ -760,6 +1044,20 @@ _PARAMETER_NOTES = {
     "ScrollArea": (
         "Use as the explicit owner for scrollable content.",
         "`height` or flex constraints usually need to bound the scroll area.",
+    ),
+    "Tooltip": (
+        "`target` accepts a widget or widget id.",
+        "`width` must be positive; `height=None` sizes rich tooltip content automatically.",
+        "Tooltip geometry escapes ancestor panel clips but remains bounded by the window viewport.",
+    ),
+    "Label": (
+        "`wrap=True` is the default; use `wrap=False` for deliberate single-line text.",
+        "Labels contribute shaped intrinsic text size and support live `set_value(...)` updates.",
+    ),
+    "DropZone": (
+        "`label` is centered on both axes by the widget's default flex alignment.",
+        "`accept` filters drag kinds and `on_drop(DragDropPayload)` receives accepted drops.",
+        "Set the surface height or padding for density; do not manually offset the child label.",
     ),
     "Splitter": (
         "`orientation` controls horizontal vs vertical panes.",
@@ -811,9 +1109,12 @@ _PARAMETER_NOTES = {
         "`on_change(PropertyChange)` receives edited keys and values.",
     ),
     "NodeGraph": (
+        "NOT READY FOR USAGE: this API is experimental and incomplete; do not use it in application or production code.",
         "`nodes` accepts `NodeGraphNode` instances or mappings. "
         "Use `NodeGraphEdge` to connect output ports to input ports. "
-        "`on_node_select(node_id)` and `on_node_move(node_id, x, y)` receive canvas interactions."
+        "`on_node_select(node_id)` and `on_node_move(node_id, x, y)` are compatibility callbacks.",
+        "`on_graph_event(payload)` receives schema-versioned mapping payloads for all canvas events. "
+        "Event names, payload fields, runtime policies, bindings, templates, and persistence behavior are not stable.",
     ),
     "DataFrameTable": (
         "`frame` can be a pandas/polars-like object or DragonGUI table payload.",
@@ -879,7 +1180,7 @@ _PARAMETER_NOTES = {
 }
 
 _EXAMPLE_METADATA: dict[str, dict[str, tuple[str, ...]]] = {
-    "Terminal": {"examples": ("examples/all_features_v3_demo.py",)},
+    "Terminal": {"examples": ("examples/older/all_features_v3_demo.py",)},
     "Panel": {
         "probes": (
             "examples/css_feature_probes/layout_panel_bounds_probe.py",
@@ -1191,16 +1492,20 @@ def _css_parts_for_symbol(name: str) -> tuple[str, tuple[str, ...]]:
 
 def _summary_for_symbol(name: str, category: str) -> str:
     if name in _SYMBOL_NOTES:
-        return _SYMBOL_NOTES[name]
-    if category == "widget":
-        return f"Public widget reference for `{name}`."
-    if category == "dataclass":
-        return f"Public payload/data structure reference for `{name}`."
-    if category == "dialog":
-        return f"Dialog API reference for `{name}`."
-    if category == "component":
-        return f"Component model reference for `{name}`."
-    return f"Runtime API reference for `{name}`."
+        summary = _SYMBOL_NOTES[name]
+    elif category == "widget":
+        summary = f"Public widget reference for `{name}`."
+    elif category == "dataclass":
+        summary = f"Public payload/data structure reference for `{name}`."
+    elif category == "dialog":
+        summary = f"Dialog API reference for `{name}`."
+    elif category == "component":
+        summary = f"Component model reference for `{name}`."
+    else:
+        summary = f"Runtime API reference for `{name}`."
+    if name in _NODE_GRAPH_SYMBOLS:
+        return f"NOT READY FOR USAGE — experimental NodeGraph API. {summary}"
+    return summary
 
 
 def _reference_leaf(
@@ -1226,6 +1531,8 @@ def _reference_leaf(
         "",
         summary,
     ]
+    if symbol in _NODE_GRAPH_SYMBOLS:
+        lines[0:0] = [_NODE_GRAPH_READINESS_WARNING, ""]
     parameter_notes = _PARAMETER_NOTES.get(symbol, ())
     if parameter_notes:
         lines.extend(
@@ -1261,9 +1568,66 @@ def _reference_leaf(
             [
                 "",
                 "Live updates:",
-                "Use the widget's live methods after `app.run(...)` has bound native handles. Prefer live methods over rebuilding large subtrees.",
+                "Use the widget's live methods from callbacks or scheduled work while the `app.run(...)` event loop is active. After `run(...)` returns, native handles are detached. Prefer live methods over rebuilding large subtrees.",
             ]
         )
+    special_metadata: dict[str, object] = {}
+    if symbol in _NODE_GRAPH_SYMBOLS:
+        special_metadata.update(
+            {
+                "readiness": "not_ready_for_usage",
+                "stability": "experimental_incomplete",
+                "recommended_for_generated_code": False,
+            }
+        )
+    choice_sources = _WIDGET_CHOICE_SOURCES.get(symbol, {})
+    choices = {
+        parameter_name: sorted(values)
+        for parameter_name, values in _PUBLIC_PARAMETER_CHOICE_VALUES.get(symbol, {}).items()
+    }
+    if choice_sources:
+        widget_class = _object_for_symbol(symbol)
+        for parameter_name, constant_name in choice_sources.items():
+            values = sorted(getattr(widget_class, constant_name))
+            choices[parameter_name] = values
+    if choices:
+        lines.extend(["", "Accepted choices:"])
+        lines.extend(
+            f"- `{parameter_name}`: "
+            + ", ".join(f"`{value}`" for value in values)
+            for parameter_name, values in choices.items()
+        )
+        special_metadata["choices"] = choices
+    method_choices = {
+        method_parameter: sorted(values)
+        for method_parameter, values in _METHOD_CHOICE_VALUES.get(symbol, {}).items()
+    }
+    if method_choices:
+        lines.extend(["", "Accepted live/drawing method choices:"])
+        lines.extend(
+            f"- `{method_parameter}`: "
+            + ", ".join(f"`{value}`" for value in values)
+            for method_parameter, values in method_choices.items()
+        )
+        special_metadata["method_choices"] = method_choices
+    if symbol == "BUILTIN_ICONS":
+        from .icons import BUILTIN_ICONS
+
+        icon_names = sorted(BUILTIN_ICONS)
+        lines.extend(["", "Canonical icon names:", *(f"- `{name}`" for name in icon_names)])
+        special_metadata["values"] = icon_names
+    elif symbol == "ICON_ALIASES":
+        from .icons import ICON_ALIASES
+
+        aliases = dict(sorted(ICON_ALIASES.items()))
+        lines.extend(
+            [
+                "",
+                "Accepted aliases:",
+                *(f"- `{alias}` → `{canonical}`" for alias, canonical in aliases.items()),
+            ]
+        )
+        special_metadata["aliases"] = aliases
     extra = _REFERENCE_DETAILS.get(symbol)
     if extra:
         lines.extend(["", "Details:", extra.strip()])
@@ -1297,6 +1661,7 @@ def _reference_leaf(
         metadata["parameter_notes"] = list(parameter_notes)
     for label, paths in example_metadata.items():
         metadata[label] = list(paths)
+    metadata.update(special_metadata)
 
     return _section(
         _symbol_to_section_name(symbol),
@@ -1358,6 +1723,90 @@ def _css_parts_reference() -> HelpSection:
     )
 
 
+_CSS_PSEUDO_STATES = (
+    "hover",
+    "active",
+    "focus",
+    "disabled",
+    "checked",
+    "open",
+    "expanded",
+    "collapsed",
+    "selected",
+)
+_CSS_STRUCTURAL_PSEUDOS = (
+    "first-child",
+    "last-child",
+    "only-child",
+    "empty",
+    "nth-child",
+    "nth-last-child",
+)
+_CSS_SELECTOR_FUNCTIONS = ("not", "is", "where", "has")
+_CSS_ATTRIBUTE_OPERATORS = ("=", "~=", "^=", "$=", "*=", "|=")
+_THEME_CSS_VARIABLES = (
+    "--dg-radius",
+    "--dg-font-size",
+    "--dg-spacing",
+    "--dg-space-xs",
+    "--dg-space-sm",
+    "--dg-space-md",
+    "--dg-space-lg",
+    "--dg-space-xl",
+    "--dg-font-family",
+    "--dg-monospace-font-family",
+    "--dg-line-height",
+    "--dg-control-height",
+    "--dg-compact-control-height",
+    "--dg-border-width",
+    "--dg-focus-width",
+    "--dg-focus-offset",
+    "--dg-panel-padding",
+    "--dg-toolbar-gap",
+)
+_CSS_MEDIA_FEATURES = (
+    "width",
+    "height",
+    "aspect-ratio",
+    "resolution",
+    "-webkit-device-pixel-ratio",
+    "-moz-device-pixel-ratio",
+    "device-width",
+    "device-height",
+    "device-aspect-ratio",
+    "horizontal-viewport-segments",
+    "vertical-viewport-segments",
+    "color",
+    "color-index",
+    "monochrome",
+    "color-gamut",
+    "video-color-gamut",
+    "orientation",
+    "scan",
+    "grid",
+    "environment-blending",
+    "pointer",
+    "any-pointer",
+    "hover",
+    "any-hover",
+    "nav-controls",
+    "update",
+    "scripting",
+    "forced-colors",
+    "prefers-contrast",
+    "inverted-colors",
+    "dynamic-range",
+    "video-dynamic-range",
+    "display-mode",
+    "overflow-block",
+    "overflow-inline",
+    "prefers-reduced-motion",
+    "prefers-reduced-transparency",
+    "prefers-reduced-data",
+    "prefers-color-scheme",
+)
+
+
 def _css_selectors_reference() -> HelpSection:
     lines = [
         "DragonGUI CSS supports public type selectors, class selectors, pseudo states, and registered parts.",
@@ -1374,8 +1823,16 @@ def _css_selectors_reference() -> HelpSection:
             "Selector forms:",
             "- `Button { ... }` for exact public widget type rules.",
             "- `.primary { ... }` for class rules from `class_=\"primary\"`.",
+            "- `#widget-id { ... }`, `[key=\"row-a\"]`, and general stable widget-attribute selectors.",
             "- `Button:hover { ... }`, `Dropdown:open { ... }`, and `Tab:selected { ... }` for state rules.",
             "- `NumberInput::field { ... }` and `Button::badge { ... }` for part rules.",
+            "- `Panel Button` and `Panel > Button` for descendant and direct-child relationships.",
+            "- `:first-child`, `:last-child`, `:only-child`, `:empty`, `:nth-child(...)`, and `:nth-last-child(...)` for structural matching.",
+            "- `:not(...)`, `:is(...)`, `:where(...)`, and the supported relational `:has(...)` subset.",
+            "- Attribute operators `=`, `~=`, `^=`, `$=`, `*=`, and `|=`; optional `i`/`s` flags select ASCII-insensitive or explicit case-sensitive comparison.",
+            "- `::before` and `::after` for generated text content on widget kinds registered for generated-content parts.",
+            "",
+            "`:has(...)` supports descendant, direct-child (`>`), next-sibling (`+`), and subsequent-sibling (`~`) relations. Its dynamic target-state subset is intentionally bounded; unsupported selectors are skipped with warnings.",
         ]
     )
     return _section(
@@ -1383,49 +1840,290 @@ def _css_selectors_reference() -> HelpSection:
         "CSS Selectors Reference",
         "Type, class, state, and part selector forms supported by DragonGUI.",
         "\n".join(lines),
+        metadata={
+            "pseudo_states": list(_CSS_PSEUDO_STATES),
+            "structural_pseudos": list(_CSS_STRUCTURAL_PSEUDOS),
+            "selector_functions": list(_CSS_SELECTOR_FUNCTIONS),
+            "attribute_operators": list(_CSS_ATTRIBUTE_OPERATORS),
+        },
     )
 
 
 def _css_states_reference() -> HelpSection:
-    states = (
-        "hover",
-        "focus",
-        "active",
-        "disabled",
-        "checked",
-        "selected",
-        "open",
-        "expanded",
-        "collapsed",
+    body = "Supported pseudo states:\n" + "\n".join(
+        f"- `:{state}`" for state in _CSS_PSEUDO_STATES
     )
-    body = "Supported pseudo states:\n" + "\n".join(f"- `:{state}`" for state in states)
     return _section(
         "css_states",
         "CSS States Reference",
         "Pseudo states available to DragonGUI CSS rules.",
         body,
-        metadata={"states": list(states)},
+        metadata={"states": list(_CSS_PSEUDO_STATES)},
     )
 
 
+_CSS_PROPERTY_GROUPS: dict[str, tuple[str, ...]] = {
+    "layout": (
+        "display",
+        "flex",
+        "flex-direction",
+        "flex-wrap",
+        "flex-grow",
+        "flex-shrink",
+        "flex-basis",
+        "align-items",
+        "align-self",
+        "justify-content",
+        "width",
+        "height",
+        "min-width",
+        "min-height",
+        "max-width",
+        "max-height",
+        "padding",
+        "padding-left",
+        "padding-right",
+        "padding-top",
+        "padding-bottom",
+        "margin",
+        "margin-left",
+        "margin-right",
+        "margin-top",
+        "margin-bottom",
+        "gap",
+        "row-gap",
+        "column-gap",
+        "grid-template-columns",
+        "grid-template-rows",
+        "grid-template-areas",
+        "grid-auto-flow",
+        "grid-area",
+        "grid-column",
+        "grid-row",
+        "container-name",
+        "container-type",
+        "overflow",
+        "overflow-x",
+        "overflow-y",
+        "position",
+        "top",
+        "right",
+        "bottom",
+        "left",
+        "z-index",
+    ),
+    "visual": (
+        "background",
+        "background-color",
+        "background-image",
+        "background-noise",
+        "gradient-interpolation",
+        "backdrop-filter",
+        "foreground",
+        "border",
+        "border-color",
+        "border-width",
+        "border-style",
+        "border-top",
+        "border-right",
+        "border-bottom",
+        "border-left",
+        "border-top-color",
+        "border-right-color",
+        "border-bottom-color",
+        "border-left-color",
+        "border-top-width",
+        "border-right-width",
+        "border-bottom-width",
+        "border-left-width",
+        "border-top-style",
+        "border-right-style",
+        "border-bottom-style",
+        "border-left-style",
+        "border-radius",
+        "border-top-left-radius",
+        "border-top-right-radius",
+        "border-bottom-right-radius",
+        "border-bottom-left-radius",
+        "outline",
+        "outline-color",
+        "outline-width",
+        "outline-style",
+        "outline-offset",
+        "box-shadow",
+        "opacity",
+        "accent",
+        "track-color",
+        "thumb-color",
+        "transform",
+        "translate",
+        "scale",
+        "rotate",
+    ),
+    "text-and-generated-content": (
+        "color",
+        "font-size",
+        "font-family",
+        "font-weight",
+        "font-style",
+        "font-variant-numeric",
+        "text-align",
+        "text-transform",
+        "text-overflow",
+        "letter-spacing",
+        "line-height",
+        "content",
+    ),
+    "motion": (
+        "transition",
+        "transition-property",
+        "transition-duration",
+        "transition-delay",
+        "transition-timing-function",
+        "animation",
+        "animation-name",
+        "animation-duration",
+        "animation-delay",
+        "animation-timing-function",
+        "animation-iteration-count",
+        "animation-direction",
+        "animation-fill-mode",
+        "animation-play-state",
+    ),
+    "widget-specific": (
+        "text-area-rows",
+        "scatter-point-size",
+        "scatter-point-style",
+        "scatter-grid-visible",
+        "scatter-grid-planes",
+        "scatter-legend-position",
+        "scatter-orientation-axes",
+        "table-row-height",
+        "table-header-height",
+        "table-column-width",
+        "table-index-width",
+    ),
+}
+
+_CSS_KEYWORD_VALUES: dict[str, tuple[str, ...]] = {
+    "display": ("flex", "grid", "block", "none"),
+    "flex-direction": (
+        "row",
+        "column",
+        "row-reverse",
+        "row_reverse",
+        "column-reverse",
+        "column_reverse",
+    ),
+    "flex-wrap": ("nowrap", "wrap", "wrap-reverse", "wrap_reverse"),
+    "align-items": ("start", "flex-start", "center", "end", "flex-end", "stretch"),
+    "align-self": ("start", "flex-start", "center", "end", "flex-end", "stretch"),
+    "justify-content": (
+        "start",
+        "flex-start",
+        "center",
+        "end",
+        "flex-end",
+        "space-between",
+        "space-around",
+        "space-evenly",
+    ),
+    "overflow": ("visible", "hidden", "clip", "scroll", "auto"),
+    "position": ("static", "relative", "absolute", "fixed"),
+    "container-type": ("normal", "inline-size"),
+    "text-align": ("left", "start", "center", "middle", "right", "end"),
+    "text-transform": ("none", "uppercase", "lowercase", "capitalize"),
+    "font-style": ("normal", "italic"),
+    "font-variant-numeric": ("normal", "tabular-nums", "tabular_nums"),
+    "text-overflow": ("clip", "ellipsis"),
+    "gradient-interpolation": ("srgb", "linear-srgb", "oklab"),
+    "transition-property": (
+        "all",
+        "background",
+        "background-color",
+        "foreground",
+        "border-color",
+        "border-width",
+        "border-radius",
+        "outline",
+        "outline-style",
+        "outline-color",
+        "outline-width",
+        "outline-offset",
+        "opacity",
+        "color",
+        "accent",
+        "track-color",
+        "thumb-color",
+        "box-shadow",
+        "transform",
+        "translate",
+        "scale",
+        "rotate",
+    ),
+    "animation-direction": ("normal", "reverse", "alternate", "alternate-reverse"),
+    "animation-fill-mode": ("none", "forwards", "backwards", "both"),
+    "animation-play-state": ("running", "paused"),
+}
+
+
 def _css_properties_reference() -> HelpSection:
-    body = """
+    inventory = "\n".join(
+        f"- {group}: " + ", ".join(f"`{name}`" for name in properties)
+        for group, properties in _CSS_PROPERTY_GROUPS.items()
+    )
+    keyword_inventory = "\n".join(
+        f"- `{property_name}`: " + ", ".join(f"`{value}`" for value in values)
+        for property_name, values in _CSS_KEYWORD_VALUES.items()
+    )
+    body = f"""
 Supported property groups:
-- Layout: `width`, `height`, `min_width`, `min_height`, `max_width`, `max_height`, `flex_grow`, `flex_shrink`, `gap`, `padding`, `margin`, `align_items`, `justify_content`.
-- Grid: `columns`, `rows`, `min_column_width`, grid gaps, and masonry options through widget props.
+- Flex/layout: `display`, `flex-direction`, `flex-wrap`, `flex`,
+  `flex-grow`, `flex-shrink`, `flex-basis`, `align-items`, `align-self`,
+  `justify-content`, dimensions, gaps, padding, and margin. Alignment values
+  include `start`, `center`, `end`, and `stretch`; `justify-content` also
+  accepts `space-between`, `space-around`, and `space-evenly`.
+- Grid: `grid-template-columns`, `grid-template-rows`,
+  `grid-template-areas`, `grid-auto-flow`, `grid-area`, `grid-column`, and
+  `grid-row`. `GridLayout` also exposes responsive columns, minimum column
+  width, last-row balancing, and masonry packing through widget arguments.
 - Overflow: `overflow`, `overflow_x`, `overflow_y`, and explicit `ScrollArea` ownership.
+- Positioning: `position` (`static`, `relative`, `absolute`, or `fixed`),
+  `top`, `right`, `bottom`, `left`, and local paint-order `z-index`.
 - Visual: `background`, `color`, `border`, `border_radius`, `box_shadow`, `outline`, opacity, and named theme tokens.
-- Text: font size, weight, family, line height, and alignment properties supported by the renderer.
-- Motion: transform and transition properties supported by the native style engine.
+- Text: font size/family/weight/style, line height, letter spacing,
+  transformation, numeric variant, alignment, and text overflow.
+- Motion: transforms, transitions, and the supported visual `@keyframes`
+  animation slice.
 - Plot-specific: labels, value-label colors, colorbar spacing, and registered plot parts.
 
-Unsupported browser features should be treated as no-ops unless a feature probe shows support.
+Unsupported declarations and selectors are skipped with stylesheet warnings.
+Use `app.debug_snapshot()` to inspect warnings, unmatched selectors, computed
+values, and property provenance.
+
+Exact accepted property inventory:
+{inventory}
+
+Accepted keyword values for commonly authored enum properties:
+{keyword_inventory}
 """
     return _section(
         "css_properties",
         "CSS Properties Reference",
         "Supported CSS property families and practical limits.",
         body,
+        metadata={
+            "property_groups": {
+                group: list(properties) for group, properties in _CSS_PROPERTY_GROUPS.items()
+            },
+            "properties": [
+                name for properties in _CSS_PROPERTY_GROUPS.values() for name in properties
+            ],
+            "keyword_values": {
+                property_name: list(values)
+                for property_name, values in _CSS_KEYWORD_VALUES.items()
+            },
+        },
     )
 
 
@@ -1434,7 +2132,9 @@ def _css_limits_reference() -> HelpSection:
 DragonGUI CSS is a renderer-specific subset, not a browser engine.
 
 Practical limits:
-- Unsupported browser selectors and properties should be treated as no-ops.
+- Unsupported selectors and declarations are skipped and reported in
+  stylesheet warnings; malformed stylesheets can be rejected without replacing
+  the active cascade.
 - Prefer explicit layout widgets over browser-only layout concepts.
 - Use registered widget parts from `reference.css_parts`; arbitrary pseudo
   elements are not available.
@@ -1452,15 +2152,18 @@ Practical limits:
 
 
 def _live_methods_reference() -> HelpSection:
-    body = """
-Common live methods by family:
-- Values: `set_value`, `set_checked`, dropdown/select setters, and text setters.
-- Style: `set_style`, `set_class`, and stylesheet updates through `App`.
-- Tables: `DataFrameTable.set_frame(...)`.
-- Line plots: `LinePlot.append_points(...)`, series replacement, and prepared payload updates.
-- Scatter plots: `set_points`, `set_prepared_points`, `enqueue_prepared_points`, `create_live_frame`, `fit`, and camera methods.
-- Overlays: `Modal.show()`, `Modal.close()`, command palette show/close flows.
-- Notifications: `toast_handle.update(...)` and `toast_handle.dismiss()`.
+    inventory = "\n".join(
+        f"- `{symbol}`: " + ", ".join(f"`{method}(...)`" for method in methods)
+        for symbol, methods in _LIVE_METHOD_FAMILIES.items()
+    )
+    body = f"""
+Common live methods by public owner:
+{inventory}
+
+`LinePlot.append_points(x_values, y_values=None, *, series=None,
+max_points=None)` takes the series name as a keyword-only argument. Use
+`set_data(...)` for replacement; `LinePlot` does not expose `set_series` or a
+prepared-payload setter.
 
 Keep live update callbacks short. For slow work, schedule from worker threads
 with `app.call_soon_threadsafe(...)` and coalesce high-rate updates before they
@@ -1471,6 +2174,11 @@ reach the UI.
         "Live Methods Reference",
         "Runtime mutation methods grouped by widget family.",
         body,
+        metadata={
+            "methods": {
+                symbol: list(methods) for symbol, methods in _LIVE_METHOD_FAMILIES.items()
+            }
+        },
     )
 
 
@@ -1478,12 +2186,15 @@ def _callbacks_reference() -> HelpSection:
     body = """
 Common callback shapes:
 - `on_click()` for buttons, toolbar actions, menu items, and commands.
-- `on_change(value)` for inputs, sliders, toggles, dropdowns, and editors.
-- `on_select(selection)` for tables, selectable lists, tabs, pages, and navigation.
+- `on_change(value)` for inputs, sliders, toggles, dropdowns, editors,
+  selectable lists, tabs, and pages.
+- `on_select(selection)` for tables, trees, and breadcrumbs. `NavItem` changes
+  the route owned by `Pages`; it does not expose its own callback parameter.
 - `on_sort(TableSort)` for sortable tables.
 - `on_hover(payload)` and `on_pick(payload)` for plots.
 - `on_drop(DragDropPayload)` for drag/drop targets and zones.
-- `Command.on_run()` and `CommandPalette.on_run(command)` for palette actions.
+- A `Command` entry's `on_run()` callback and the palette-level
+  `on_run(command)` callback for command-palette actions.
 - `ExtensionWidget`/`PaintWidget` support `on_pointer_down(PaintPointerEvent)`,
   `on_pointer_move(PaintPointerEvent)`, `on_pointer_up(PaintPointerEvent)`,
   `on_wheel(PaintPointerEvent)`, and focused `on_key_down(PaintKeyEvent)`.
@@ -1500,24 +2211,41 @@ and live update methods for results.
     )
 
 
-def _drag_drop_reference() -> HelpSection:
-    symbols = ("DragSource", "DropTarget", "DropZone", "DragDropPayload")
+def _drag_drop_reference(
+    widgets: HelpSection,
+    dataclasses: HelpSection,
+) -> HelpSection:
     body = """
 Drag/drop is composed from source widgets, target widgets, zones, and payloads.
 
 Use:
 - `DragSource(...)` for content that can start a drag.
-- `DropTarget(...)` for one target.
-- `DropZone(...)` for grouped targets or lane-style UIs.
+- `DropTarget(accept=kind, on_drop=handle_drop)` for a transparent target
+  containing arbitrary children.
+- `DropZone("Label", accept=kind, on_drop=handle_drop)` for a styled target
+  with a centered text label.
 - `DragDropPayload` in `on_drop` callbacks.
+
+`DragSource.drag_kind` is matched against a target's `accept` value. During an
+active drag, DragonGUI shows its drag cursor/preview feedback; application code
+does not need to create a cursor icon. Keep source and target content inside
+normal flex/grid layout so the hit regions track their painted surfaces.
 """
-    return _section(
+    section = _section(
         "drag_drop",
         "Drag And Drop Reference",
         "Drag/drop widgets, payloads, and callbacks.",
         body,
-        [_reference_leaf(symbol, "widget" if symbol != "DragDropPayload" else "dataclass") for symbol in symbols],
     )
+    section.aliases.update(
+        {
+            "drag_source": widgets.children["drag_source"],
+            "drop_target": widgets.children["drop_target"],
+            "drop_zone": widgets.children["drop_zone"],
+            "drag_drop_payload": dataclasses.children["drag_drop_payload"],
+        }
+    )
+    return section
 
 
 def _build_reference_sections() -> HelpSection:
@@ -1610,7 +2338,7 @@ you need a specific symbol.
             dialogs,
             dataclasses,
             widgets,
-            _drag_drop_reference(),
+            _drag_drop_reference(widgets, dataclasses),
             css_parts,
             css_selectors,
             css_states,
@@ -1649,6 +2377,10 @@ When generating DragonGUI code:
 - Use CSS tokens (`accent`, `surface`, `text`, `danger`, etc.) for reusable
   styling; use literal colors only for data encodings.
 - For large plots/tables, choose packed/live update APIs.
+- Do not generate or recommend `NodeGraph`, `NodeGraph*` runtime/binding APIs,
+  or `multi_agent_node_templates` for normal applications. They are not ready
+  for usage and may be used only when the user explicitly requests experimental
+  NodeGraph development or testing.
 """,
     )
 
@@ -1688,7 +2420,7 @@ Rules:
         "Application object, runtime bridge, stylesheets, and diagnostics.",
         """
 Signature:
-`App(title="DragonGUI", theme=None, metadata={}, loading_screen=None)`
+`App(title="DragonGUI", theme=None, metadata=<new dict>, loading_screen=None)`
 
 Use:
 ```python
@@ -1698,7 +2430,8 @@ result = app.run(win)
 ```
 
 Important methods:
-- `document(window)` serializes startup state without running the GUI.
+- `document(window)` serializes a `Window` without starting or binding the GUI;
+  component instances are accepted by `run(...)`, not `document(...)`.
 - `stylesheet(css)`, `load_stylesheet(path)`, and `clear_stylesheets()` manage
   user CSS before and during runtime.
 - `set_stylesheet(id, css)` atomically adds or replaces one named user sheet
@@ -1706,10 +2439,16 @@ Important methods:
 - `set_theme(theme)` replaces active design tokens without rebuilding the
   widget tree. Interaction state, focus, selection, pages, and scrolling stay
   native and survive the switch.
+- `set_icon_theme(overrides)` replaces semantic icon mappings at startup or
+  live without changing layout.
 - `set_image_resource(id, bytes_or_path)` registers or live-replaces a bounded
   PNG/JPEG application resource for CSS `app-resource("id", fit)` backgrounds;
   `release_image_resource(id)` removes it.
-- `run(window)` starts the native event loop.
+- `run(window_or_component)` starts and blocks in the native event loop, then
+  returns its result dictionary after the window exits. A component root must
+  render a `Window`.
+- `run_with_loading(builder, ...)` displays the native loading window before
+  invoking an expensive window/component builder and replacing the placeholder.
 - `debug_snapshot(timeout_ms=1000)` returns runtime/layout/style diagnostics.
 - `request_redraw()` asks the native runtime to draw another frame.
 - `request_exit()` closes the app.
@@ -1717,9 +2456,16 @@ Important methods:
   producer/background threads. Reusing a key keeps only the newest pending
   snapshot callback; omit the key for events and append-only streams.
 - `toast(...)` posts a native notification and returns a `ToastHandle`.
+- `set_buffer_resource(...)` and `release_resource(...)` manage retained native
+  buffers while the app is running. Supplying a widget owner makes removal of
+  that widget release its buffers automatically.
 
-Named stylesheet and theme changes are safe inside `call_soon_threadsafe`.
-See `examples/runtime_theme_switching_demo.py` for live Nexus, Windows 3.11,
+`call_soon_threadsafe`, toasts, diagnostics, redraw/exit requests, and generic
+buffer methods require a running app. Startup CSS, themes, icon mappings, and
+image resources can be configured before `run(...)`; their setters also have
+live paths. Named stylesheet and theme changes are safe inside
+`call_soon_threadsafe`.
+See `examples/older/runtime_theme_switching_demo.py` for live Nexus, Windows 3.11,
 and classic Mac-style switching.
 """,
     )
@@ -1729,10 +2475,12 @@ and classic Mac-style switching.
         "Top-level native window and root widget tree.",
         """
 Signature:
-`Window(title, width=1024, height=768, id=None, key=None, class_=None, style=None)`
+`Window(title, width=1024, height=768, decorations="native", id=None, key=None, class_=None, style=None)`
 
 Rules:
 - Create the `Window` outside any active container context.
+- `decorations` accepts `"native"` or `"client"`. Client decorations expose a
+  CSS-styleable, draggable DragonGUI titlebar and window-control buttons.
 - The window is a container, so widgets created after it attach into it unless
   another context is active.
 - For app shells, place `MenuBar` first, the main body next, and `StatusBar`
@@ -1843,7 +2591,7 @@ Guidelines:
 - Use `width` or CSS width for side panels; let main content flex.
 - Use `gap` and `padding` on the panel, not spacer widgets between every row.
 - Use `Panel::accent` in CSS for the left accent strip.
-- For variable card grids, use `GridLayout(..., masonry=True)` when available.
+- For variable card grids, use `GridLayout(masonry=True)` when available.
 """,
     )
     splitters = _section(
@@ -1888,7 +2636,8 @@ with dg.HLayout(style={"gap": 12}):
 ```
 
 Use `FlowLayout` for badges, tags, and compact buttons that should wrap.
-`HLayout` itself does not wrap.
+`HLayout` defaults to one line, but CSS/inline `flex_wrap: "wrap"` can enable
+wrapping when a general flex row is preferable to `FlowLayout`.
 Use `Spacer(width=...)` or `Spacer(style={"flex_grow": 1})` only when the
 blank space is semantically useful.
 
@@ -1900,6 +2649,11 @@ with dg.HLayout(style={"gap": 8, "align_items": "center"}):
     dg.Spacer(style={"flex_grow": 1})
     dg.Button("Restart")
 ```
+
+Use `justify_content` to distribute children on the main axis and
+`align_items` for the cross axis. A child may override the cross-axis choice
+with `align_self`. These properties work through widget defaults, inline
+snake-case styles, and stylesheet kebab-case declarations.
 """,
     )
     flow = _section(
@@ -1937,6 +2691,9 @@ and `balance_last_row=True` centers an incomplete non-masonry final row.
 
 Use grid for dashboards with repeated cards. Use masonry card packing when
 cards have different natural heights and should not reserve a full row height.
+In an ordinary auto-row grid, auto-height panels grow to include normal-flow
+children and their resolved bottom padding; explicit row templates and fixed
+heights remain authoritative.
 
 Examples:
 ```python
@@ -1993,6 +2750,11 @@ Overlay widgets should not consume layout space:
 
 Use `close_button=True` on modals when a top-right close affordance should be
 rendered by the framework.
+
+Static text tooltips wrap and size from shaped content. Rich
+`Tooltip(target=widget, height=None)` surfaces auto-size their content. Tooltip geometry
+is promoted above ancestor panel/scroll clips while remaining bounded by the
+window viewport.
 """,
     )
     layout = _section(
@@ -2011,6 +2773,9 @@ Important:
 - Do not use overlays as normal children when you expect them to float.
 - Titled panels reserve their header and clip children in the body below; add
   `overflow_y: "auto"` or a nested `ScrollArea` when that body must scroll.
+- Paint and text from scrolled plots remain clipped to the plot/widget body;
+  fixed tab, toolbar, and titlebar siblings should stay outside that scroll
+  owner.
 - Snapshot issues `below-minimum-viewport` and `unreachable-root-overflow`
   identify responsive-minimum and missing-scroll-owner problems.
 """,
@@ -2120,7 +2885,7 @@ dg.PropertyGrid(
     values={"lr": 0.001, "optimizer": "adamw", "enabled": True},
     schema={
         "lr": {"label": "Learning Rate", "type": "number", "min": 0, "step": 0.0001},
-        "optimizer": {"type": "choice", "choices": ["adamw", "sgd"]},
+        "optimizer": {"type": "choice", "options": ["adamw", "sgd"]},
     },
     on_change=lambda change: print(change.key, change.value),
 )
@@ -2241,7 +3006,7 @@ commands = [
     dg.Command("run", "Run Training", on_run=start_training, keywords=["train"]),
     dg.Command("stop", "Stop Run", on_run=stop_training),
 ]
-palette = dg.CommandPalette(commands, close_button=True)
+palette = dg.CommandPalette(commands, close_on_run=True)
 ```
 
 Call `palette.show()` and `palette.close()` at runtime.
@@ -2300,7 +3065,7 @@ plot = dg.LinePlot(frame, x="step", y=["loss", "accuracy"],
 
 Live methods:
 - `set_data(frame, x=None, y=None, ...)`
-- `append_points(series, x_values, y_values)` for streaming.
+- `append_points(x_values, y_values=None, *, series=None, max_points=None)` for streaming.
 - `clear(series=None)`
 - `fit()`
 - `set_line_width`, `set_grid_visible`, `set_axes_visible`,
@@ -2315,8 +3080,9 @@ plot widget for every frame.
         "Scatter3D And ScatterPlot2D",
         "GPU point-cloud plots with picking, streaming, labels, overlays, and camera controls.",
         """
-Use `Scatter3D(frame, x, y, z, color=None, scalars=None, point_size=4.0)` for
-true 3D data. Use `ScatterPlot2D(frame, x, y, ...)` for fixed 2D scatter.
+Use `Scatter3D(frame, x="x", y="y", z="z", color=None, scalars=None,
+point_size=4.0)` for true 3D data. Use
+`ScatterPlot2D(frame, x="x", y="y")` for fixed 2D scatter.
 
 Color inputs:
 - `color="column"` or `scalars="column"` for scalar colormap values.
@@ -2372,9 +3138,9 @@ readability and theme integration.
 Available plot widgets:
 - `LinePlot(frame, y="loss", x=None, colors=None)` with `set_data`,
   `append_points`, `clear`, `fit`, and toolbar/grid/axes controls.
-- `Scatter3D(frame, x, y, z, color=None, colormap="viridis")` with GPU point
+- `Scatter3D(frame, x="x", y="y", z="z", color=None, colormap="viridis")` with GPU point
   clouds, labels, overlays, meshes, streams, picking, and camera controls.
-- `ScatterPlot2D(frame, x, y, ...)` uses the scatter backend in fixed 2D mode.
+- `ScatterPlot2D(frame, x="x", y="y")` uses the scatter backend in fixed 2D mode.
 - `Histogram`, `BarChart`, `Heatmap`, and `PieChart`.
 
 Performance rule: for large or streaming data, prefer packed/live methods such
@@ -2413,12 +3179,52 @@ created from a local path or raw HTML; prefer local resources for reliable
 native app behavior.
 """,
     )
+    from . import node_graph as node_graph_module
+
+    node_graph_mutation_events = sorted(node_graph_module._GRAPH_MUTATION_EVENTS)
+    node_graph_help = _section(
+        "node_graph",
+        "NodeGraph — Not Ready For Usage",
+        "Experimental and incomplete NodeGraph APIs that must not be used in applications yet.",
+        f"""
+{_NODE_GRAPH_READINESS_WARNING}
+
+Current development-only surface:
+- `NodeGraph` serializes an HTML/canvas editor and version-1 graph data.
+- `on_graph_event(payload)` receives the current schema-versioned event mapping.
+- `on_node_select(node_id)` and `on_node_move(node_id, x, y)` are compatibility
+  callbacks accepted through `**callbacks`; they are not a general callback API.
+- Current mutation event names are:
+  {", ".join(f"`{event}`" for event in node_graph_mutation_events)}.
+
+Known readiness limitations:
+- Event names, payload fields, graph schema, templates, runtime policies,
+  bindings, persistence, execution behavior, and compatibility callbacks may
+  change without migration support.
+- Runtime/session APIs include partially integrated experimental paths and do
+  not constitute a supported workflow engine.
+- Do not ship user data or durable workflows in the current graph format.
+- Do not generate new NodeGraph application code unless the user explicitly
+  requests work on this experimental subsystem.
+
+The public symbols remain available so DragonGUI contributors can test and
+develop the subsystem. Their presence in `dragongui.__all__` is not a readiness
+or compatibility guarantee.
+""",
+        metadata={
+            "readiness": "not_ready_for_usage",
+            "stability": "experimental_incomplete",
+            "recommended_for_generated_code": False,
+            "event_schema_version": node_graph_module._GRAPH_SCHEMA_VERSION,
+            "mutation_events": node_graph_mutation_events,
+        },
+    )
     widgets = _section(
         "widgets",
         "Widgets",
         "Catalog of common controls and data widgets.",
         "Most widgets accept `id`, `key`, `class_`, `style`, `tooltip`, and `parent`.",
-        [inputs, navigation, tables, plots, feedback, media],
+        [inputs, navigation, tables, plots, feedback, media, node_graph_help],
     )
 
     selectors = _section(
@@ -2490,8 +3296,23 @@ Inline style part names accept dashed or snake-case names.
 Common layout properties:
 `display`, `width`, `height`, `min-width`, `min-height`, `max-width`,
 `max-height`, `padding`, `margin`, `gap`, `row-gap`, `column-gap`,
-`flex-grow`, `flex-shrink`, `flex-wrap`, `overflow`, `overflow-x`, `overflow-y`,
-`align-items`, `justify-content`, grid track properties.
+`flex`, `flex-direction`, `flex-grow`, `flex-shrink`, `flex-basis`,
+`flex-wrap`, `align-items`, `align-self`, `justify-content`, `overflow`,
+`overflow-x`, `overflow-y`, `position`, inset properties, `z-index`,
+container-query properties, and grid track/placement properties.
+
+Flex alignment:
+- `align-items`: `start`/`flex-start`, `center`, `end`/`flex-end`, or `stretch`.
+- `align-self`: `start`/`flex-start`, `center`, `end`/`flex-end`, or `stretch`.
+- `justify-content`: `start`, `center`, `end`, `space-between`,
+  `space-around`, or `space-evenly`; `flex-start` and `flex-end` are accepted
+  aliases.
+
+Grid CSS includes `grid-template-columns`, `grid-template-rows`,
+`grid-template-areas`, `grid-auto-flow`, `grid-area`, `grid-column`, and
+`grid-row`. Track lists support logical pixels, percentages, `fr`, `auto`,
+`minmax()`, `fit-content()`, finite `repeat()`, and first-slice
+`repeat(auto-fit|auto-fill, ...)`.
 
 Common visual properties:
 `background`, `background-color`, gradients/background paint,
@@ -2542,16 +3363,48 @@ stylesheets. Examples: `{"border_radius": 8}` and `border-radius: 8px;`.
         "queries",
         "Media, Container, Supports, And Fonts",
         "Advanced stylesheet features available in the native CSS subset.",
-        """
+        f"""
 DragonGUI supports a native subset of:
-- `@media` rules for viewport/scale conditions.
-- Container queries for width/inline-size conditions.
+- `@media` rules for viewport size, orientation, resolution/scale, display
+  capabilities, color scheme, contrast, reduced-motion/transparency/data, and
+  the other capabilities listed by the CSS parser.
+- Named or unnamed container queries for width/inline-size conditions.
 - `@supports` declarations and selector capability checks.
 - `@font-face` for supported local font formats.
+- Visual `@keyframes` animations and generated `::before`/`::after` text
+  content.
+
+Exact supported media features:
+{", ".join(f"`{feature}`" for feature in _CSS_MEDIA_FEATURES)}
+
+Media types are `all` and `screen`. Container queries support `width` and
+`inline-size` conditions for named or nearest eligible ancestors.
+`@supports` accepts declaration tests, `selector(...)`, `not`, `and`, and
+`or`. Capability functions include `font-format(...)`,
+`at-rule(media|supports|container|keyframes|font-face)`, and
+`font-tech(features-opentype)`. Local fonts support installed family names and
+local `.ttf`, `.otf`, `.ttc`, and `.woff` files plus supported base64 font
+data; remote URLs and WOFF2 loading are not supported.
 
 Use these sparingly for reusable app themes. Keep widget-local sizing in inline
 style when the value is semantically tied to the widget instance.
 """,
+        metadata={
+            "media_types": ["all", "screen"],
+            "media_features": list(_CSS_MEDIA_FEATURES),
+            "container_features": ["width", "inline-size"],
+            "supports_operators": ["not", "and", "or", "selector"],
+            "supports_functions": ["font-format", "at-rule", "font-tech"],
+            "supports_at_rules": [
+                "media",
+                "supports",
+                "container",
+                "keyframes",
+                "font-face",
+            ],
+            "supports_font_tech": ["features-opentype"],
+            "local_font_extensions": [".ttf", ".otf", ".ttc", ".woff"],
+        },
     )
     themes = _section(
         "themes",
@@ -2565,6 +3418,13 @@ Themes provide colors and spacing tokens. CSS can reference tokens such as
 `Theme.spacing` derives `space_xs`, `space_sm`, `space_md`, `space_lg`, and
 `space_xl` for Python layout arguments. CSS exposes the same scale as
 `--dg-space-xs` through `--dg-space-xl`.
+
+The complete framework CSS variable set is `--dg-radius`, `--dg-font-size`,
+`--dg-spacing`, `--dg-space-xs`, `--dg-space-sm`, `--dg-space-md`,
+`--dg-space-lg`, `--dg-space-xl`, `--dg-font-family`,
+`--dg-monospace-font-family`, `--dg-line-height`, `--dg-control-height`,
+`--dg-compact-control-height`, `--dg-border-width`, `--dg-focus-width`,
+`--dg-focus-offset`, `--dg-panel-padding`, and `--dg-toolbar-gap`.
 
 High-value system defaults are also theme tokens: `font_family`,
 `monospace_font_family`, `base_line_height`, `control_height`,
@@ -2587,6 +3447,7 @@ domain-specific visual encodings.
 Theme fields accept CSS color strings, RGB/RGBA sequences, and token-like values
 where the style parser supports them.
 """,
+        metadata={"css_variables": list(_THEME_CSS_VARIABLES)},
     )
     styling = _section(
         "styling",
@@ -2675,7 +3536,7 @@ Pattern:
 def worker():
     while running:
         xs, ys = read_batch()
-        app.call_soon_threadsafe(lambda: plot.append_points("loss", xs, ys))
+        app.call_soon_threadsafe(lambda: plot.append_points(xs, ys, series="loss"))
 ```
 
 Guidelines:
@@ -2699,7 +3560,7 @@ Examples:
 ```python
 progress.set_value(0.42)
 table.set_frame(df)
-plot.append_points("loss", xs, ys)
+plot.append_points(xs, ys, series="loss")
 scatter.set_points(df, x="x", y="y", z="z", fit=True)
 modal.show()
 toast_handle.update("Done", level="success")
@@ -2718,13 +3579,28 @@ Use `@dg.component` for stateful reusable views. State is keyed, not positional.
 @dg.component
 def Tool(ctx, frame):
     selected = ctx.state("selected", "loss")
-    return dg.Panel(children=[
-        dg.Dropdown(["loss", "accuracy"], value=selected.value, on_change=selected.set),
-        dg.LinePlot(frame, y=selected.value),
-    ])
+    with dg.Panel(parent=None) as panel:
+        dg.Dropdown(["loss", "accuracy"], value=selected.value, on_change=selected.set)
+        dg.LinePlot(frame, y=selected.value)
+    return panel
 ```
 
-Use stable `key` values for children whose live state should survive rerenders.
+Lifecycle rules:
+- Calling a component outside another component render returns a
+  `ComponentInstance`. A component passed to `App.run(...)` must render a
+  `Window`; other component instances may render any single DragonGUI widget.
+- Calling one component inside another renders the child immediately and
+  requires an explicit, non-empty `key`. Its state identity is the component
+  definition plus that key, so use stable keys and do not reuse one key for
+  different logical children.
+- `ctx.state(key, default)` requires a unique, non-empty key per render. The
+  default is used only to initialize a missing slot.
+- Read `slot.value` while rendering. Call `slot.set(...)` from an event callback
+  or scheduled task; setting state during render raises an error.
+- A changed mounted value rerenders and patches the retained widget tree. An
+  equal value is a no-op, and a failed update rolls the value back.
+- Child component state is retained while that keyed child remains active and
+  discarded when it is omitted from a later parent render.
 """,
     )
 
@@ -2758,10 +3634,13 @@ or styling.
         "Common scalar/range validation failures.",
         """
 Rules:
-- Numeric values used by `NumberInput`, `DragNumber`, sliders, progress bars,
-  and plot limits must be finite.
-- `max` must be greater than or equal to `min`.
-- `step`, drag `speed`, sizes, and dimensions must be positive when required.
+- `NumberInput`, `DragNumber`, `DragVector`, and `RangeSlider` values and bounds
+  must be finite. Plot limits and color ranges that accept explicit bounds also
+  reject non-finite values.
+- Numeric controls reject a `max` below `min`. Slider, range-slider, and
+  progress values outside the range are clamped.
+- `step`, drag `speed`, sizes, and dimensions must be positive when required;
+  spinner animation speed is allowed to be zero.
 - `RangeSlider` values must contain exactly two values.
 - `DragVector` supports one to four finite components and labels must match
   component count.
@@ -2795,7 +3674,9 @@ Rules:
 - Stylesheets must be non-empty strings.
 - Unknown CSS parts raise clear errors, for example styling `NumberInput::thumb`
   when that widget has no `thumb` part.
-- Theme/loading/toast colors must be valid strings or RGB/RGBA tuples.
+- `Theme` color fields are CSS-style strings parsed by the native CSS color
+  parser. `LoadingScreen` colors accept strings or three/four-channel numeric
+  sequences, which are normalized to RGBA tuples.
 - Use `dg.help.reference.css_parts()` and `dg.help.reference.css_properties()`
   before inventing selectors or browser CSS.
 """,
@@ -2823,14 +3704,19 @@ Rules:
         "Common app, window, callback, and thread-safety validation failures.",
         """
 Rules:
-- Create widgets while a window/container context is active, or pass an explicit
-  `parent`.
-- Do not call live widget methods after the widget has been removed.
+- Create widgets while a window/container context is active, pass an explicit
+  container `parent`, or use `parent=None` for an intentionally detached tree.
+- After a widget is removed from the retained tree, its Python object may still
+  change but its live methods no longer update the native UI.
 - Call UI mutation APIs from the GUI thread, or use `app.call_soon_threadsafe`
   from worker threads.
 - Toast updates require a running app and a valid toast handle.
-- Dialog helpers require the native backend and a running app context.
-- Drag/drop payload ids and accepted type names must be non-empty strings.
+- File-dialog helpers call the native backend but do not require a running
+  `App`. Without a callback they block and return the selection. With a
+  callback they return immediately; pass `app` to marshal that callback onto
+  the GUI queue before it mutates live widgets.
+- Drag payloads must be JSON-serializable. Explicit drag kinds and every
+  `accept` entry must be non-empty strings; omitting `accept` accepts any kind.
 """,
     )
     validation = _section(
@@ -2906,8 +3792,8 @@ Relevant probes: `data_table_upgrades_probe.py`,
         "Fast update paths for line, scatter, heatmap, and chart widgets.",
         """
 Rules:
-- `LinePlot`: use `append_points(...)` or prepared payload replacement; batch
-  samples before calling into the UI.
+- `LinePlot`: use `append_points(..., series="name")` for streaming or
+  `set_data(...)` for replacement; batch samples before calling into the UI.
 - `Scatter3D`/`ScatterPlot2D`: use packed/prepared payloads for dense data.
 - `Scatter3D`: use `create_live_frame(...)`, `enqueue_prepared_points(...)`,
   LOD, and auto quality for repeated high-count replacement.
@@ -2933,8 +3819,8 @@ Relevant probes: `line_plot_stream_benchmark_probe.py`,
         "Fast paths for streaming and repeatedly updated line plots.",
         """
 Rules:
-- Create the `LinePlot` once and update it with `append_points(...)`,
-  `set_series(...)`, or prepared series payloads.
+- Create the `LinePlot` once and update it with
+  `append_points(x_values, y_values, series="name")` or `set_data(...)`.
 - Batch samples before crossing the Python/native boundary.
 - Keep x/y series lengths aligned and avoid per-point widget updates.
 - Use fixed visible windows or decimation for long-running streams.
@@ -2944,7 +3830,7 @@ Rules:
         metadata={
             "probes": [
                 "examples/css_feature_probes/line_plot_stream_benchmark_probe.py",
-                "examples/all_features_v3_demo.py",
+                "examples/older/all_features_v3_demo.py",
             ]
         },
     )
@@ -3110,9 +3996,9 @@ app.run(win)
 ```
 
 Use one primary scroll owner if total content can exceed the viewport. Use
-`GridLayout(..., masonry=True)` when card heights differ.
+`GridLayout(masonry=True)` when card heights differ.
 
-Related example: `examples/all_features_v3_demo.py`.
+Related example: `examples/older/all_features_v3_demo.py`.
 """,
     )
     form_recipe = _section(
@@ -3173,7 +4059,7 @@ with dg.VLayout(style={"height": "100%", "gap": 8, "padding": 10}):
         with dg.Menu("File"):
             dg.MenuItem("Open", on_click=open_file)
     with dg.HLayout(style={"flex_grow": 1, "gap": 10, "min_height": 0}):
-        with dg.Sidebar("Navigation", width=220): ...
+        with dg.Sidebar(title="Navigation", width=220): ...
         with dg.ScrollArea(style={"flex_grow": 1, "min_height": 0}): ...
     with dg.StatusBar():
         dg.Label("Ready")
@@ -3182,7 +4068,7 @@ with dg.VLayout(style={"height": "100%", "gap": 8, "padding": 10}):
 Keep one primary scroll owner in the body. Give the body `flex_grow` and
 `min_height: 0` so it fits the window instead of pushing below the status bar.
 
-Related example: `examples/all_features_v3_demo.py`.
+Related example: `examples/older/all_features_v3_demo.py`.
 """,
     )
     settings_panel_recipe = _section(
@@ -3217,8 +4103,8 @@ Create the plot once, then append or replace series data through live methods:
 plot = dg.LinePlot(frame, x="step", y=["loss", "accuracy"], show_toolbar=True)
 
 def on_batch(step, loss, accuracy):
-    plot.append_points("loss", [step], [loss])
-    plot.append_points("accuracy", [step], [accuracy])
+    plot.append_points([step], [loss], series="loss")
+    plot.append_points([step], [accuracy], series="accuracy")
 ```
 
 `LinePlot.append_points(...)` is the common path for small streaming batches.
@@ -3258,7 +4144,7 @@ Pattern:
 ```python
 with dg.Panel("Data"):
     dg.SearchBox(placeholder="Filter rows")
-    table = dg.DataFrameTable(frame, sortable=True, selectable=True)
+    table = dg.DataFrameTable(frame, sortable=True, on_select=select_row)
 ```
 
 Use `DataFrameTable.set_frame(...)` when filters change. Keep the table in a
@@ -3276,8 +4162,10 @@ Use `DragSource` for the draggable item and `DropTarget` or `DropZone` for
 receivers. Use badges or ghost previews so users can see what is being dragged.
 
 ```python
-dg.DragSource("metric:latency", children=[dg.Badge("Latency", parent=None)])
-dg.DropTarget("lane-a", on_drop=handle_drop)
+with dg.DragSource({"metric": "latency"}, drag_kind="metric"):
+    dg.Badge("Latency")
+
+dg.DropZone("Drop metric here", accept="metric", on_drop=handle_drop)
 ```
 
 Keep drag rows in `FlowLayout` or flexible `HLayout` containers so badges do
@@ -3318,10 +4206,10 @@ existing DragonGUI primitives:
 ```python
 @dg.component
 def MetricTile(ctx, title, value, level="info"):
-    return dg.Panel(children=[
-        dg.Label(title, parent=None),
-        dg.Badge(value, level=level, parent=None),
-    ])
+    with dg.Panel(parent=None) as panel:
+        dg.Label(title)
+        dg.Badge(value, level=level)
+    return panel
 ```
 
 Use `ExtensionWidget` only when a renderer/native extension leaf is required.
@@ -3343,7 +4231,8 @@ Use an app-shell layout with:
 
 Keep training work off the UI thread. Push metric updates through
 `app.call_soon_threadsafe(...)`, `LinePlot.append_points(...)`,
-`ProgressBar.set_value(...)`, `LogView.append(...)`, and table/label setters.
+`ProgressBar.set_value(...)`, `LogView.append_line(...)`, and table/label
+setters.
 
 Related example: `examples/older/pytorch_training_dashboard.py`.
 """,
@@ -3389,10 +4278,10 @@ Example:
 ```python
 @dg.component
 def StatusTile(ctx, title, value, level="info"):
-    return dg.Panel(children=[
-        dg.Label(title),
-        dg.Badge(value, level=level),
-    ])
+    with dg.Panel(parent=None) as panel:
+        dg.Label(title)
+        dg.Badge(value, level=level)
+    return panel
 ```
 
 V5 currently includes `PaintWidget`/`PaintContext` for native display-list
@@ -3733,7 +4622,7 @@ the most likely framework/layout cause and the feature probes that isolate it.
         """
 Useful tools:
 - `app.debug_snapshot()` returns runtime, layout, style, command, and widget data.
-- `python -m py_compile examples/foo.py` catches Python syntax errors.
+- `python -m py_compile path/to/demo.py` catches Python syntax errors.
 - Set `DRAGONGUI_SMOKE_FRAMES=3` to run short GUI smoke checks.
 - Feature probes in `examples/css_feature_probes` isolate widgets and layout cases.
 
@@ -3754,6 +4643,10 @@ Usage:
 - `dg.help("widgets.plots")` returns a section by path.
 - `dg.help.search("scatter streaming")` returns matching section metadata.
 - `dg.help.to_dict()` returns structured data for tool or LLM ingestion.
+
+Readiness warning: `NodeGraph`, all `NodeGraph*` runtime/binding models, and
+`multi_agent_node_templates` are experimental and NOT READY FOR USAGE. Do not
+use or recommend them for applications or production workflows.
 """,
         [
             llm_rules,
@@ -3774,6 +4667,7 @@ Usage:
             troubleshooting,
             debugging,
         ],
+        metadata={"not_ready_subsystems": ["NodeGraph"]},
     )
 
     root.aliases.update(
@@ -3794,6 +4688,7 @@ Usage:
             "charts": plots,
             "scatter": scatter_plot,
             "line_plot": line_plot,
+            "node_graph": node_graph_help,
             "css": styling,
             "parts": parts,
             "themes": themes,
