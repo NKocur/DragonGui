@@ -6690,6 +6690,11 @@ mod tests {
         assert!(single_line_text_defaults_to_ellipsis(WidgetKind::Button));
         assert!(single_line_text_defaults_to_ellipsis(WidgetKind::Dropdown));
         assert!(single_line_text_defaults_to_ellipsis(WidgetKind::Tab));
+        assert!(single_line_text_defaults_to_ellipsis(WidgetKind::Panel));
+        assert!(single_line_text_defaults_to_ellipsis(WidgetKind::NavItem));
+        assert!(single_line_text_defaults_to_ellipsis(
+            WidgetKind::LoadingSpinner
+        ));
         assert!(!single_line_text_defaults_to_ellipsis(WidgetKind::Label));
         assert!(!single_line_text_defaults_to_ellipsis(WidgetKind::TextArea));
     }

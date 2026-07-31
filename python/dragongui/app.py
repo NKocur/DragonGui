@@ -503,6 +503,19 @@ class App:
         else:
             self._handle.call_soon_threadsafe(fn, coalesce_key=coalesce_key)
 
+    def update_batch(self) -> Any:
+        """Return a nestable context that batches live property setters.
+
+        The app must be running. Collected setters update Python widget state
+        immediately and are submitted in one ordered native packet when the
+        outer context exits. Duplicate widget/property writes keep the last
+        value. Non-property commands act as ordering barriers, and exceptions
+        flush pending setters before propagating; batches are not transactions.
+        """
+        if self._handle is None:
+            raise RuntimeError("DragonGUI app is not running")
+        return self._handle.update_batch()
+
     def toast(
         self,
         message: object,
@@ -532,6 +545,12 @@ class App:
         if self._handle is None:
             raise RuntimeError("DragonGUI app is not running")
         return self._handle.debug_snapshot(timeout_ms)
+
+    def _latency_probe(self, timeout_ms: int = 1000) -> bool | None:
+        """Round-trip a private lightweight native ordering barrier."""
+        if self._handle is None:
+            raise RuntimeError("DragonGUI app is not running")
+        return self._handle.latency_probe(timeout_ms)
 
     def _window_screenshot(self, timeout_ms: int = 10000) -> tuple[int, int, bytes] | None:
         """Return a private live whole-window RGBA screenshot tuple."""

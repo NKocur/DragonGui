@@ -1,0 +1,1735 @@
+# Live-Update Performance Optimization and Regression-Control Plan
+
+**Project:** DragonGUI
+**Created:** July 31, 2026
+**Status:** In progress; Phases 0–2 complete, Phase 3 started, Phase 1 release soak remains a separate release task
+**Primary evidence:** `plans/gui-live-dashboard-performance-report.html`
+**Primary benchmark:** `benchmarks/gui_live_dashboard_case.py`
+
+## Purpose
+
+The validated live-dashboard benchmark established that DragonGUI's native
+renderer is not the main limit in a rapidly updating application. At high load,
+native frame work remained below 1 ms at p95, while command drain reached about
+17.6 ms at p95. The expensive path is currently:
+
+```text
+Python widget updates
+  -> Python/native method calls
+  -> native command queue
+  -> retained-tree property application
+  -> dirty-target collection
+  -> text/style/layout/primitive rebuild work
+```
+
+This plan defines how to test and implement improvements to that path without
+trading away correctness, ordering, responsiveness, or API clarity.
+
+The work is deliberately experiment-driven. Every optimization must first
+identify the exact cost it intends to remove, preserve a comparable control
+path, and pass correctness gates before its timing results are accepted.
+
+## Implementation Progress
+
+### July 31, 2026 — Phase 0 boundary and native queue instrumentation
+
+Completed the first behavior-neutral measurement slice:
+
+- Added Python-side live native-send diagnostics to `AppHandle`:
+  - Requested sends.
+  - Direct sends.
+  - Commands queued before native binding.
+  - Commands flushed after binding.
+  - Errors.
+  - Aggregate and per-method count/average/maximum/total timing.
+  - The method map is bounded by DragonGUI's internal sender method names; user
+    values cannot create diagnostic keys.
+- Added native `CommandQueue` diagnostics:
+  - Successful pushes, logical depth, and high-water.
+  - Total replacements and fixed replacement families.
+  - Push average/maximum/total and p50/p95/p99 over a bounded 128-sample window.
+- Exposed the native queue snapshot as `runtime.command_queue` alongside the
+  existing command-drain metrics.
+- Extended the validated live-dashboard raw report and matrix aggregation with
+  Python/native send and native queue measurements.
+- Added fail-closed benchmark checks for:
+  - Python method counts matching total requested sends.
+  - Native queue timing count matching successful pushes.
+  - Required native queue diagnostics being present.
+  - The native queue being drained at exit.
+- Added an isolated benchmark import override so a built wheel can be tested
+  without accidentally importing the previously installed native binary.
+
+Verification completed:
+
+- Direct Python 3.12 native-send accounting contract: passed.
+- Native queue instrumentation unit test: passed.
+- Native queue regression group: **12 passed**.
+- Native command-batch coalescing group: **4 passed**.
+- Exact-wheel low-load live smoke: **20/20 validations passed**, correct final
+  state, zero queue residue, and zero layout diagnostics.
+- Exact-wheel 10-second high-load smoke: **20/20 validations passed**, 40.0 Hz,
+  correct final state, bounded Python task queue, and zero queue residue.
+
+Initial Phase 0 findings:
+
+- The high-load smoke requested **100,599** live Python/native sends;
+  **93,933 (93.4%)** were `SetProp` calls.
+- The Python/native send boundary accounted for about **188.5 ms total** across
+  the complete high-load run, averaging **0.00187 ms** per send.
+- The native queue processed **101,044 pushes**, reached a logical high-water of
+  **233**, and spent about **35.1 ms total** in queue insertion. Push p95 was
+  **0.0006 ms**.
+- Native queue replacement was **zero** in this workload. Keyed Python snapshot
+  coalescing prevented stale callbacks before they expanded, while each applied
+  snapshot changed many distinct widget/property pairs. The current O(queue)
+  replacement scan is therefore not the active dashboard bottleneck, though it
+  still needs the planned burst benchmark.
+- Command-drain application reached approximately **13.9 ms p95** and deferred
+  rebuild flushing reached **11.9 ms p95**. Total command drain was about
+  **16.8 ms p95**.
+- The native runtime successfully targeted every text batch with zero fallback,
+  but **93,933 text dirty requests** became **3,422 targeted rebuild batches**
+  and **90,545 rebuilt roots**.
+- A short command-level capture showed individual native `SetProp` application
+  was inexpensive: 22,578 commands used about 41.1 ms total. The larger cost is
+  repeatedly crossing the 32-command drain boundary and flushing targeted
+  rebuilds several times for one logical dashboard generation.
+
+This changes the rationale for Phase 1. A typed property packet remains the
+first implementation candidate, but its primary expected benefit is one native
+command and one deferred rebuild flush for a logical update batch—not merely
+fewer Python/Rust calls. The next Phase 0 work is to add labels-only,
+intrinsic-text, mixed-state, and queue-burst cases so that benefit can be
+isolated before the packet is implemented.
+
+### July 31, 2026 — Phase 0 isolated scaling matrix
+
+Added two validated, DragonGUI-only benchmark programs:
+
+- `benchmarks/gui_update_pipeline_case.py` isolates fixed labels, intrinsic
+  text, mixed widget state, same-property bursts, and distinct-property bursts.
+- `benchmarks/run_gui_update_pipeline_matrix.py` runs every case in a fresh
+  process and rejects a sample unless final Python/native state, queue drain,
+  counter accounting, and layout diagnostics are correct.
+
+The 13-case, three-second release-wheel baseline passed every validation. Its
+most useful saturation points were:
+
+| Scenario | Scale | Throughput | Callback p95 | Command drain p95 |
+|---|---:|---:|---:|---:|
+| Fixed labels | 200 | 58.3 Hz | 2.63 ms | 7.06 ms |
+| Fixed labels | 1,000 | 22.7 Hz | 9.81 ms | 9.88 ms |
+| Mixed state | 200 rows | 26.7 Hz | 4.10 ms | 10.08 ms |
+| Same-property burst | 10,000 writes | 33.3 Hz | 32.64 ms | 32.81 ms |
+| Distinct-property burst | 1,000 widgets, two writes | 14.6 Hz | 51.91 ms | 48.58 ms |
+
+The distinct 1,000-widget burst also raised native queue push p95 to 0.0393 ms,
+reached a queue high-water of 1,002, and caused about 53,000 replacements. That
+confirms the current `VecDeque::retain` path becomes material under a large
+distinct-key burst, but the much broader cost at ordinary dashboard scale is
+still the number of commands and repeated rebuild boundaries. The measured
+first target for implementation is therefore the Phase 1 property packet;
+Phase 2 queue replacement remains justified as the next independent target.
+
+Raw development artifacts are under the ignored directories
+`artifacts/gui-update-pipeline-phase0-v1/` and
+`artifacts/gui-update-pipeline-smoke-v1/`.
+
+### July 31, 2026 — Phase 1 typed property packet prototype
+
+Implemented the first additive batch prototype:
+
+- `App.update_batch()` and `AppHandle.update_batch()` collect ordinary live
+  widget setter calls without introducing a second state-update API.
+- Batches are thread-local per app handle, nest into the outer context, keep
+  the last value for duplicate `(widget, property)` keys, and move that final
+  write to its correct last-write position.
+- Exceptions use the planned flush-and-re-raise contract.
+- Any non-property native command is an ordering barrier: pending properties
+  flush first, the command is sent, and property collection resumes.
+- Older already-bound native senders fall back to individual `SetProp` calls.
+- Python diagnostics now report batch contexts, packets, barrier flushes,
+  collected/submitted updates, duplicates removed, maximum packet size, and
+  compatibility fallbacks.
+- The native extension accepts a typed `SetProps { updates }` command, converts
+  every value before enqueue, applies siblings independently, aggregates
+  applied/stale/no-op outcomes, and preserves one queue command per packet.
+- Large packets flush bounded internal deferred-rebuild groups at the existing
+  targeted-root safety threshold. This preserves one transport packet without
+  forcing an oversized target set into a full renderer rebuild.
+
+Focused verification completed:
+
+- Python batch nesting, duplicate removal, ordering barriers,
+  flush-and-re-raise, fallback, and send-accounting contracts: **4 passed**.
+- Native typed-packet compilation and queue ordering/accounting test: passed.
+- Exact release-wheel rendered smoke matrix: **5/5 scenarios passed** with
+  correct final Python/native state, zero layout diagnostics, and drained
+  queues.
+- A dedicated rendered ordered-barrier case passed in both individual and
+  batch modes. It verifies every emitted live style command is preceded by a
+  batch flush and that the final post-barrier text reaches Python and native
+  retained state.
+- Exact-wheel three-second control and candidate matrices: **13/13 scenarios
+  passed in both modes**.
+
+The first A/B pass against the same release wheel showed the intended transport
+effect. At 200 fixed labels, queue pushes fell from 42,425 to 425 and command
+drain p95 fell from 2.59 ms to 2.27 ms. At the saturation points:
+
+| Scenario | Individual throughput | Batched throughput | Individual callback p95 | Batched callback p95 |
+|---|---:|---:|---:|---:|
+| Fixed labels, 1,000 | 25.3 Hz | 60.0 Hz | 5.82 ms | 3.61 ms |
+| Mixed state, 200 rows | 26.7 Hz | 60.0 Hz | 5.25 ms | 3.21 ms |
+| Same property, 10,000 writes | 28.0 Hz | 59.7–60.0 Hz | 36.82 ms | 13.8–13.9 ms |
+| Distinct properties, 1,000 x 2 | 27.0 Hz | 60.0 Hz | 25.92 ms | 3.73 ms |
+
+Two prototype variants were deliberately rejected or refined during the pass:
+
+1. One unbounded rebuild group per packet reached 60 Hz but exceeded the
+   targeted-root safety limit, producing a full-rebuild fallback on every
+   200/1,000-widget tick and regressing intrinsic/mixed drain p95.
+2. Tracking a second exact unique-target `HashSet` inside each packet removed
+   conservative splits but reproducibly reduced heavy-case throughput versus
+   reading the renderer's existing bounded target sets. That extra tracking is
+   not retained.
+
+The selected prototype has zero targeted-text fallback in the measured cases
+and retains the large throughput improvement, but Phase 1 is not yet accepted.
+The mixed-state drain p95 remains roughly 19% above the single short control
+sample even though backlog and throughput improve dramatically, and longer
+runs showed substantial variance. The next work is a repeated, alternated A/B
+set plus retained-geometry/screenshot equivalence and direct packet edge-case
+tests. Public documentation should wait until those gates pass.
+
+### July 31, 2026 — Correctness fix found by the intrinsic-text benchmark
+
+Manual observation found that the benchmark's deliberately long wrapped label
+could paint beneath the following row. The new geometry assertion reproduced
+the defect against the previous release wheel:
+
+- Measured wrapped content height: **45 px**.
+- Stale resolved label height: **31 px**.
+- Benchmark validation: failed as intended.
+
+The cause was an over-broad live-update optimization: all label text mutations
+returned `Dirty::Text`, even when text determined intrinsic width or wrapped
+height. The retained text and glyphs changed, but sibling placement did not.
+
+The live label classifier now uses `Dirty::Layout` when either affected
+dimension is content-dependent:
+
+- Wrapped labels stay on the text-only path only when both width and height are
+  explicitly fixed.
+- Single-line labels stay on the text-only path when width is explicitly fixed.
+- Intrinsic-width or intrinsic-height labels conservatively recompute layout.
+
+Regression coverage now includes three native classifier tests plus rendered
+benchmark checks that measured wrapped content fits the resolved rectangle and
+the next row begins at or below the first row's bottom. Against the corrected
+exact wheel, measured and resolved height are both **45 px**. Both 20-label and
+200-label rendered cases passed all validations at the 60 Hz producer target.
+
+This correctness fix intentionally makes the current 200-label intrinsic case
+perform a layout pass per applied generation; layout p95 was about 18.6 ms in
+the short verification run. It is preferable to stale/overlapping geometry and
+provides a concrete Phase 3 target for safe incremental intrinsic-text layout.
+
+Installation verification:
+
+- Reinstalled the corrected release wheel into the primary Python 3.12 user
+  environment.
+- Found and replaced an ignored in-tree `_dragongui.pyd` from an older build;
+  its hash now matches the installed wheel binary.
+- Verified both native binaries expose the typed `SetProps` sender.
+- Reran the intrinsic-text rendered regression through the normal source-tree
+  benchmark import path: all validations passed at 60 Hz.
+
+### July 31, 2026 — Phase 1 equivalence and alternating acceptance harness
+
+Extended the update-pipeline benchmarks with acceptance-grade comparison
+evidence:
+
+- Optional settled whole-window screenshot capture after Python/native queues
+  drain, stored as dimensions, RGBA byte count, and SHA-256 rather than a large
+  embedded pixel payload.
+- A canonical retained-state/geometry probe covering status plus representative
+  first/last widgets, resolved rectangles, and dynamic geometry.
+- `--update-mode both` alternates individual/batch execution order by case and
+  repetition in separate fresh processes.
+- The matrix fails closed if either sample is invalid, a pair is missing, its
+  retained/geometry hashes differ, or its settled screenshot hashes differ.
+- Added a saturation-focused `--acceptance` matrix distinct from the quick
+  smoke and complete scaling matrices.
+
+The first screenshot-enabled smoke produced **6/6 equivalent pairs**. The
+two-repetition saturation pass produced **16/16 equivalent pairs**: every
+individual/batch pair had an identical retained-state/geometry hash and a
+byte-identical settled screenshot.
+
+Average results across the two short, alternated repetitions were:
+
+| Scenario | Individual | Batch | Change |
+|---|---:|---:|---:|
+| Fixed labels, 1,000 | 20.0 Hz | 37.5 Hz | +87.5% |
+| Intrinsic text, 200 | 20.0 Hz | 60.0 Hz | +200% |
+| Mixed state, 200 rows | 29.0 Hz | 55.8 Hz | +92.2% |
+| Same property, 10,000 writes | 27.1 Hz | 54.8 Hz | +102.7% |
+| Distinct properties, 1,000 x 2 | 18.7 Hz | 34.5 Hz | +84.5% |
+
+At fixed-label scale 200, both modes sustained 60 Hz while average native queue
+pushes fell from about 30,306 to 306. At 1,000 distinct properties, native sends
+fell from about 99,050 to 88 and callback p95 fell from 24.91 ms to 3.89 ms.
+
+This pass also clarified the remaining acceptance issue. Large logical batches
+do more useful work before yielding, so command-drain p95 can exceed the slower
+control even while throughput and backlog improve: fixed-label-1,000 averaged
+29.90 ms batched versus 23.28 ms individual, and intrinsic-text-200 averaged
+17.74 ms versus 10.03 ms. The intrinsic case is an intentional correctness
+tradeoff because it now performs required layout. The 1,000-label result still
+needs responsiveness/fairness evaluation rather than being waived solely on
+throughput. Phase 1 therefore remains provisional pending the five 60-second
+repetitions and an interaction-latency probe.
+
+### July 31, 2026 — Lightweight native interaction-latency probe
+
+The first attempt used `debug_snapshot()` as a lossless request/response
+barrier. It was rejected because snapshot construction serializes the retained
+tree, layout diagnostics, computed styles, and metrics. At 1,000 widgets it
+took roughly 450–700 ms, collapsed producer throughput, and measured diagnostic
+serialization rather than queue responsiveness. Those results are retained as
+negative evidence under `artifacts/gui-update-pipeline-phase1-interaction-v1/`
+but are not used for an acceptance decision.
+
+Added a private lightweight native `LatencyProbe` command instead:
+
+- Uses the existing ordered request/response bridge.
+- Performs no tree, style, layout, or renderer serialization.
+- Completes when the UI thread reaches its exact queue position.
+- Is exposed only through private diagnostic helpers and the benchmark, not as
+  a public application API.
+- Has native bridge and Python forwarding unit coverage.
+
+Three-second 1,000-label and 200-row mixed-state comparisons with a concurrent
+100 ms probe interval passed all correctness validations:
+
+| Scenario | Mode | Throughput | Probe p50 | Probe p95 | Probe max |
+|---|---|---:|---:|---:|---:|
+| Fixed labels, 1,000 | Individual | 20.0 Hz | 49.12 ms | 51.06 ms | 52.63 ms |
+| Fixed labels, 1,000 | Batch | 38.0 Hz | 16.01 ms | 25.47 ms | 25.52 ms |
+| Mixed state, 200 | Individual | 27.6 Hz | 29.50 ms | 44.85 ms | 47.80 ms |
+| Mixed state, 200 | Batch | 55.3 Hz | 7.50 ms | 15.52 ms | 20.14 ms |
+
+This resolves the apparent contradiction in aggregate command-drain p95. A
+batch may do more work in one successful drain sample, but it removes the much
+larger command backlog that delays a newly arriving lossless request. In these
+short high-load probes, batching cut request/response p95 by about 50% for
+1,000 labels and 65% for mixed state while roughly doubling throughput. The
+long repeated gate remains necessary, but the responsiveness signal now favors
+the candidate rather than indicating a fairness regression.
+
+### July 31, 2026 — Five-repetition sustained development gate
+
+Added repeatable exact case selection to the matrix runner so long gates can be
+split into bounded slices without changing scenario definitions. Selector
+behavior has focused unit coverage.
+
+Ran three five-repetition slices with 1 second warmup and 10 seconds measured
+per fresh process. Every run used alternating individual/batch order, a 100 ms
+lightweight latency probe, final screenshot capture, retained geometry hashing,
+and fail-closed correctness validation:
+
+- Core saturation: 1,000 fixed labels and 200 mixed rows.
+- Burst saturation: 10,000 writes to one property and 1,000 distinct keys
+  written twice.
+- Correctness saturation: 200 intrinsic wrapped labels and ordered live-style
+  barriers.
+
+All **30/30 individual/batch equivalence pairs passed**. Every pair produced
+the same retained-state/geometry hash and a byte-identical settled screenshot.
+No queue residue, final-state mismatch, intrinsic-height failure, timeout, or
+ordering-barrier failure occurred.
+
+Conservative results across five repetitions:
+
+| Scenario | Mode | Median throughput | Minimum throughput | Worst interaction p95 |
+|---|---|---:|---:|---:|
+| Fixed labels, 1,000 | Individual | 20.0 Hz | 16.3 Hz | 68.28 ms |
+| Fixed labels, 1,000 | Batch | 37.4 Hz | 35.0 Hz | 26.38 ms |
+| Mixed state, 200 | Individual | 27.3 Hz | 16.6 Hz | 67.82 ms |
+| Mixed state, 200 | Batch | 54.5 Hz | 33.7 Hz | 39.69 ms |
+| Same property, 10,000 writes | Individual | 27.7 Hz | 12.8 Hz | 108.45 ms |
+| Same property, 10,000 writes | Batch | 59.3 Hz | 39.2 Hz | 35.23 ms |
+| Distinct properties, 1,000 x 2 | Individual | 18.8 Hz | 12.2 Hz | 110.10 ms |
+| Distinct properties, 1,000 x 2 | Batch | 34.4 Hz | 33.0 Hz | 29.82 ms |
+| Intrinsic text, 200 | Individual | 20.0 Hz | 20.0 Hz | 62.34 ms |
+| Intrinsic text, 200 | Batch | 60.0 Hz | 56.9 Hz | 19.51 ms |
+| Ordered barrier, 20 | Individual | 60.0 Hz | 59.8 Hz | 17.03 ms |
+| Ordered barrier, 20 | Batch | 60.0 Hz | 59.9 Hz | 15.76 ms |
+
+One system slowdown affected both modes in the fourth core repetition. The
+candidate retained roughly twice the throughput and lower interaction latency,
+which strengthens the conclusion rather than relying only on ideal runs.
+
+The sustained development gate therefore accepts the Phase 1 design. The
+remaining five-by-60-second sampling is classified as a release/soak gate, not
+a blocker to documenting and integrating the additive API. Before marking the
+phase fully complete, update `dg.help`, add a focused public example, and run
+the existing high-load live-dashboard benchmark with batching enabled.
+
+### July 31, 2026 — Phase 1 public integration and live-dashboard gate
+
+Integrated the accepted API into the public surface:
+
+- `dg.help.app_model.app()` now lists `update_batch()` among the running-app
+  methods.
+- Added `dg.help.live_updates.batching()` with a complete example and the
+  thread-local, nesting, duplicate-write, barrier, exception, and non-atomic
+  semantics.
+- Expanded the `App.update_batch()` docstring so interactive API inspection
+  describes the same contract.
+- Added `examples/live_update_batch_demo.py`, a focused latest-state telemetry
+  example that combines task coalescing with one property packet per applied
+  frame and safely waits for runtime binding.
+
+The existing realistic live-dashboard case now accepts
+`--update-mode individual|batch`. Its batch path groups the status and 200
+changing sensor labels after the packed plot-resource updates. New fail-closed
+checks require exactly one typed property packet per applied dashboard frame,
+matching sender accounting, and the exact expected number of submitted
+properties.
+
+Paired high-load development run, each with 1 second warmup and 10 seconds
+measured:
+
+| Metric | Individual | Batch | Change |
+|---|---:|---:|---:|
+| Validated throughput | 13.40 Hz | 46.00 Hz | 3.43x |
+| Completed measurement ticks | 134 | 461 | +327 |
+| Dropped/coalesced measurement ticks | 466 | 139 | -327 |
+| Python/native sends | 33,745 | 13,936 | -58.7% |
+| Native queue pushes | 33,897 | 14,447 | -57.4% |
+| Native queue high-water | 233 | 33 | -85.8% |
+| Submit p95 | 10.57 ms | 10.29 ms | essentially unchanged |
+| Command-drain p95 | 18.64 ms | 21.48 ms | +2.84 ms per larger drain sample |
+
+Both samples passed all benchmark validation, including final Python/native
+text, retained plot resource sizes, layout diagnostics, generation counters,
+queue timing accounting, and zero queue residue. The batched sample also passed
+all three new packet-accounting checks. Raw evidence is in
+`artifacts/gui-live-dashboard-phase1/`.
+
+This clears the Phase 1 live-dashboard target of at least 44 Hz and confirms
+that the synthetic throughput gain transfers to a realistic mixed packed-data
+and property-update workload. The individual sample ran below the older 38.1 Hz
+historical baseline, so the paired result is treated as development evidence;
+the longer rotated soak remains the release-quality comparison.
+
+### July 31, 2026 — Phase 2 queue-contract audit started
+
+Audited `CommandQueue` before building model candidates. The current structure
+is one mutex-protected `VecDeque<Command>`. Every replaceable family scans the
+physical deque on insertion:
+
+- `SetProp` and theme/stylesheet mutations use `VecDeque::retain`.
+- Scatter points, line-plot data, histogram data, scalar bars, and scatter
+  actors scan backward and remove matching entries individually.
+- Replacement moves the newest command to the tail. Scatter/line `fit` and
+  histogram `auto_fit` flags are sticky and OR together across replacements.
+- `SetProps` remains one ordered, non-coalesced command; Phase 1 performs its
+  duplicate removal before it reaches this queue.
+- Full and limited drains remove commands from the front, so partial-drain
+  boundaries are part of the contract.
+
+This confirms the expected O(n) insertion cost and adds a second risk:
+backward `VecDeque::remove` can also shift elements for each duplicate found.
+The cost can therefore grow badly for both large distinct-key queues and queues
+containing repeated large-resource payloads.
+
+The audit also found that the queue's current tested semantics are not segmented
+by request/response or structural barriers. Replaceable plot commands are
+explicitly tested to coalesce across `DebugSnapshot`, and ordinary property
+coalescing likewise scans the entire pending deque. This differs from the
+original Phase 2 model language. To avoid hiding a behavior change inside a
+performance rewrite:
+
+1. The first reference interpreter and candidate comparisons will reproduce
+   the current cross-command coalescing contract exactly.
+2. Partial drains will remain hard boundaries because already-drained work can
+   no longer be replaced.
+3. A segmented/barrier policy will be evaluated separately as a correctness
+   proposal with explicit snapshot/order tests; it will not be assumed by the
+   optimized data structure.
+
+The model must additionally represent stylesheet interactions and sticky flag
+merging, not just `(family, key) -> latest payload`, because those are observable
+parts of the existing queue behavior.
+
+Implemented the first model-only experiment in
+`native/src/command_queue_model.rs`:
+
+- `ReferenceQueue` directly expresses the audited scan-and-remove semantics.
+- `StableSlotQueue` appends stable order tokens, tracks the newest live slot per
+  coalescing key, invalidates replaced slots in O(1), releases superseded
+  payloads immediately, skips stale tokens during drain, and compacts at a
+  deterministic 50% stale ratio after 64 physical tokens.
+- The abstract command stream covers properties, themes, stylesheet
+  set/remove/clear interactions, scatter, line, histogram, scalar-bar and actor
+  replacement, sticky flags, lossless commands, snapshots, and arbitrary
+  partial drains.
+- A deterministic local generator ran 2,000 seeds x 200 operations (400,000
+  generated commands), comparing every partial and final drain against the
+  reference interpreter.
+- A 100,000-write same-key test confirms only one logical command remains,
+  compaction occurs, superseded payloads are released, and physical ordering
+  tokens remain below twice the 64-token compaction threshold.
+
+Both model tests pass. The first run also caught an unbounded `Vec` preallocation
+for the candidate's drain-all sentinel; limiting allocation to live logical
+entries fixed it before any production integration. This is exactly the kind of
+counterexample the model stage is intended to expose.
+
+Added and tested a second structurally different candidate:
+
+- `LinkedSlotQueue` uses reusable indexed nodes with intrusive previous/next
+  links. Replacement unlinks the prior node and moves the new command to the
+  tail in constant time.
+- It holds no tombstones, needs no compaction, immediately drops superseded
+  payloads, and reused exactly one physical slot during 100,000 same-key writes.
+- Both candidates now pass the same 2,000-seed mixed-stream equivalence test.
+
+Ran a debug-build model microbenchmark across the legacy reference and both
+candidates. These timings are directional rather than release-quality, but the
+scaling difference is unambiguous:
+
+| Workload | Legacy deque | Tombstone slots | Linked slots |
+|---|---:|---:|---:|
+| 32 distinct inserts | 0.081 ms | 0.167 ms | 0.048 ms |
+| 1,000 distinct inserts | 8.09 ms | 0.84 ms | 0.97 ms |
+| 10,000 distinct inserts | 799.98 ms | 7.45 ms | 7.66 ms |
+| 10,000 hot-key writes / 1,000 pending | 164.08 ms | 9.67 ms | 5.21 ms |
+| 1,000 hot-key writes / 100,000 pending | 1,600.36 ms | 1.44 ms | 1.29 ms |
+| 100,000 same-key writes / otherwise empty | 14.83 ms | 56.68 ms | 55.72 ms |
+
+The last row corrects an assumption in the original target: the legacy queue is
+already O(1) for a pure same-key stream because every insertion leaves only one
+pending entry. The real failure modes are (a) building a large distinct-key
+queue and (b) replacing a hot key while many unrelated commands are pending.
+The Phase 2 performance gate is therefore revised to measure those cases.
+
+The linked-slot design is the provisional production favorite: it has bounded
+physical memory without periodic compaction and was faster in the backlogged
+hot-key cases. It is not selected yet; a segmented/barrier variant and optimized
+release-build measurements still need comparison.
+
+Implemented the third candidate, `GenerationalQueue`. Its ordering deque stores
+only `(key, generation)` tokens for replaceable commands while a hash map owns
+the latest payload. Lossless commands remain inline. Superseded payloads are
+released immediately, stale generations are skipped during drain, and the same
+deterministic stale-ratio rule bounds physical tokens. It passes the full seeded
+partial-drain equivalence suite and a 100,000-write memory/compaction test.
+
+The normal Cargo release test executable could not start because the protected
+Microsoft Store Python 3.12 DLL returned `STATUS_ENTRYPOINT_NOT_FOUND` without
+an explicit path and `STATUS_ACCESS_DENIED` with it. Compilation itself
+succeeded. Because the model uses only Rust's standard library, compiled the
+same test module directly with `rustc --test -O`, avoiding PyO3 and system DLL
+loading without changing benchmark code.
+
+Five optimized repetitions produced these medians:
+
+| Workload | Legacy deque | Tombstone slots | Linked slots | Generational |
+|---|---:|---:|---:|---:|
+| 32 distinct inserts | 0.0115 ms | 0.0173 ms | 0.0058 ms | 0.0080 ms |
+| 1,000 distinct inserts | 0.6888 ms | 0.1123 ms | 0.1189 ms | 0.1137 ms |
+| 10,000 distinct inserts | 61.4449 ms | 1.1985 ms | 1.3617 ms | 0.9662 ms |
+| 10,000 hot-key writes / 32 pending | 0.9459 ms | 0.6840 ms | 0.3399 ms | 0.6030 ms |
+| 10,000 hot-key writes / 1,000 pending | 13.5935 ms | 0.8061 ms | 0.3408 ms | 0.6488 ms |
+| 1,000 hot-key writes / 100,000 pending | 134.9138 ms | 0.0489 ms | 0.0381 ms | 0.0395 ms |
+| 100,000 same-key writes / otherwise empty | 5.1602 ms | 5.0021 ms | 3.2954 ms | 4.6796 ms |
+
+All alternatives remove the backlog-dependent scan. Generational tokens are
+fastest for bulk distinct insertion, but linked slots are substantially faster
+for repeated replacement, also improve the already-cheap pure same-key case,
+and hold exactly live logical nodes without compaction latency. Selected the
+linked-slot design for the guarded production prototype. Segmented barrier
+semantics remain a separate correctness experiment because they intentionally
+differ from the current queue contract, not a competing drop-in structure.
+
+### July 31, 2026 — Phase 2 linked-slot production prototype
+
+Replaced the production queue's scan-and-remove `VecDeque` with reusable indexed
+nodes linked in logical order. A hash map points each coalescing key to its live
+node. Replacement unlinks the prior node, merges sticky flags, immediately drops
+its payload, and appends the reused slot at the tail. Full and limited drains
+still pop logical commands from the front.
+
+Production key coverage matches all prior replacement families:
+
+- widget properties;
+- themes and stylesheet set/remove/clear interactions;
+- coalesced scatter points, line-plot data, and histogram data;
+- scatter scalar bars and packed actor updates.
+
+The implementation preserves cross-command coalescing and origin-scoped
+stylesheet clears. `SetProps` packets remain lossless ordered commands. Added
+diagnostics for live entries, physical/free slots, stale entries, compactions,
+and peak physical length. Linked slots always report zero stale entries and zero
+compactions.
+
+Regression coverage now includes:
+
+- all 21 focused production queue tests;
+- all 4 active model/reference tests over 400,000 generated operations;
+- cross-snapshot replacement ordering;
+- a 10,000-key backlog with 10,000 hot-key replacements, proving no physical
+  slot growth;
+- partial drain followed by exact free-slot reuse;
+- the complete native library: 910 passed, 13 ignored, zero failures.
+
+Built an exact release wheel under `artifacts/live-update-phase2a-wheel/` and an
+isolated runtime under `artifacts/live-update-phase2a-runtime/`.
+
+The first 24-sample production burst gate initially exceeded the orchestration
+timeout after writing 21 valid raw samples. Added `--resume` to the matrix runner
+with fail-closed validation/screenshot requirements, plus exact
+`scenario:widgets:burst-repeats` selection. The resumed run executed only the
+three missing samples and produced a complete summary.
+
+Production burst results:
+
+- All 24 samples passed validation.
+- All 12 individual/batch pairs produced identical retained geometry and
+  byte-identical screenshots.
+- For the 1,000-key distinct individual case, median native queue push p95 fell
+  from 0.0152 ms in the Phase 1 five-run baseline to 0.0010 ms here: 15.2x lower.
+- Distinct individual throughput reached 20.0 Hz in all three runs, versus a
+  Phase 1 median of 18.81 Hz and minimum of 12.2 Hz.
+- Worst distinct individual interaction p95 fell from 110.10 ms to 50.76 ms.
+- The pure 10,000-write same-key workload remained variable because its queue is
+  already shallow, but introduced no correctness or settled-state regression.
+
+The ordered-barrier follow-up passed validation and screenshot/geometry
+equivalence at 59.8 Hz individual and 60.0 Hz batch.
+
+The realistic batched high-load dashboard also passed every validation at
+45.2 Hz, compared with 46.0 Hz before the queue rewrite (-1.7%, within the
+general gate). It completed 452 of 600 measured frames, drained cleanly, and
+peaked at exactly 33 live/physical queue slots with zero stale entries.
+
+Artifacts:
+
+- `artifacts/gui-update-pipeline-phase2a-bursts/summary.json`
+- `artifacts/gui-update-pipeline-phase2a-barrier/summary.json`
+- `artifacts/gui-live-dashboard-phase2a/high-batch.json`
+
+The production design is accepted at the development-gate level. Remaining
+Phase 2 work is the longer repeated release soak, explicit large-payload memory
+measurement, and deciding whether snapshot/structural commands should become
+hard semantic barriers in a separate change.
+
+### July 31, 2026 — Phase 2 release soak, payload memory, and final acceptance
+
+Added private benchmark-only native sender diagnostics:
+
+- `_queue_debug_snapshot()` returns the synchronous queue metrics without a UI
+  runtime or request/response command.
+- `_drain_for_test()` drains the already-private sender and returns the command
+  count for fail-closed benchmark validation.
+
+These methods are exposed only on `_NativeCommandSender`; they are not public
+`dragongui` APIs. Built an exact updated release wheel under
+`artifacts/live-update-phase2b-wheel/` and isolated runtime under
+`artifacts/live-update-phase2b-runtime/`.
+
+Added `benchmarks/gui_queue_payload_memory_case.py`. The release-wheel probe
+submitted 200 replacements of one 8 MiB packed scatter payload without draining:
+
+- 1.56 GiB cumulative native payload bytes copied.
+- Exactly one live command and one physical queue slot remained.
+- Exactly 199 scatter replacements were recorded.
+- Final test drain returned only the newest command and left depth zero.
+- Peak RSS grew by 8.4 MiB; cumulative submitted bytes were 190.5x that growth.
+- RSS returned close to baseline after drain (59.2 MiB versus 58.7 MiB before).
+- All seven payload/memory validation checks passed.
+
+This directly proves superseded large buffers are released promptly rather than
+remaining attached to stale ordering entries. Raw evidence:
+`artifacts/gui-queue-payload-memory-phase2b/payload-8mib-200.json`.
+
+Ran the five-repetition, 60-second distinct-backlog release soak with 5-second
+warmups, fresh processes, screenshots, latency probes, and the isolated release
+wheel:
+
+| Run | Throughput | Push p95 | Interaction p95 | Physical high-water |
+|---:|---:|---:|---:|---:|
+| 1 | 14.58 Hz | 0.0018 ms | 77.00 ms | 1,003 |
+| 2 | 14.17 Hz | 0.0018 ms | 76.06 ms | 1,003 |
+| 3 | 14.33 Hz | 0.0018 ms | 72.00 ms | 1,003 |
+| 4 | 14.02 Hz | 0.0025 ms | 75.25 ms | 1,003 |
+| 5 | 14.33 Hz | 0.0017 ms | 71.02 ms | 1,003 |
+
+All five samples passed validation, drained to depth zero, and reported zero
+stale entries. Each processed roughly 1.83–1.90 million queue pushes. Median
+push p95 was 0.0018 ms and worst was 0.0025 ms. Sustained throughput was lower
+than the short development run but tightly grouped (14.02–14.58 Hz); callback
+and command-application work, not queue insertion, is now the limiting stage.
+Raw evidence: `artifacts/gui-update-pipeline-phase2-release-soak/summary.json`.
+
+Added `benchmarks/gui_queue_scaling_case.py` to exercise the actual production
+queue at 32, 1,000, and 100,000 pending property keys. With 10,000 subsequent
+hot-key replacements:
+
+| Pending keys | Distinct build | Hot replacements | Hot push p95 | Physical slots |
+|---:|---:|---:|---:|---:|
+| 32 | 0.080 ms | 6.990 ms | 0.0005 ms | 32 |
+| 1,000 | 0.828 ms | 7.485 ms | 0.0005 ms | 1,000 |
+| 100,000 | 98.123 ms | 6.898 ms | 0.0005 ms | 100,000 |
+
+Hot-key p95 was exactly flat across the tested range. Every logical depth equaled
+physical storage, every scale recorded all 10,000 replacements, all drains
+returned exactly one command per key, and all 17 validations passed. Raw
+evidence: `artifacts/gui-queue-scaling-phase2b/scaling.json`.
+
+Final semantic decision: preserve the queue's existing tested cross-command
+coalescing behavior. Making snapshots or structural commands hard barriers can
+change what intermediate state a request observes, so it is not bundled into
+this performance rewrite. If desired, it should begin as a separate correctness
+proposal with explicit public semantics and before/after snapshot tests.
+
+Phase 2 is complete. The linked queue meets the flat-through-100,000 target,
+large-payload memory is bounded, burst/barrier/dashboard equivalence passes,
+the full native suite passes, and the long queue-focused soak is stable.
+
+---
+
+### July 31, 2026 — Phase 3 text-invalidation audit started
+
+The first Phase 3 audit found that the earlier intrinsic-text correctness fix
+covered `Label`, but most other retained-tree text mutations still returned
+`Dirty::Text` unconditionally. That was unsafe for content-sized buttons,
+badges, panel titles, navigation labels, and loading-spinner labels: longer
+content could change the widget or parent geometry without scheduling layout.
+The numeric/nullable badge path also bypassed the shared text classifier.
+
+The first conservative correction is now implemented:
+
+- `Label` retains its previously verified rule: a single-line label needs a
+  definite width, while a wrapping label needs definite width and height.
+- Other supported retained-tree text and badge properties use text-only
+  invalidation only when both width and height are definite. If either axis is
+  intrinsic, the mutation schedules layout.
+- Loading-spinner labels and the separate button/tab/navigation badge path now
+  use the same classifier.
+- Missing retained geometry fails closed to `Dirty::Layout`.
+- Five representative composite/property pairs are covered in both intrinsic
+  and fixed-geometry tests: button text, button badge, panel title, badge text,
+  and loading-spinner label.
+
+Initial mutation-path matrix:
+
+| Family | Live textual properties | Geometry dependency | Current Phase 3 policy |
+|---|---|---|---|
+| Label | `text`, `label` | Intrinsic width; wrapped intrinsic height | Proven label-specific fixed-geometry rule |
+| Button/small button | `text`, `label`, `badge` | Content and internal badge chrome can affect both axes | Text-only only with definite width and height |
+| Badge/tag | `text`, `label`, `value`, `badge` | Pill/content dimensions are text-dependent | Text-only only with definite width and height |
+| Panel/sidebar/modal/page/collapsible | `title`, `text` where supported | Header/content sizing can affect descendants and parent distribution | Text-only only with definite width and height |
+| Tab/navigation/menu | `label`, `badge` | Item width and badge chrome are content-dependent | Text-only only with definite width and height |
+| Loading spinner | `label`, `text` | Label changes composite width/height | Text-only only with definite width and height |
+| Stateful controls | displayed values/labels | Internal chrome, editing bounds, and state may be text-dependent | Not yet eligible; audit separately |
+| Plot widgets | axis labels, tick/legend options | Plot chrome changes the drawable viewport even when outer size is fixed | Not yet eligible; retain current plot-specific path pending differential tests |
+| HTML report | fallback `text` | Document layout and backend behavior differ from ordinary retained text | Not yet eligible; audit separately |
+| Icon button | `icon` | Theme reconciliation and icon metrics may affect internal geometry | Not yet eligible; audit separately |
+
+Focused Rust verification passes all five existing label assertions and all ten
+new composite cases. This is only the safe first subset of the matrix. The next
+work is rendered differential testing for geometry, clipping, scrolling, hit
+testing, and screenshots before expanding the fast path to any stateful control
+or plot chrome.
+
+Reason-coded observability is also in place under
+`framework.live_text_invalidation` in `debug_snapshot()`. It reports total
+candidates, text-only decisions, layout decisions, and fixed counters for:
+fixed single-line label, fixed wrapped label, fixed composite, intrinsic width,
+intrinsic height, both axes intrinsic, and unsupported property. The benchmark
+case and matrix summary preserve these counters in their raw JSON. A native
+counter contract test passes, and the complete native suite after the
+classifier/counter work passes **913 tests** with **13 intentional ignores**.
+The focused Python benchmark-validation suite also passes **6 tests**.
+
+The first exact-wheel rendered A/B used 200 widgets, a 0.5-second warmup, a
+2-second measurement window, individual and batched updates, and settled
+screenshots:
+
+| Scenario/mode | Throughput | Text candidates | Text-only | Layout |
+|---|---:|---:|---:|---:|
+| Fixed labels / individual | 59.99 Hz | 30,150 | 30,000 | 150 |
+| Fixed labels / batch | 60.01 Hz | 30,150 | 30,000 | 150 |
+| Intrinsic text / individual | 20.00 Hz | 10,653 | 0 | 10,653 |
+| Intrinsic text / batch | 60.00 Hz | 30,150 | 0 | 30,150 |
+
+The 150 fixed-case layout decisions are the deliberately intrinsic-width status
+label, not failed fixed-label eligibility. Both individual/batch pairs had
+identical retained-tree/geometry hashes and byte-identical settled screenshots;
+all validations passed, queues drained, layout diagnostics stayed clean, and
+targeted fallback remained zero. The batch result also confirms that safely
+grouping intrinsic relayouts can retain 60 Hz without misclassifying them as
+paint-only work. Raw evidence is under
+`artifacts/gui-update-pipeline-phase3-text-ab/summary.json`.
+
+The benchmark now fails closed if decision totals or reason totals do not match
+candidate count. Fixed-label cases must predominantly exercise text-only work;
+intrinsic-label cases must exercise layout and report zero text-only decisions.
+The assertion-enabled exact-wheel rerun passed all **24 fixed-label checks** and
+all **27 intrinsic-label checks**, sustained 60.00 Hz in both batched cases,
+captured valid screenshots, and is stored under
+`artifacts/gui-update-pipeline-phase3-text-validation/summary.json`.
+
+#### Relative-size safety correction and composite matrix
+
+The next classifier audit found that `width_value.is_some()` and
+`height_value.is_some()` were too broad to prove stable geometry. That test
+included `auto`, percentage, and percentage-based `calc()` values even though
+they can remain content- or ancestor-dependent. The predicate now treats only
+logical-pixel dimensions and validated fixed widget properties as statically
+definite. Relative, calculated, and automatic axes conservatively request
+layout until a later runtime predicate can prove their resolved containing
+block is stable. Four native regressions cover percentage, calculated,
+single-axis auto, and two-axis auto sizing.
+
+Added two rendered pipeline scenarios covering ten rows and five composite
+families per row:
+
+- Button text.
+- Standalone badge text.
+- Loading-spinner label.
+- Navigation-item label.
+- Panel title.
+
+The benchmark alternates short and deliberately long strings, validates all 50
+final Python values and normalized native retained values, checks every adjacent
+row for overlap, requires clean layout diagnostics and drained queues, and
+compares settled retained geometry and screenshots between individual and batch
+modes. Spinner animation is disabled in this equivalence case so time-dependent
+pixels cannot masquerade as a rendering mismatch.
+
+| Scenario/mode | Throughput | Text candidates | Text-only | Layout | Checks |
+|---|---:|---:|---:|---:|---:|
+| Fixed composites / individual | 60.00 Hz | 5,508 | 5,400 | 108 | 126 |
+| Fixed composites / batch | 60.01 Hz | 5,508 | 5,400 | 108 | 129 |
+| Intrinsic-height composites / individual | 54.00 Hz | 5,100 | 0 | 5,100 | 128 |
+| Intrinsic-height composites / batch | 60.00 Hz | 5,508 | 0 | 5,508 | 131 |
+
+The fixed case's 108 layout decisions are the intrinsic status label; all 5,400
+composite decisions used the fixed-geometry path. In the intrinsic case, all
+composite decisions report `intrinsic_height` and none use text-only work. Both
+individual/batch pairs produced identical retained-geometry hashes and
+byte-identical settled screenshots, with zero layout diagnostics and zero
+targeted fallback. Raw evidence:
+`artifacts/gui-update-pipeline-phase3-composites-v3/summary.json`.
+
+The composite case now also owns a genuinely bounded 180-logical-pixel scroll
+viewport (`flex-grow: 0; flex-shrink: 0`), scrolls to an intentionally excessive
+offset after queues settle, and verifies native clamping at the exact scroll
+maximum. Scroll offsets and maxima are included in the equivalence hash rather
+than being checked only as side assertions. At 125% scale the viewport resolved
+to 225 physical pixels with a 281-pixel vertical scroll range; both modes ended
+at `scroll_y == scroll_max_y == 281`. Fixed and intrinsic pairs again had
+identical retained geometry/scroll hashes and byte-identical bottom-scrolled
+screenshots. All four runs passed 128–133 validations at approximately 60 Hz.
+Raw evidence:
+`artifacts/gui-update-pipeline-phase3-composites-scroll-v3/summary.json`.
+
+The latest complete regression pass after the relative-size correction is
+**914 native tests passed**, **13 intentionally ignored**, with the **6 focused
+Python benchmark tests** also passing. The remaining differential gap is direct
+hit-test/event-target equivalence; geometry, clipping through a bounded scroll
+viewport, scroll extent/position, retained state, and screenshots now have
+rendered fixed-versus-intrinsic coverage.
+
+Direct hit-test equivalence now uses the existing native synthetic-hover
+profiler. Benchmark validation fails unless every requested interactive target
+is dispatched and resolved with zero missing or mismatched IDs. Buttons and
+navigation items are exercised repeatedly; standalone badges, inactive
+spinners, and empty panels remain geometry/screenshot targets but are correctly
+excluded from the interactive expectation because they do not own hover input.
+Across all four fixed/intrinsic and individual/batch runs, all ten requested
+targets resolved exactly, final scroll/geometry hashes matched, screenshots
+were byte-identical, and every sample sustained approximately 60 Hz. Each run
+passed 132–137 checks. Raw evidence:
+`artifacts/gui-update-pipeline-phase3-composites-hit-test-v2/summary.json`.
+
+This completes the Phase 3 differential-test infrastructure for retained state,
+geometry, clipping, scroll extent/position, direct interactive hit targets, and
+screenshots. Coverage expansion across the remaining stateful-control, plot,
+HTML-report, and icon mutation families remains part of the unfinished
+widget/property matrix.
+
+Manual review then flagged two presentation details in the composite run:
+
+- Spinner animation is intentionally disabled only in exact screenshot A/B
+  cases. A running spinner has time-dependent pixels and can fail a byte-level
+  comparison even when both implementations are correct. Its label still
+  changes every generation; animated behavior remains covered by the normal
+  live stress workloads without an exact screenshot gate.
+- The right-hand panel retained its authored horizontal width and correctly
+  selected single-line ellipsis, so its width was increased from 220 to 300
+  logical pixels to make the mutation easier to inspect. A later exact-frame
+  review nevertheless found a separate library defect: on empty compact panels,
+  almost the entire title line was vertically clipped at the bottom edge.
+
+The follow-up strengthens the evidence rather than relying on visual judgment:
+`available`, overflow, and final paint-clip rectangles now participate in the
+equivalence hash; every at-least-partially-visible composite must report no
+left/right container clipping; fully offscreen scrolled rows are excluded from
+that horizontal assertion because their clip is correctly empty. Native tests
+now explicitly cover default ellipsis for panels, navigation items, and loading
+spinner labels.
+
+The final widened matrix passed **157–161 checks per sample** at approximately
+60 Hz. All interactive hover targets resolved, visible right-hand panels had
+zero horizontal overflow, and both individual/batch pairs produced identical
+retained geometry, clip, scroll, and state hashes plus byte-identical settled
+screenshots. Raw evidence:
+`artifacts/gui-update-pipeline-phase3-composites-final-v2/summary.json`.
+
+#### Compact panel-title clipping correction
+
+The compact-panel defect came from using the panel content-box top as the title
+baseline after layout had already added title-reservation padding. With a short
+empty panel, that could place the nominal title below the available header band;
+the paint clip then reduced it to a few glyph fragments along the lower border.
+
+`titled_container_geometry` now retains the resolved/authored top-padding
+position whenever it fits, but clamps the title baseline to the last position
+that preserves a complete title line inside the header band. This keeps existing
+custom-padding behavior and corrects only the undersized case. The new
+`compact_empty_titled_panel_keeps_title_inside_header_band` regression test
+asserts that the title rectangle remains inside the panel with its complete line
+height. The pre-existing resolved-padding test also remains green.
+
+The final rebuilt-runtime capture shows normally aligned, ellipsized titles in
+all visible right-hand panels:
+`artifacts/gui-update-pipeline-phase3-panel-visual-final/long-title.png`. Matching
+individual and batch runs both validated at approximately 60 Hz and produced the
+same settled screenshot SHA-256
+`28c1461863f7b410bf1eed5124647a88fcd791825af918907004dc40f7bc13d7`.
+Validation after the correction:
+
+- Native library: **915 passed, 13 ignored**.
+- Titled-panel focus group: **15 passed**.
+- Python benchmark validation: **6 passed**.
+
+The spinner remains deliberately static only in exact screenshot-equivalence
+runs; normal live stress workloads still exercise its animation.
+
+#### Completed property-by-widget dependency matrix
+
+The follow-up code audit traced every public live mutation that can change
+displayed text, text-derived chrome, or semantic icons through
+`apply_set_prop`. The matrix deliberately separates content-sized retained
+widgets from controls whose outer layout contract does not depend on their
+current value. `Dirty::Text` here means rebuild the target's text and dependent
+primitives using its existing layout rectangle; it does not mean "text can
+never affect geometry" in general.
+
+| Widget/property family | Width/height or parent distribution | Wrap/scroll/hit-test effects | Selector/overlay/plot effects | Required invalidation policy |
+|---|---|---|---|---|
+| `Label.text`/`label`, no wrap | Width can be intrinsic; height is line-box based | Clip changes inside a fixed width; hit rectangle changes when intrinsic | Property values are not CSS selector inputs | `Text` only with definite width; otherwise `Layout` |
+| Wrapped `Label.text`/`label` | Width and shaped line count can change height | Can change ancestor distribution and scroll maximum | No property selector dependency | `Text` only with definite width and height; otherwise `Layout` |
+| `Button`/`SmallButton.text`, `label`, `badge` | Caption and badge chrome can affect both axes | Can move sibling hit rectangles and scroll limits | Hover/focus selectors depend on state, not the string | `Text` only with definite width and height; otherwise `Layout` |
+| `Badge`/`Tag.text`/`label` | Pill metrics are content-sized on both axes | Can move siblings; normal clipping applies when fixed | Level changes are a separate full/style-bearing path | `Text` only with definite width and height; otherwise `Layout` |
+| `Panel`/`Sidebar`/`Modal`/`Page.title`; `Collapsible.title`/`text` | Header metrics can change the container and descendants' available space | Can alter descendant clip/scroll and header hit regions | Open/sidebar state use separate layout/full paths | `Text` only with definite width and height; otherwise `Layout` |
+| `Tab`/`NavItem`/`Menu`/`MenuItem.label`; tab/nav `badge` | Label and badge affect route-item chrome | Can move later targets and change bar overflow | Active/hover state is independent of label content | `Text` only with definite width and height; otherwise `Layout` |
+| `LoadingSpinner.label`/`text` | Spinner-plus-label composite is content-sized | Label can change sibling placement; animation is paint-time state | `spinning`, speed, and size use the spinner-specific path | `Text` only with definite width and height; otherwise `Layout` |
+| `Selectable`/`RadioButton`/`TreeNode`/`Checkbox`/`ToggleSwitch.text`/`label` | Caption is part of content-sized control chrome | Can change sibling/hit geometry | Checked/expanded state is a separate full/layout path | Same conservative definite-width-and-height classifier |
+| `NumberInput`/`DragNumber.text`/`label` | Authored captions can affect composite size | Can alter field/chrome allocation | Numeric `value` is separate state-backed text | Captions use the conservative classifier; live numeric value uses targeted `Text` inside the established field rectangle |
+| `ProgressBar.text`/`label` | Authored overlay copy can participate in intrinsic sizing | Fixed bars clip overlay text; value changes only fill geometry | `value` changes primitives, not text layout | Caption uses the conservative classifier; value remains targeted `Visual` |
+| `TextInput`/`TextArea`/`CodeEditor`/`LogView.value` | Outer control sizing comes from style/native control geometry, not current buffer contents | Rebuilds internal wrapping, caret and text scroll; `LogView(follow)` also changes internal scroll state | Focus/placeholder state is handled by the text renderer | Targeted `Text`; no parent layout. Multiline/caret bounds remain in the target subtree |
+| `Dropdown.value` | Selection changes text inside established dropdown chrome | Does not resize the control or move its hit rectangle | Open overlay contents/options are unchanged | Targeted `Text` |
+| `LinePlot` axis labels, axes/ticks/toolbar/legend options, tick count, window size | Outer plot rectangle is layout-owned and independent of plot chrome | Plot viewport/chrome is recomputed inside that rectangle | Can change ticks, legend, toolbar and plot resource viewport | Plot-specific targeted `Text`, which rebuilds target primitives, plot resources and text; never ordinary retained-text classification |
+| `Histogram`/`BarChart` axis labels, axes/ticks/toolbar options, tick count | Same fixed outer-rectangle contract as line plot | Internal drawable viewport and ticks change | Plot chrome changes are target-local | Plot-specific targeted `Text` |
+| `HtmlReport.text` | Native geometry supplies a stable height/minimums; fallback copy does not size the webview | Wrapped fallback copy is clipped within the report rectangle | `path`, `html`, permissions and external fallback are separate `Full` webview-source mutations | Targeted `Text` for fallback copy only; source/security changes remain `Full` |
+| `IconButton.icon` | Semantic icon is painted within established icon-button chrome | Hit rectangle remains the button rectangle | Live icon-theme reconciliation may change icon paint/metrics, not outer layout | Icon-specific targeted `Text` after theme reconciliation |
+
+Audit conclusions:
+
+- CSS selectors do not inspect live text/value strings, so these mutations do
+  not silently change selector matching. State-bearing mutations such as
+  `checked`, `expanded`, route selection, sidebar state, and badge `level` keep
+  their existing stronger invalidations.
+- Percentage, `calc()`, and `auto` dimensions are not accepted as proof of
+  stable geometry for content-sized retained widgets. A resolved rectangle is
+  insufficient by itself because a later intrinsic measurement can still
+  redistribute its parent.
+- The plot `Dirty::Text` routes are intentional special cases. Targeted
+  primitive rebuild detection includes `LinePlot`, and rebuilds its GPU plot
+  resources when the selected target subtree contains one. Histogram and bar
+  chart chrome is rebuilt with the target's primitives/text.
+- `HtmlReport.text` is fallback presentation only. Webview source selection is
+  derived from `path` or inline `html`; those mutations, base-directory and
+  security flags continue to request `Full` synchronization.
+- Spinner animation remains enabled in normal workloads. It is disabled only
+  in exact-pixel differential cases, where clock-dependent pixels would make
+  otherwise equivalent samples non-deterministic.
+
+This closes the static dependency matrix. It does **not** expand the
+content-sized fast path beyond the families that passed rendered fixed versus
+intrinsic equivalence. Stateful editor/dropdown, plot-chrome, HTML-fallback and
+icon cases remain on their existing target-local routes until dedicated
+rendered differential samples prove each route independently.
+
+The matrix audit also corrected the classifier's advertised property set.
+`Badge.value`, `Badge.badge`, `Tag.value`, menu/menu-item badges, and panel
+`text` had no corresponding retained mutation route but were previously
+reported as potentially eligible. They now fail closed as unsupported instead
+of polluting eligibility counters. A table-driven native contract covers 32
+real widget/property pairs in both fixed and intrinsic-height forms and six
+unsupported pairs. The post-audit regression run passes **917 native tests**
+with **13 intentional ignores**; the focused benchmark-validation suite passes
+**6 tests**. `git diff --check` is clean for the implementation and plan.
+
+## Baseline We Must Preserve
+
+The July 31 validated matrix is the initial reference point:
+
+| Load | DragonGUI throughput | Dropped/coalesced measurement ticks | CPU, one core | Peak RSS | Command drain p95 |
+|---|---:|---:|---:|---:|---:|
+| Low | 58.7 Hz | 77 | 20.9% | 335 MiB | 1.66 ms |
+| Medium | 58.3 Hz | 103 | 36.3% | 372 MiB | 6.24 ms |
+| High | 38.1 Hz | 1,312 | 91.1% | 432 MiB | 17.56 ms |
+
+The recommended high-load run:
+
+- Retained six 50,000-point line series, a 50,000-point scatter, a 128 x 128
+  heatmap, and 200 changing labels.
+- Passed all 16 DragonGUI correctness checks.
+- Reached the correct final Python and native tick.
+- Held Python task queue high-water to one by using a keyed latest-frame task.
+- Drained both Python and native queues before exit.
+- Reported zero layout diagnostics.
+
+The uncoalesced high-load run is a required negative control. It ended with 318
+Python tasks and 226 native commands pending, stopped displaying at tick 3,581
+instead of 3,899, and failed seven validations. A change that merely makes that
+failure harder to observe is not an improvement.
+
+---
+
+## What Already Exists
+
+The implementation should extend the current system rather than create a
+parallel update engine:
+
+- `App.call_soon_threadsafe(..., coalesce_key=...)` already provides O(1)
+  latest-task replacement on the Python side.
+- `CommandQueue::push` already replaces pending `SetProp` commands with the
+  same `(widget_id, property)` key, but currently finds them with
+  `VecDeque::retain`, which is O(queue length) per property enqueue.
+- `coalesce_runtime_command_batch` performs a second latest-property collapse
+  inside each fetched native batch.
+- A command batch calls `begin_deferred_rebuilds()` and performs one
+  `flush_deferred_rebuilds()` after applying its commands.
+- Dirty requests are merged and ranked as GPU data, visual, text, layout, or
+  full work.
+- Text changes can already collect widget targets and use
+  `rebuild_targeted_visuals(...)`.
+- Partial-text, dirty-rebuild, command-drain, task-queue, resource, layout, and
+  renderer metrics already appear in `debug_snapshot()`.
+
+This means the most likely gains are:
+
+1. Fewer Python-to-native calls and fewer command objects.
+2. Constant-time native queue replacement without changing ordering.
+3. More accurate dirty classification and fewer conservative fallbacks.
+4. Work proportional to affected widgets rather than the whole retained tree.
+5. Safer, more discoverable latest-state producer patterns.
+
+---
+
+## Non-Negotiable Correctness Rules
+
+Every phase must preserve these rules:
+
+1. **Lossless work stays lossless.** Clicks, log appends, line appends, commands,
+   audit events, and other event streams may not be coalesced unless the API
+   explicitly says so.
+2. **Latest-state work reaches the newest state.** Replaceable telemetry may
+   skip intermediate generations, but the final scheduled generation must be
+   visible in both Python and native state.
+3. **Ordering boundaries remain meaningful.** Structural replacement,
+   stylesheet changes, event dispatch, screenshots, debug snapshots, and
+   request/response commands may divide batches and must observe all earlier
+   applicable updates.
+4. **Python state and native state agree.** A faster native path cannot leave
+   widget objects reporting different values from the retained tree.
+5. **Geometry is unchanged unless the mutation requires geometry to change.**
+   Text optimization must not create stale wrapping, intrinsic width, clipping,
+   hitboxes, scroll extents, or accessibility bounds.
+6. **No hidden backlog.** Successful runs end with zero Python tasks, zero
+   native commands, no continuation latch, and the correct final tick.
+7. **No silent fallback.** Fast-path attempts, completions, fallbacks, affected
+   roots, and discarded obsolete work must be observable in diagnostics.
+8. **Old public code remains valid.** Existing individual widget setters keep
+   their behavior; batching is an additive optimization.
+
+---
+
+## Measurement Strategy
+
+### Test layers
+
+Each candidate change is tested at five levels:
+
+| Layer | Purpose | Required evidence |
+|---|---|---|
+| Native unit/model | Ordering, coalescing, dirty merging, queue structure | Deterministic Rust tests, including randomized operation sequences |
+| Python contract | Public API, widget state, exceptions, nesting, thread rules | Focused `tests/test_python_api.py` tests |
+| Headless retained-state | Native tree, resource counts, geometry, layout diagnostics | `debug_snapshot()` assertions |
+| Rendered integration | Actual pixels, clipping, focus, hover, scroll, hit testing | Window screenshot and visual-audit probes |
+| Performance/soak | Throughput, p95/p99, CPU, RSS, queues, final state | Fresh-process JSON benchmark runs with validation required |
+
+No performance result is considered valid if any correctness layer fails.
+
+### A/B experiment mechanism
+
+During development, each native optimization should retain an internal control
+mode selected before startup, for example through a private environment value
+or test-only constructor option:
+
+```text
+legacy       current behavior
+candidate    new fast path with conservative fallback
+verify       candidate result plus debug-only equivalence assertions where practical
+```
+
+These switches are temporary engineering controls, not public configuration.
+They should be removed after the phase passes its gates, while its counters and
+regression tests remain.
+
+Run control and candidate in separate fresh processes. Alternate execution
+order to reduce thermal and background-load bias. Record:
+
+- Commit, dirty-worktree status, Python/Rust versions, OS, CPU, GPU, display
+  scale, viewport, and present mode.
+- Median, p95, p99, maximum, sample count, and raw sample paths.
+- Scheduled, executed, coalesced, and dropped work.
+- Native queue depth, queue high-water, drain yields, and recovery time.
+- Dirty requests versus executions and fast-path fallback counts.
+- RSS start, peak, end, and growth per minute.
+
+### Repetition policy
+
+- Development smoke: one 10-second measured run.
+- Phase decision: at least five 60-second runs per affected load and mode.
+- Final release candidate: three 10-minute high-load soaks plus one 60-minute
+  DragonGUI-only soak.
+- Report medians and the worst p95 across repetitions. Do not select the best
+  run.
+
+### General acceptance gates
+
+A candidate advances only if:
+
+- All unit and public API tests pass.
+- All benchmark validations pass.
+- Final Python and native values match the last scheduled generation.
+- Layout diagnostics remain zero at all tested viewports.
+- Python and native queues drain to zero within five seconds after production.
+- No tested workload regresses throughput by more than 5% or p95 latency by
+  more than 10%, unless the change fixes a correctness defect and the tradeoff
+  is documented.
+- Peak RSS does not increase by more than 10%.
+- Repeated results show the improvement outside ordinary run-to-run noise.
+
+---
+
+## Phase 0 — Freeze the Baseline and Improve Instrumentation
+
+### Questions to answer
+
+- How much time is spent in Python setter logic, native boundary crossings,
+  queue insertion/replacement, command application, and rebuild flushing?
+- How many `SetProp` calls and distinct `(widget, property)` values are created
+  per dashboard generation?
+- Which dirty classes and fallback reasons are generated by the 200 labels?
+- Does queue replacement itself become expensive as backlog grows?
+
+### Instrumentation to add
+
+Add cumulative and sampled metrics for:
+
+- Python live setter calls and native sender calls.
+- Batch count, properties submitted, unique properties, and duplicate
+  properties removed.
+- Native queue push count, replacement count, tombstone/compaction count if
+  applicable, queue insertion p50/p95/p99, and queue high-water.
+- `SetProp` application grouped by property and resulting dirty class.
+- Dirty merge escalation, including the pair that caused escalation.
+- Targeted rebuild requested roots, normalized roots, completed roots, fallback
+  reason, and entries touched.
+- Layout/style/text/primitive work skipped by an eligible fast path.
+
+Keep detailed per-property maps bounded so diagnostics cannot become their own
+memory leak. Use fixed-size top-N or aggregate known property classes.
+
+### Benchmark additions
+
+Extend the live dashboard with independently selectable workloads:
+
+1. `labels-only`: 20, 200, 1,000 fixed-size labels.
+2. `intrinsic-text`: labels whose text changes from short to long and wraps.
+3. `mixed-state`: labels, badges, LEDs, progress bars, sliders, and plots.
+4. `same-property-burst`: repeatedly replace one property before a drain.
+5. `distinct-property-burst`: update many independent widget/property keys.
+6. `ordered-barriers`: property changes separated by snapshot, structure, or
+   stylesheet commands.
+
+### Phase 0 deliverables
+
+- Versioned raw baseline artifacts.
+- A machine-readable comparison script that rejects invalid samples.
+- A short baseline report identifying the top two measured costs.
+- Tests proving new counters are correct and bounded.
+
+### Exit gate
+
+Do not implement a fast path until its target cost accounts for a meaningful
+share of the affected scenario. As a working threshold, it should represent at
+least 15% of command-drain time or remove at least 25% of native crossings.
+
+---
+
+## Phase 1 — Batch Widget Property Updates
+
+### Hypothesis
+
+The 200-label workload pays for hundreds of Python/native calls and command
+allocations even though the native runtime already merges their rebuild work.
+Transporting many small property changes in one native call should reduce
+boundary, allocation, queue-lock, and dispatch overhead.
+
+### API experiment
+
+Prototype an additive context manager that preserves ordinary setter code:
+
+```python
+with app.update_batch():
+    status.set_value("tick 42")
+    for label, value in zip(labels, values):
+        label.set_value(value)
+```
+
+Desired semantics:
+
+- Python widget objects update immediately as they do today.
+- Native sends are collected only for the current app handle and current
+  thread/context.
+- Exiting the outermost context submits one ordered property packet.
+- Nested contexts merge into the outer context.
+- An exception discards unsent native changes only if Python state can also be
+  rolled back safely; otherwise it flushes the collected changes and re-raises.
+  The simpler initial contract is **flush-and-re-raise**, clearly documented.
+- Unsupported or structural operations flush the current property packet,
+  execute in order, and then allow collection to resume.
+- The public contract is batching, not database-style atomic rollback.
+- Calling it before a widget is live remains harmless and consistent with
+  existing setters.
+
+Also expose a lower-level `AppHandle.update_props(...)` only if measurements
+show a material advantage over the context manager. Avoid requiring users to
+maintain a second source of Python widget state.
+
+### Native representation
+
+Add a packet command such as `SetProps { updates: Vec<PropUpdate> }` and one
+Python binding call accepting a compact sequence. Validate and convert values
+once at the boundary. On application:
+
+- Preserve first-to-last ordering across distinct keys.
+- Keep only the last value for repeated `(id, prop)` keys inside the packet.
+- Apply all values while deferred rebuild collection is active.
+- Flush one merged rebuild after the packet.
+- Report per-update stale/no-op/error outcomes in aggregate diagnostics.
+
+Do not serialize the batch through JSON unless measurement proves conversion
+cost negligible. A typed PyO3 sequence or packed small-value representation is
+preferred.
+
+### Regression tests
+
+- Empty, one-item, and thousands-of-items batches.
+- Duplicate keys: last value wins.
+- Multiple properties on one widget retain order.
+- Nested batches and exception behavior.
+- Mixed widget types and all `CommandValue` variants.
+- Stale widget IDs do not abort valid siblings.
+- A malformed value fails predictably without partially corrupting Python and
+  native state.
+- Structural and request/response commands form ordering barriers.
+- Callbacks triggered after the batch observe final state, not an intermediate
+  state.
+- Focus, selection, scroll, hover, and active tabs survive unrelated batches.
+- Batched and unbatched runs produce equivalent retained-tree values,
+  geometry, resources, and screenshots.
+
+### Performance experiment
+
+Compare 20, 200, and 1,000 label updates per tick in three modes:
+
+1. Existing individual setters.
+2. Context-managed batch using the same setters.
+3. Internal direct packet control to reveal remaining Python collection cost.
+
+### Phase 1 target
+
+- At least 90% fewer Python/native calls for a 200-widget batch.
+- At least 25% lower command-application p95 in `labels-only-200`.
+- High-load live-dashboard throughput improves from 38.1 Hz to at least 44 Hz,
+  or profiling proves another stage has become dominant.
+- No low/medium-load throughput regression beyond the general gate.
+
+---
+
+## Phase 2 — Constant-Time Native Queue Coalescing
+
+### Hypothesis
+
+`CommandQueue::push` currently uses `VecDeque::retain` for every `SetProp`, so
+producer cost grows with queue length. The behavior is correct but can become
+quadratic during a backlog or a large distinct-key burst.
+
+### Candidate structures to benchmark
+
+Implement model-only prototypes before changing the runtime:
+
+1. **Generational ordered queue:** append sequence IDs, keep the latest ID per
+   coalescing key, skip stale entries on drain, and compact when stale density
+   or total length crosses a bound.
+2. **Stable-slot queue:** order IDs in a deque, store commands in stable slots,
+   and replace a key's slot while moving its ordering token to the tail.
+3. **Segmented queue:** coalesce replaceable state within segments separated by
+   strict-order barriers.
+
+Select based on measured enqueue cost, memory, implementation risk, and exact
+ordering—not intuition alone.
+
+### Required queue model
+
+Create a small reference interpreter with the current semantics. Generate
+random streams containing:
+
+- `SetProp` for repeated and distinct keys.
+- Coalesced and non-coalesced plot data.
+- Append/event commands that must remain lossless.
+- Structural replacements.
+- Stylesheet/theme mutations.
+- Debug snapshots and request/response commands. First preserve the current
+  tested cross-command coalescing behavior; evaluate hard-barrier semantics as
+  a separate correctness change.
+- Partial drains at arbitrary boundaries.
+
+Run thousands of seeded sequences through both reference and candidate. Assert
+identical observable drained command order and final state. Preserve failing
+seeds as permanent tests.
+
+### Memory controls
+
+If the selected design permits stale entries:
+
+- Compact at a deterministic ratio and absolute threshold.
+- Bound stale payload memory; large packed plot buffers must be released when
+  superseded, not held until a distant drain.
+- Expose live entries, stale entries, compactions, bytes superseded, and peak
+  physical queue length.
+
+### Phase 2 target
+
+- Queue insertion p95 remains approximately flat from 32 to 100,000 pending
+  logical updates.
+- Building a 100,000-key distinct backlog is at least 10x faster than the legacy
+  queue.
+- Replacing a hot key while 100,000 unrelated commands are pending is at least
+  10x faster than the legacy queue.
+- A pure same-key stream does not regress by more than the general performance
+  gate; it is not expected to improve because the legacy queue stays one item
+  deep in that case.
+- Physical queue memory remains bounded to an explicitly tested multiple of
+  live logical work.
+- Randomized equivalence and all existing command queue tests pass.
+
+---
+
+## Phase 3 — Safe Text-Only Invalidation
+
+### Hypothesis
+
+Some text changes can update glyph content without recalculating style or
+layout, while others change intrinsic size, wrapping, clipping, scroll ranges,
+or control chrome. Treating both classes identically either wastes work or
+creates stale geometry.
+
+### First establish the current truth
+
+Before changing dirty classes, build a property-by-widget mutation matrix. For
+each supported textual property (`text`, `value`, `label`, `badge`, titles,
+axis labels, dropdown values, and related fields), record whether changing it
+can affect:
+
+- Intrinsic width or height.
+- Line wrapping and number of shaped lines.
+- Parent flex/grid distribution.
+- Scroll extent.
+- Hit-test geometry.
+- Overlay size or placement.
+- Style selectors that reference the property or state.
+- Plot chrome or resource layout.
+
+### Conservative eligibility predicate
+
+Introduce a fast path only when the runtime can prove geometry stability. A
+first version may require all of:
+
+- The widget has definite used width and height.
+- The relevant overflow/wrapping behavior cannot resize ancestors.
+- The property is not referenced by selectors.
+- The widget type has no text-dependent internal geometry.
+- No font, scale, viewport, or style generation changed.
+
+Everything else uses the existing safe path. Track why each candidate was
+eligible or rejected.
+
+If necessary, split dirty meaning into clearer internal categories such as:
+
+- `TextPaint`: reshape/rebuild targeted text and dependent primitives only.
+- `TextMetrics`: text may affect layout.
+- Existing `Visual`, `Layout`, and `Full` categories.
+
+Names are implementation details; the important requirement is that a
+paint-only path can never suppress required geometry work.
+
+### Geometry equivalence tests
+
+For every widget/property pair, compare optimized and forced-full runs across:
+
+- Short -> long -> short strings.
+- Empty strings, Unicode, emoji, combining marks, RTL, and multiple lines.
+- Fixed, minimum, maximum, percentage, flex, and intrinsic sizes.
+- Wrapped and non-wrapped text.
+- Nested panels, scroll areas, tabs, overlays, and clipped containers.
+- 100%, 125%, 150%, and 200% scale where available.
+- Narrow, normal, and wide viewports.
+
+Compare retained tree values, every affected layout rectangle, clip rectangle,
+scroll maximum, text entry bounds, hit-test results, and screenshots. Exact
+geometry should match within a documented floating-point tolerance; pixels may
+use a small anti-aliasing tolerance but cannot hide shifted or clipped text.
+
+### Phase 3 target
+
+- Eligible fixed-geometry label updates perform zero style-cascade passes and
+  zero layout passes.
+- No geometry or visual equivalence failures in the mutation matrix.
+- Targeted text fallback rate is below 5% for `labels-only-200` and is correctly
+  high for intentionally intrinsic/wrapping cases.
+- At least 20% lower rebuild-flush p95 for the fixed-label workload.
+
+---
+
+## Phase 4 — More Precise Retained-Tree Dirty Regions
+
+### Hypothesis
+
+Targeted text rebuilding exists, but visual changes and mixed dirty batches can
+still escalate to broad primitive or visual rebuilds. Tracking exactly which
+retained roots and resource classes changed should make work proportional to
+the mutation set.
+
+### Implementation direction
+
+- Replace a single merged target set with typed dirty targets where needed:
+  text, primitive paint, layout subtree, plot chrome, overlay, and GPU data.
+- Normalize targets by dropping descendants when an ancestor is already dirty.
+- Keep structure generation IDs so stale targets reliably force a safe
+  fallback.
+- Preserve separate overlay and table-text handling.
+- Prevent an unrelated safe visual target from unnecessarily promoting an
+  otherwise targeted text batch to a global rebuild.
+- Extend existing `rebuild_targeted_primitives(...)` and
+  `rebuild_targeted_visuals(...)` instead of creating an independent renderer.
+- Add explicit fallbacks for selectors, transitions, ancestor-dependent
+  backgrounds, stacking/clip changes, and any primitive whose output depends
+  on global traversal order.
+
+### Differential validation
+
+Add a debug-only mode that performs the targeted rebuild, captures its retained
+output signature, then forces a full rebuild and compares:
+
+- Primitive counts, ordering, batches, and bounds.
+- Text owner IDs, entries, and bounds.
+- Plot/scatter/table resource revisions.
+- Overlay ownership and clip rectangles.
+- Layout and hit-test state.
+
+Use this only in focused tests/probes, not normal releases.
+
+### Locality tests
+
+- Mutating one of 1,000 sibling labels does not revise unrelated siblings.
+- Mutating 200 disjoint labels touches 200 roots or fewer after normalization.
+- Mutating an ancestor plus descendants touches only the ancestor root.
+- Removed/replaced nodes trigger safe fallback and never access stale targets.
+- Mixed text plus progress-bar visual updates remain targeted when eligible.
+- Style/class/structure changes still force the required broader work.
+- Hover, focus, selection, tooltips, and scrollbars remain visually correct.
+
+### Phase 4 target
+
+- Entries/primitives touched scale with dirty roots rather than total widget
+  count in the 1-of-1,000 and 20-of-1,000 probes.
+- At least 95% targeted completion in the fixed mixed-state dashboard.
+- Zero differential mismatches over 10,000 randomized mutation batches.
+- No more than 5% overhead for workloads that correctly require full rebuilds.
+
+---
+
+## Phase 5 — Native Command Coalescing by Widget and Property
+
+This priority overlaps Phase 2 but also applies after commands are fetched or
+arrive inside a property packet.
+
+### Required semantics
+
+- Latest replaceable `(widget, property)` state wins within a safe segment.
+- A `fit=True` request remains sticky when plot replacements are collapsed.
+- Appends, events, callbacks, and request/response commands remain ordered and
+  lossless.
+- Structural replacement is a barrier for child/descendant property updates.
+- A snapshot observes all earlier updates and none from later segments.
+- Coalescing never crosses a command whose behavior can depend on the
+  intermediate value.
+
+### Implementation work
+
+- Define a single `Command::coalescing_key()` and barrier classification rather
+  than maintaining separate ad hoc matching logic in queue push and runtime
+  batch coalescing.
+- Define merge behavior for commands with sticky flags or partial payloads.
+- Reuse the reference-model and randomized tests from Phase 2.
+- Add diagnostics by command family: received, applied, superseded, merged,
+  and barrier segments.
+
+### Exit gate
+
+Queue-level, packet-level, and drain-level coalescing must use the same tested
+semantic definitions. Redundant passes may remain only if profiling proves
+they catch distinct work at acceptable cost.
+
+---
+
+## Phase 6 — Make High-Frequency Producer Patterns Safe by Default
+
+### Goal
+
+Developers should not need to discover the stale-backlog failure through a
+production dashboard. The API and documentation should make state snapshots
+and lossless events visibly different.
+
+### Proposed work
+
+1. Add a small public helper or channel abstraction only after the lower-level
+   batching results are known. Candidate shape:
+
+   ```python
+   telemetry = app.latest_updates("telemetry")
+   telemetry.submit(apply_snapshot)
+   ```
+
+   It would be convenience over keyed `call_soon_threadsafe`, not a second
+   scheduler.
+
+2. Keep the lossless path explicit:
+
+   ```python
+   app.call_soon_threadsafe(record_event)  # FIFO, never replaced
+   ```
+
+3. Add bounded diagnostics warnings when:
+
+   - An unkeyed producer repeatedly grows the task queue.
+   - Native command queue high-water grows over several frames.
+   - The same replaceable property is repeatedly superseded after expensive
+     Python callbacks rather than before them.
+
+4. Update `dg.help`, threading guidance, live plotting examples, and stress
+   demos with a table explaining snapshot versus event semantics.
+
+5. Provide a validated telemetry example using batching inside a keyed task.
+
+### Documentation regression tests
+
+- Every named API exists and has the documented signature.
+- Every code example imports and builds headlessly.
+- `dg.help` explains that coalescing can skip intermediate state and must not be
+  used for lossless events.
+- The example's debug snapshot proves bounded queues and correct final state.
+
+### Phase 6 target
+
+- The documented high-frequency example holds Python queue high-water at two
+  or less under forced overload.
+- It ends at the correct final state and retains every separately marked
+  lossless event.
+- Queue-growth warnings are rate-limited, actionable, and absent in a healthy
+  run.
+
+---
+
+## Phase 7 — Integrated Validation and Rollout
+
+### Required scenario matrix
+
+Run at minimum:
+
+- Live dashboard: low, medium, high, and labels-only variants.
+- Theme Forge live workload and autopilot.
+- CATHODE stress workload, including lossless trace/log streams.
+- CSS/theme replacement during live updates.
+- Window resize and scale changes during live updates.
+- Scroll, focus, text selection, drag/drop, tabs, overlays, and tooltips while
+  batches are active.
+- Headless/native-decoration and client-decoration modes.
+- Malformed/stale update inputs and app shutdown with queued work.
+
+### CI tiers
+
+**Per change:**
+
+- Native queue, dirty-classification, and targeted-rebuild unit tests.
+- Python API contract tests.
+- Short validated labels-only and mixed-state smoke tests.
+- Existing layout and visual-audit tests.
+
+**Nightly or manual performance job:**
+
+- Five-repetition 60-second A/B matrix.
+- Theme Forge and CATHODE autopilots.
+- 10-minute high-load memory/queue soak.
+- Persist raw JSON and trend it against the last accepted baseline.
+
+**Release gate:**
+
+- Full test suites on supported Python/platform targets.
+- Three 10-minute high-load soaks and one 60-minute soak.
+- Fresh HTML performance report.
+- No unresolved validation failure, queue residue, layout diagnostic, or
+  unexplained regression beyond the general thresholds.
+
+### Rollout order
+
+1. Land instrumentation and tests without behavior changes.
+2. Land internal batch transport while existing setters remain the default.
+3. Expose the batch context manager after equivalence and performance gates.
+4. Replace the native queue structure after model testing.
+5. Enable text/targeted fast paths conservatively with fallback counters.
+6. Expand eligibility only from evidence gathered by differential tests.
+7. Add producer convenience APIs and documentation last, once their optimal
+   implementation path is stable.
+
+Each phase gets its own benchmark artifact and plan progress entry. Avoid one
+large patch combining API, queue, dirty classification, and renderer changes;
+that would make both regressions and performance attribution difficult.
+
+---
+
+## Implementation Checklist
+
+### Phase 0 — Evidence and instrumentation
+
+- [x] Add Python/native crossing counters.
+- [x] Add batch counters with the Phase 1 packet prototype.
+- [x] Add native queue insertion/replacement timing and bounded diagnostics.
+- [x] Add dirty-class and fallback-reason metrics.
+- [x] Add labels-only, intrinsic-text, mixed-state, and burst cases.
+- [x] Add the ordered-barrier benchmark case.
+- [ ] Capture five-run baseline artifacts.
+- [x] Identify the first measured implementation target.
+
+### Phase 1 — Batch transport/API
+
+- [x] Prototype nested `app.update_batch()` collection.
+- [x] Define exception and ordering-barrier behavior.
+- [x] Add typed native `SetProps` packet.
+- [x] Add native, Python, retained-state, and rendered equivalence tests.
+- [x] Run the first validated development A/B matrix.
+- [x] Pass the five-repetition sustained development/equivalence gate.
+- [x] Pass a validated high-load live-dashboard development A/B run.
+- [x] Document the additive public API and add a focused example.
+- [ ] Run the five-by-60-second repeated/alternated release soak and apply final
+  Phase 1 release gates.
+
+### Phase 2 — Queue data structure
+
+- [x] Build reference queue model and seeded generator.
+- [x] Prototype and equivalence-test the stable-slot candidate.
+- [x] Prototype and equivalence-test the linked-slot candidate.
+- [x] Prototype and equivalence-test the generational candidate.
+- [x] Run the first reference/tombstone/linked model microbenchmark.
+- [x] Benchmark at least three candidate structures in optimized code.
+- [x] Implement the bounded-memory linked-slot design.
+- [x] Preserve discovered model counterexamples as permanent regression tests.
+- [x] Run development burst, barrier, live-dashboard, and logical-memory gates.
+- [x] Run the repeated release soak and large-payload process-memory gate.
+
+### Phase 3 — Text invalidation
+
+- [x] Build widget/property geometry-dependency matrix.
+- [x] Add conservative fast-path eligibility and reasons.
+- [x] Add geometry, clip, scroll, hit-test, and screenshot equivalence tests.
+- [x] Run fixed versus intrinsic text A/B cases.
+- [ ] Expand eligibility only after zero mismatches.
+
+### Phase 4/5 — Dirty locality and command semantics
+
+- [ ] Add typed target sets and structure generations.
+- [ ] Add targeted-versus-full differential verification mode.
+- [ ] Centralize command coalescing keys, barriers, and merge rules.
+- [ ] Run randomized batches and locality scaling probes.
+- [ ] Confirm full-fallback workloads do not materially regress.
+
+### Phase 6/7 — Developer safety and release
+
+- [ ] Add validated latest-state convenience pattern if still justified.
+- [ ] Add bounded queue-growth diagnostics.
+- [ ] Update `dg.help`, examples, and threading guidance.
+- [ ] Run full scenario matrix and extended soaks.
+- [ ] Generate final comparative report.
+- [ ] Remove temporary legacy/candidate switches.
+
+---
+
+## Definition of Complete
+
+This plan is complete when:
+
+- High-load throughput materially exceeds the 38.1 Hz baseline, with an
+  initial goal of at least 50 Hz and an aspirational goal of sustaining 60 Hz
+  on the baseline machine.
+- Low and medium loads remain effectively at 60 Hz.
+- Python and native queues remain bounded and drain to zero.
+- Latest-state producers reach the correct final state and lossless producers
+  retain every event.
+- Command application and rebuild flush no longer dominate a 16.67 ms frame
+  budget at the accepted high load, or the next dominant cost is clearly
+  measured and documented.
+- Geometry, screenshots, retained state, interactions, CSS behavior, and
+  resource contents pass their equivalence and regression suites.
+- The batch and producer APIs are documented in `dg.help` with tested examples.
+- A refreshed HTML report contains raw artifact links, correctness results,
+  comparison plots, and remaining limitations.
+
+The goal is not merely a higher frame-rate number. The completed system must be
+faster because it performs less obsolete and unrelated work, while remaining
+observable, bounded, and semantically correct.

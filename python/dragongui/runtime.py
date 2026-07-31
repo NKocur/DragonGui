@@ -6,7 +6,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 import inspect
 import json
 import math
-from threading import RLock
+from threading import local, RLock
 import time
 import traceback
 from typing import Any
@@ -57,6 +57,21 @@ class _ScheduledPythonTask:
         self.diagnostics = diagnostics
         self.coalesce_key = coalesce_key
         self.sequence = sequence
+
+
+class _UpdateBatchContext:
+    """Nestable context that collects live SetProp calls for one app handle."""
+
+    def __init__(self, handle: AppHandle) -> None:
+        self._handle = handle
+
+    def __enter__(self) -> _UpdateBatchContext:
+        self._handle._begin_update_batch()
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+        self._handle._end_update_batch()
+        return False
 
 
 class ToastHandle:
@@ -632,6 +647,24 @@ class AppHandle:
         self._last_python_task: dict[str, Any] | None = None
         self._last_python_task_drain: dict[str, Any] | None = None
         self._startup_timings: dict[str, Any] = {}
+        self._native_sends_requested = 0
+        self._native_sends_direct = 0
+        self._native_sends_queued_before_bind = 0
+        self._native_sends_flushed_after_bind = 0
+        self._native_send_errors = 0
+        self._native_send_timing: dict[str, Any] = {}
+        self._native_send_methods: dict[str, dict[str, Any]] = {}
+        self._update_batch_local = local()
+        self._update_batches_started = 0
+        self._update_batches_completed = 0
+        self._update_batches_nested = 0
+        self._update_batch_packets = 0
+        self._update_batch_barrier_flushes = 0
+        self._update_batch_updates_collected = 0
+        self._update_batch_updates_submitted = 0
+        self._update_batch_duplicates_removed = 0
+        self._update_batch_max_updates = 0
+        self._update_batch_fallback_packets = 0
 
     @property
     def closed(self) -> bool:
@@ -718,6 +751,8 @@ class AppHandle:
                 raise
 
     def enqueue_set_prop(self, widget_id: str, prop: str, value: object) -> None:
+        if self._collect_update_batch_prop(widget_id, prop, value):
+            return
         self._send_or_queue_native("enqueue_set_prop", widget_id, prop, value)
 
     def enqueue_invalidate(self, widget_id: str, dirty: str) -> None:
@@ -1429,6 +1464,34 @@ class AppHandle:
                 "last_task": (
                     dict(self._last_python_task) if self._last_python_task is not None else None
                 ),
+                "native_sends": {
+                    "scope": "live commands sent through AppHandle._send_or_queue_native",
+                    "requested": self._native_sends_requested,
+                    "direct": self._native_sends_direct,
+                    "queued_before_bind": self._native_sends_queued_before_bind,
+                    "flushed_after_bind": self._native_sends_flushed_after_bind,
+                    "errors": self._native_send_errors,
+                    "timing": dict(self._native_send_timing),
+                    "methods": {
+                        name: {
+                            key: (dict(value) if isinstance(value, dict) else value)
+                            for key, value in stats.items()
+                        }
+                        for name, stats in self._native_send_methods.items()
+                    },
+                    "batches": {
+                        "started": self._update_batches_started,
+                        "completed": self._update_batches_completed,
+                        "nested": self._update_batches_nested,
+                        "packets": self._update_batch_packets,
+                        "barrier_flushes": self._update_batch_barrier_flushes,
+                        "updates_collected": self._update_batch_updates_collected,
+                        "updates_submitted": self._update_batch_updates_submitted,
+                        "duplicates_removed": self._update_batch_duplicates_removed,
+                        "max_updates": self._update_batch_max_updates,
+                        "fallback_packets": self._update_batch_fallback_packets,
+                    },
+                },
                 "startup": dict(self._startup_timings),
             }
 
@@ -1462,6 +1525,17 @@ class AppHandle:
         else:
             snapshot["python_runtime"] = python_snapshot
         return snapshot
+
+    def latency_probe(self, timeout_ms: int = 1000) -> bool | None:
+        """Round-trip a lightweight native ordering barrier for diagnostics."""
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("DragonGUI app handle is closed")
+            sender = self._native_sender
+        if sender is None or not hasattr(sender, "latency_probe"):
+            return None
+        sender.latency_probe(timeout_ms)
+        return True
 
     def apply_patch(self, patch: object) -> None:
         from .vdom import Patch
@@ -1640,24 +1714,127 @@ class AppHandle:
         for patch in patches:
             self.apply_patch(patch)
 
-    def _send_or_queue_native(self, method: str, *args: object) -> None:
+    def update_batch(self) -> _UpdateBatchContext:
+        """Return a thread-local, nestable live-property batching context."""
+        return _UpdateBatchContext(self)
+
+    def _update_batch_state(self) -> dict[str, Any] | None:
+        return getattr(self._update_batch_local, "state", None)
+
+    def _begin_update_batch(self) -> None:
         with self._lock:
             if self._closed:
                 raise RuntimeError("DragonGUI app handle is closed")
+        state = self._update_batch_state()
+        if state is None:
+            state = {"depth": 0, "updates": OrderedDict()}
+            self._update_batch_local.state = state
+        state["depth"] += 1
+        with self._lock:
+            self._update_batches_started += 1
+            if state["depth"] > 1:
+                self._update_batches_nested += 1
+
+    def _end_update_batch(self) -> None:
+        state = self._update_batch_state()
+        if state is None or state["depth"] <= 0:
+            raise RuntimeError("DragonGUI update batch is not active")
+        state["depth"] -= 1
+        if state["depth"] == 0:
+            try:
+                self._flush_update_batch(barrier=False)
+            finally:
+                del self._update_batch_local.state
+                with self._lock:
+                    self._update_batches_completed += 1
+            return
+        with self._lock:
+            self._update_batches_completed += 1
+
+    def _collect_update_batch_prop(self, widget_id: str, prop: str, value: object) -> bool:
+        state = self._update_batch_state()
+        if state is None or state["depth"] <= 0:
+            return False
+        updates: OrderedDict[tuple[str, str], tuple[str, str, object]] = state["updates"]
+        key = (widget_id, prop)
+        duplicate = key in updates
+        if duplicate:
+            updates.pop(key)
+        updates[key] = (widget_id, prop, value)
+        with self._lock:
+            self._update_batch_updates_collected += 1
+            if duplicate:
+                self._update_batch_duplicates_removed += 1
+            self._update_batch_max_updates = max(self._update_batch_max_updates, len(updates))
+        return True
+
+    def _flush_update_batch(self, *, barrier: bool) -> None:
+        state = self._update_batch_state()
+        if state is None:
+            return
+        updates_map: OrderedDict[tuple[str, str], tuple[str, str, object]] = state["updates"]
+        if not updates_map:
+            return
+        updates = list(updates_map.values())
+        updates_map.clear()
+        with self._lock:
+            sender = self._native_sender
+        native_packet_available = sender is None or hasattr(sender, "enqueue_set_props")
+        with self._lock:
+            self._update_batch_packets += 1
+            self._update_batch_updates_submitted += len(updates)
+            if barrier:
+                self._update_batch_barrier_flushes += 1
+            if not native_packet_available:
+                self._update_batch_fallback_packets += 1
+        if native_packet_available:
+            self._send_or_queue_native("enqueue_set_props", updates)
+            return
+        for widget_id, prop, value in updates:
+            self._send_or_queue_native("enqueue_set_prop", widget_id, prop, value)
+
+    def _send_or_queue_native(self, method: str, *args: object) -> None:
+        if method != "enqueue_set_props":
+            self._flush_update_batch(barrier=True)
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("DragonGUI app handle is closed")
+            self._native_sends_requested += 1
+            method_stats = self._native_send_methods.setdefault(method, {})
+            method_stats["requested"] = int(method_stats.get("requested", 0)) + 1
             sender = self._native_sender
             if sender is None:
                 self._pending_native.append((method, args))
+                self._native_sends_queued_before_bind += 1
+                method_stats["queued_before_bind"] = (
+                    int(method_stats.get("queued_before_bind", 0)) + 1
+                )
                 return
+        send_t0 = time.perf_counter()
         try:
             getattr(sender, method)(*args)
         except RuntimeError as exc:
             with self._lock:
                 closed = self._closed
+                self._native_send_errors += 1
+                method_stats = self._native_send_methods.setdefault(method, {})
+                method_stats["errors"] = int(method_stats.get("errors", 0)) + 1
             is_closed = getattr(sender, "is_closed", False)
             sender_closed = bool(is_closed() if callable(is_closed) else is_closed)
             if closed or sender_closed:
                 raise RuntimeError("DragonGUI app handle is closed") from exc
             raise
+        finally:
+            send_ms = (time.perf_counter() - send_t0) * 1000.0
+            with self._lock:
+                _record_timing_stat(self._native_send_timing, send_ms)
+                method_stats = self._native_send_methods.setdefault(method, {})
+                timing = method_stats.setdefault("timing", {})
+                _record_timing_stat(timing, send_ms)
+        with self._lock:
+            self._native_sends_direct += 1
+            method_stats = self._native_send_methods.setdefault(method, {})
+            method_stats["direct"] = int(method_stats.get("direct", 0)) + 1
 
     def _native_method_available(self, method: str) -> bool:
         with self._lock:
@@ -1680,7 +1857,28 @@ class AppHandle:
             pending = list(self._pending_native)
             self._pending_native.clear()
         for method, args in pending:
-            getattr(sender, method)(*args)
+            send_t0 = time.perf_counter()
+            try:
+                getattr(sender, method)(*args)
+            except RuntimeError:
+                with self._lock:
+                    self._native_send_errors += 1
+                    method_stats = self._native_send_methods.setdefault(method, {})
+                    method_stats["errors"] = int(method_stats.get("errors", 0)) + 1
+                raise
+            finally:
+                send_ms = (time.perf_counter() - send_t0) * 1000.0
+                with self._lock:
+                    _record_timing_stat(self._native_send_timing, send_ms)
+                    method_stats = self._native_send_methods.setdefault(method, {})
+                    timing = method_stats.setdefault("timing", {})
+                    _record_timing_stat(timing, send_ms)
+            with self._lock:
+                self._native_sends_flushed_after_bind += 1
+                method_stats = self._native_send_methods.setdefault(method, {})
+                method_stats["flushed_after_bind"] = (
+                    int(method_stats.get("flushed_after_bind", 0)) + 1
+                )
         if should_request_drain:
             sender.enqueue_drain_python_tasks()
 

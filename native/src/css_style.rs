@@ -24,6 +24,7 @@ use lightningcss::rules::{supports::SupportsCondition, CssRule, CssRuleList};
 use lightningcss::stylesheet::{ParserOptions, PrinterOptions, StyleSheet};
 use lightningcss::traits::ToCss;
 use lightningcss::values::resolution::Resolution as CssResolution;
+use smallvec::SmallVec;
 
 use crate::document::{WidgetKind, WidgetNode};
 use crate::layout::{
@@ -2892,6 +2893,8 @@ pub struct StyleAttribute {
     pub value: String,
 }
 
+type StyleAttributeSnapshot = SmallVec<[StyleAttribute; 4]>;
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct StyleAttributeMask(u64);
 
@@ -3620,7 +3623,7 @@ struct AncestorSnapshot {
     id: String,
     key: Option<String>,
     classes: Vec<String>,
-    attributes: Vec<StyleAttribute>,
+    attributes: StyleAttributeSnapshot,
     kind: WidgetKind,
     container_names: Vec<String>,
     container_type: Option<ContainerTypeStyle>,
@@ -3642,7 +3645,7 @@ impl AncestorSnapshot {
             attributes: if features.ancestor_selectors && features.attributes {
                 node_style_attributes(node, features.attribute_mask)
             } else {
-                Vec::new()
+                StyleAttributeSnapshot::new()
             },
             kind: node.kind,
             container_names: node
@@ -3666,7 +3669,7 @@ impl StyleSibling {
                 .map(str::to_string)
                 .collect(),
             attributes: if features.attributes {
-                node_style_attributes(node, features.attribute_mask)
+                node_style_attributes(node, features.attribute_mask).into_vec()
             } else {
                 Vec::new()
             },
@@ -3724,8 +3727,8 @@ fn node_snapshot_pseudo_classes(node: &WidgetNode) -> Vec<DgPseudoClass> {
     pseudos
 }
 
-fn node_style_attributes(node: &WidgetNode, mask: StyleAttributeMask) -> Vec<StyleAttribute> {
-    let mut attributes = Vec::new();
+fn node_style_attributes(node: &WidgetNode, mask: StyleAttributeMask) -> StyleAttributeSnapshot {
+    let mut attributes = StyleAttributeSnapshot::new();
     push_attr(&mut attributes, mask, "id", &node.id);
     if let Some(kind) = css_type_name(node.kind) {
         push_attr(&mut attributes, mask, "type", kind);
@@ -3893,7 +3896,7 @@ fn node_style_attributes(node: &WidgetNode, mask: StyleAttributeMask) -> Vec<Sty
 }
 
 fn push_attr(
-    attributes: &mut Vec<StyleAttribute>,
+    attributes: &mut StyleAttributeSnapshot,
     mask: StyleAttributeMask,
     name: &str,
     value: &str,
@@ -3908,7 +3911,7 @@ fn push_attr(
 }
 
 fn push_attr_opt(
-    attributes: &mut Vec<StyleAttribute>,
+    attributes: &mut StyleAttributeSnapshot,
     mask: StyleAttributeMask,
     name: &str,
     value: Option<&str>,
@@ -3919,7 +3922,7 @@ fn push_attr_opt(
 }
 
 fn push_attr_number_opt(
-    attributes: &mut Vec<StyleAttribute>,
+    attributes: &mut StyleAttributeSnapshot,
     mask: StyleAttributeMask,
     name: &str,
     value: Option<f32>,
@@ -3930,7 +3933,7 @@ fn push_attr_number_opt(
 }
 
 fn push_attr_bool_if_true(
-    attributes: &mut Vec<StyleAttribute>,
+    attributes: &mut StyleAttributeSnapshot,
     mask: StyleAttributeMask,
     name: &str,
     value: bool,
@@ -3941,7 +3944,7 @@ fn push_attr_bool_if_true(
 }
 
 fn push_attr_bool_opt(
-    attributes: &mut Vec<StyleAttribute>,
+    attributes: &mut StyleAttributeSnapshot,
     mask: StyleAttributeMask,
     name: &str,
     value: Option<bool>,
@@ -4526,7 +4529,7 @@ fn matched_part_rule_labels_for_node(
     let attributes = if features.attributes {
         node_style_attributes(node, features.attribute_mask)
     } else {
-        Vec::new()
+        StyleAttributeSnapshot::new()
     };
     let child_siblings: Vec<StyleSibling> = if features.sibling_snapshots {
         node.children
@@ -4660,7 +4663,7 @@ fn matched_rule_labels_for_node(
     let attributes = if features.attributes {
         node_style_attributes(node, features.attribute_mask)
     } else {
-        Vec::new()
+        StyleAttributeSnapshot::new()
     };
     let child_siblings: Vec<StyleSibling> = if features.sibling_snapshots {
         node.children
@@ -4721,6 +4724,9 @@ type MatchedStyleDeclaration<'a> = (
 struct MatchedProvenanceCache {
     candidates: HashMap<(usize, usize), SharedStyleDeclarationProvenance>,
     property_keys: HashMap<(usize, usize, Option<DgPseudoClass>), Box<[Arc<str>]>>,
+    native_fallback_candidates:
+        HashMap<(WidgetKind, &'static str), SharedStyleDeclarationProvenance>,
+    native_fallback_property_keys: HashMap<&'static str, Arc<str>>,
 }
 
 fn collect_stylesheet_node_rule_matches<'a>(
@@ -4926,7 +4932,13 @@ fn compute_stylesheet_node_style<'a>(
         .property_apply_ns
         .saturating_add(property_t0.elapsed().as_nanos().min(u64::MAX as u128) as u64);
     let merge_t0 = Instant::now();
-    merge_node_style(&mut computed, &node.inline_style);
+    // The parsed inline layer is derived exclusively from `style_json`, which
+    // live style patches update before reparsing. Most retained widgets have
+    // no inline declarations; avoid walking every NodeStyle substructure for
+    // that common case.
+    if !node.style_json.is_empty() {
+        merge_node_style(&mut computed, &node.inline_style);
+    }
     metrics.style_merge_ns = metrics
         .style_merge_ns
         .saturating_add(merge_t0.elapsed().as_nanos().min(u64::MAX as u128) as u64);
@@ -4944,7 +4956,12 @@ fn compute_stylesheet_node_style<'a>(
         .declaration_apply_ns
         .saturating_add(declaration_t0.elapsed().as_nanos().min(u64::MAX as u128) as u64);
     let fallback_t0 = Instant::now();
-    prepend_inheritable_native_fallback_provenance(&mut computed, node, fallback_theme);
+    prepend_inheritable_native_fallback_provenance(
+        &mut computed,
+        node,
+        fallback_theme,
+        provenance_cache,
+    );
     metrics.native_fallback_ns = metrics
         .native_fallback_ns
         .saturating_add(fallback_t0.elapsed().as_nanos().min(u64::MAX as u128) as u64);
@@ -4962,6 +4979,7 @@ fn prepend_inheritable_native_fallback_provenance(
     style: &mut NodeStyle,
     node: &WidgetNode,
     fallback_theme: Option<&Theme>,
+    provenance_cache: &mut MatchedProvenanceCache,
 ) {
     let layout_fallback = crate::layout::NativeLayoutFallback::default();
     let geometry_fallback = NativeGeometryFallback::default();
@@ -4977,12 +4995,39 @@ fn prepend_inheritable_native_fallback_provenance(
         ) else {
             continue;
         };
-        prepend_native_fallback_candidate(
-            style,
-            property,
-            Some(value),
-            source_origin.map(str::to_string),
-        );
+        let property_key = provenance_cache
+            .native_fallback_property_keys
+            .entry(property)
+            .or_insert_with(|| Arc::from(property));
+        let candidate = provenance_cache
+            .native_fallback_candidates
+            .entry((node.kind, property))
+            .or_insert_with(|| {
+                Arc::new(StyleDeclarationProvenance {
+                    origin: StylesheetOrigin::NativeFallback.label().to_string(),
+                    source_origin: source_origin.map(str::to_string),
+                    inherited_from: None,
+                    python_widget_type: None,
+                    python_class: None,
+                    construction: None,
+                    authored_property: property.to_string(),
+                    selector: None,
+                    value: Some(value),
+                    important: false,
+                    source_index: None,
+                    source_line: None,
+                    source_column: None,
+                    source_order: None,
+                    specificity: None,
+                })
+            });
+        let candidates = style.provenance.entry(property_key.clone()).or_default();
+        if !candidates
+            .first()
+            .is_some_and(|candidate| candidate.origin == "native-fallback")
+        {
+            candidates.insert(0, candidate.clone());
+        }
     }
 }
 
@@ -5638,7 +5683,7 @@ fn apply_stylesheets_to_node<'a>(
             .saturating_add(attributes.len() as u64);
         attributes
     } else {
-        Vec::new()
+        StyleAttributeSnapshot::new()
     };
     let child_count = node.children.len();
     let child_siblings: Vec<StyleSibling> = if features.sibling_snapshots {
@@ -17753,6 +17798,8 @@ mod tests {
     fn inline_alignment_survives_stylesheet_merge() {
         let mut tree = css_bench_node("window", WidgetKind::Window, None);
         let mut row = css_bench_node("row", WidgetKind::HLayout, None);
+        row.style_json
+            .insert("align-items".to_string(), serde_json::json!("center"));
         row.inline_style.layout.align_items = Some(AlignItemsStyle::Center);
         row.style.layout.align_items = Some(AlignItemsStyle::Center);
         tree.children.push(row);
@@ -22104,6 +22151,7 @@ mod tests {
         }))
         .unwrap();
         let mut store = StylesheetStore::default();
+        store.install_framework_defaults(&Theme::dark());
         store
             .set_stylesheet(StylesheetOrigin::User, "Label { padding: 4px; }")
             .unwrap();
@@ -22119,6 +22167,13 @@ mod tests {
         assert!(Arc::ptr_eq(first_padding, second_padding));
         assert_eq!(first_padding.origin, "user");
         assert_eq!(first_padding.authored_property, "padding");
+
+        for property in ["font-size", "font-weight", "color"] {
+            let first_fallback = tree.children[0].style.provenance[property].first().unwrap();
+            let second_fallback = tree.children[1].style.provenance[property].first().unwrap();
+            assert_eq!(first_fallback.origin, "native-fallback");
+            assert!(Arc::ptr_eq(first_fallback, second_fallback));
+        }
     }
 
     #[test]

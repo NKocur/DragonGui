@@ -1823,6 +1823,75 @@ impl CommandTextRebuildStats {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LiveTextInvalidationReason {
+    FixedSingleLineLabel,
+    FixedWrappedLabel,
+    FixedComposite,
+    IntrinsicWidth,
+    IntrinsicHeight,
+    IntrinsicBoth,
+    UnsupportedProperty,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LiveTextInvalidationDecision {
+    dirty: Dirty,
+    reason: LiveTextInvalidationReason,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct LiveTextInvalidationStats {
+    candidates: u64,
+    text_only: u64,
+    layout: u64,
+    fixed_single_line_label: u64,
+    fixed_wrapped_label: u64,
+    fixed_composite: u64,
+    intrinsic_width: u64,
+    intrinsic_height: u64,
+    intrinsic_both: u64,
+    unsupported_property: u64,
+}
+
+impl LiveTextInvalidationStats {
+    fn record(&mut self, decision: LiveTextInvalidationDecision) {
+        self.candidates = self.candidates.saturating_add(1);
+        match decision.dirty {
+            Dirty::Text => self.text_only = self.text_only.saturating_add(1),
+            Dirty::Layout => self.layout = self.layout.saturating_add(1),
+            _ => {}
+        }
+        let reason = match decision.reason {
+            LiveTextInvalidationReason::FixedSingleLineLabel => &mut self.fixed_single_line_label,
+            LiveTextInvalidationReason::FixedWrappedLabel => &mut self.fixed_wrapped_label,
+            LiveTextInvalidationReason::FixedComposite => &mut self.fixed_composite,
+            LiveTextInvalidationReason::IntrinsicWidth => &mut self.intrinsic_width,
+            LiveTextInvalidationReason::IntrinsicHeight => &mut self.intrinsic_height,
+            LiveTextInvalidationReason::IntrinsicBoth => &mut self.intrinsic_both,
+            LiveTextInvalidationReason::UnsupportedProperty => &mut self.unsupported_property,
+        };
+        *reason = reason.saturating_add(1);
+    }
+
+    fn json_value(self) -> Value {
+        json!({
+            "candidates": self.candidates,
+            "text_only": self.text_only,
+            "layout": self.layout,
+            "reasons": {
+                "fixed_single_line_label": self.fixed_single_line_label,
+                "fixed_wrapped_label": self.fixed_wrapped_label,
+                "fixed_composite": self.fixed_composite,
+                "intrinsic_width": self.intrinsic_width,
+                "intrinsic_height": self.intrinsic_height,
+                "intrinsic_both": self.intrinsic_both,
+                "unsupported_property": self.unsupported_property,
+            },
+        })
+    }
+}
+
 fn collect_targeted_text_roots(
     node: &WidgetNode,
     targets: &HashSet<String>,
@@ -5215,6 +5284,80 @@ fn set_widget_text_prop(node: &mut WidgetNode, id: &str, prop: &str, value: Stri
         }
         _ => false,
     }
+}
+
+fn text_axis_has_definite_size(
+    legacy_px: Option<f32>,
+    value: Option<LayoutLength>,
+    fixed_prop: Option<f32>,
+) -> bool {
+    if fixed_prop.is_some() {
+        return true;
+    }
+    match value {
+        Some(LayoutLength::LogicalPx(_)) => true,
+        Some(LayoutLength::Percent(_) | LayoutLength::Calc(_) | LayoutLength::Auto) => false,
+        None => legacy_px.is_some(),
+    }
+}
+
+fn live_text_prop_decision(node: &WidgetNode, prop: &str) -> LiveTextInvalidationDecision {
+    let is_supported_text_prop = match node.kind {
+        WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal | WidgetKind::Page => {
+            prop == "title"
+        }
+        WidgetKind::Collapsible => matches!(prop, "title" | "text"),
+        WidgetKind::Tab | WidgetKind::NavItem => matches!(prop, "label" | "badge"),
+        WidgetKind::Menu | WidgetKind::MenuItem => prop == "label",
+        WidgetKind::Button | WidgetKind::SmallButton => {
+            matches!(prop, "text" | "label" | "badge")
+        }
+        WidgetKind::Badge | WidgetKind::Tag => matches!(prop, "text" | "label"),
+        _ => matches!(prop, "text" | "label"),
+    };
+    if !is_supported_text_prop {
+        return LiveTextInvalidationDecision {
+            dirty: Dirty::Layout,
+            reason: LiveTextInvalidationReason::UnsupportedProperty,
+        };
+    }
+    let layout = &node.style.layout;
+    let width_is_fixed =
+        text_axis_has_definite_size(layout.width, layout.width_value, node.props.fixed_width);
+    let height_is_fixed =
+        text_axis_has_definite_size(layout.height, layout.height_value, node.props.fixed_height);
+    if node.kind == WidgetKind::Label && width_is_fixed && !label_wraps(node) {
+        LiveTextInvalidationDecision {
+            dirty: Dirty::Text,
+            reason: LiveTextInvalidationReason::FixedSingleLineLabel,
+        }
+    } else if node.kind == WidgetKind::Label && width_is_fixed && height_is_fixed {
+        LiveTextInvalidationDecision {
+            dirty: Dirty::Text,
+            reason: LiveTextInvalidationReason::FixedWrappedLabel,
+        }
+    } else if node.kind != WidgetKind::Label && width_is_fixed && height_is_fixed {
+        LiveTextInvalidationDecision {
+            dirty: Dirty::Text,
+            reason: LiveTextInvalidationReason::FixedComposite,
+        }
+    } else {
+        let reason = match (width_is_fixed, height_is_fixed) {
+            (false, false) => LiveTextInvalidationReason::IntrinsicBoth,
+            (false, true) => LiveTextInvalidationReason::IntrinsicWidth,
+            (true, false) => LiveTextInvalidationReason::IntrinsicHeight,
+            (true, true) => unreachable!("fixed geometry branches returned above"),
+        };
+        LiveTextInvalidationDecision {
+            dirty: Dirty::Layout,
+            reason,
+        }
+    }
+}
+
+#[cfg(test)]
+fn live_text_prop_dirty(node: &WidgetNode, prop: &str) -> Dirty {
+    live_text_prop_decision(node, prop).dirty
 }
 
 fn set_widget_icon_prop(node: &mut WidgetNode, id: &str, icon: String) -> bool {
@@ -9743,6 +9886,252 @@ mod style_patch_tests {
     }
 
     #[test]
+    fn live_wrapped_label_text_requires_layout_when_height_is_intrinsic() {
+        let label = document::parse_widget_node(&json!({
+            "id": "status",
+            "type": "label",
+            "props": {"text": "short", "wrap": true},
+            "style": {"width": "100%", "min-height": 22}
+        }))
+        .unwrap();
+
+        assert_eq!(live_text_prop_dirty(&label, "text"), Dirty::Layout);
+    }
+
+    #[test]
+    fn live_label_text_can_use_text_rebuild_when_geometry_is_fixed() {
+        let wrapped = document::parse_widget_node(&json!({
+            "id": "wrapped",
+            "type": "label",
+            "props": {"text": "short", "wrap": true},
+            "style": {"width": 240, "height": 44}
+        }))
+        .unwrap();
+        let single_line = document::parse_widget_node(&json!({
+            "id": "single-line",
+            "type": "label",
+            "props": {"text": "short", "wrap": false},
+            "style": {"width": 240}
+        }))
+        .unwrap();
+
+        assert_eq!(live_text_prop_dirty(&wrapped, "text"), Dirty::Text);
+        assert_eq!(live_text_prop_dirty(&single_line, "text"), Dirty::Text);
+    }
+
+    #[test]
+    fn live_single_line_label_text_requires_layout_when_width_is_intrinsic() {
+        let label = document::parse_widget_node(&json!({
+            "id": "status",
+            "type": "label",
+            "props": {"text": "short", "wrap": false}
+        }))
+        .unwrap();
+
+        assert_eq!(live_text_prop_dirty(&label, "text"), Dirty::Layout);
+    }
+
+    #[test]
+    fn live_composite_text_requires_layout_when_either_axis_is_intrinsic() {
+        for (kind, prop) in [
+            ("button", "text"),
+            ("button", "badge"),
+            ("panel", "title"),
+            ("badge", "text"),
+            ("loading_spinner", "label"),
+        ] {
+            let node = document::parse_widget_node(&json!({
+                "id": "target",
+                "type": kind,
+                "props": {prop: "short"},
+                "style": {"width": 240}
+            }))
+            .unwrap();
+
+            assert_eq!(
+                live_text_prop_dirty(&node, prop),
+                Dirty::Layout,
+                "{kind}.{prop} must relayout while height remains intrinsic"
+            );
+        }
+    }
+
+    #[test]
+    fn live_composite_text_can_use_text_rebuild_when_both_axes_are_fixed() {
+        for (kind, prop) in [
+            ("button", "text"),
+            ("button", "badge"),
+            ("panel", "title"),
+            ("badge", "text"),
+            ("loading_spinner", "label"),
+        ] {
+            let node = document::parse_widget_node(&json!({
+                "id": "target",
+                "type": kind,
+                "props": {prop: "short"},
+                "style": {"width": 240, "height": 44}
+            }))
+            .unwrap();
+
+            assert_eq!(
+                live_text_prop_dirty(&node, prop),
+                Dirty::Text,
+                "{kind}.{prop} should preserve fixed geometry"
+            );
+        }
+    }
+
+    #[test]
+    fn live_text_classifier_covers_every_retained_composite_property_family() {
+        let supported = [
+            ("button", "text"),
+            ("button", "label"),
+            ("button", "badge"),
+            ("small_button", "text"),
+            ("small_button", "label"),
+            ("small_button", "badge"),
+            ("badge", "text"),
+            ("badge", "label"),
+            ("tag", "text"),
+            ("tag", "label"),
+            ("panel", "title"),
+            ("sidebar", "title"),
+            ("modal", "title"),
+            ("page", "title"),
+            ("collapsible", "title"),
+            ("collapsible", "text"),
+            ("tab", "label"),
+            ("tab", "badge"),
+            ("nav_item", "label"),
+            ("nav_item", "badge"),
+            ("menu", "label"),
+            ("menu_item", "label"),
+            ("loading_spinner", "label"),
+            ("loading_spinner", "text"),
+            ("selectable", "text"),
+            ("radio_button", "label"),
+            ("tree_node", "text"),
+            ("checkbox", "label"),
+            ("toggle_switch", "text"),
+            ("number_input", "label"),
+            ("drag_number", "text"),
+            ("progress_bar", "label"),
+        ];
+
+        for (kind, prop) in supported {
+            let fixed = document::parse_widget_node(&json!({
+                "id": "target",
+                "type": kind,
+                "props": {prop: "short"},
+                "style": {"width": 240, "height": 44}
+            }))
+            .unwrap_or_else(|| panic!("failed to parse fixed {kind}.{prop}"));
+            let intrinsic = document::parse_widget_node(&json!({
+                "id": "target",
+                "type": kind,
+                "props": {prop: "short"},
+                "style": {"width": 240, "height": "auto"}
+            }))
+            .unwrap_or_else(|| panic!("failed to parse intrinsic {kind}.{prop}"));
+
+            assert_eq!(
+                live_text_prop_dirty(&fixed, prop),
+                Dirty::Text,
+                "fixed {kind}.{prop} should be target-local"
+            );
+            assert_eq!(
+                live_text_prop_dirty(&intrinsic, prop),
+                Dirty::Layout,
+                "intrinsic {kind}.{prop} must relayout"
+            );
+        }
+    }
+
+    #[test]
+    fn live_text_classifier_rejects_properties_without_a_mutation_route() {
+        for (kind, prop) in [
+            ("badge", "badge"),
+            ("badge", "value"),
+            ("tag", "value"),
+            ("menu", "badge"),
+            ("menu_item", "badge"),
+            ("panel", "text"),
+        ] {
+            let node = document::parse_widget_node(&json!({
+                "id": "target",
+                "type": kind,
+                "style": {"width": 240, "height": 44}
+            }))
+            .unwrap_or_else(|| panic!("failed to parse {kind}"));
+            assert_eq!(
+                live_text_prop_decision(&node, prop),
+                LiveTextInvalidationDecision {
+                    dirty: Dirty::Layout,
+                    reason: LiveTextInvalidationReason::UnsupportedProperty,
+                },
+                "{kind}.{prop} must not be counted as an eligible live-text route"
+            );
+        }
+    }
+
+    #[test]
+    fn live_text_invalidation_stats_expose_fast_path_and_fallback_reasons() {
+        let mut stats = LiveTextInvalidationStats::default();
+        stats.record(LiveTextInvalidationDecision {
+            dirty: Dirty::Text,
+            reason: LiveTextInvalidationReason::FixedComposite,
+        });
+        stats.record(LiveTextInvalidationDecision {
+            dirty: Dirty::Layout,
+            reason: LiveTextInvalidationReason::IntrinsicHeight,
+        });
+
+        let snapshot = stats.json_value();
+        assert_eq!(snapshot["candidates"], 2);
+        assert_eq!(snapshot["text_only"], 1);
+        assert_eq!(snapshot["layout"], 1);
+        assert_eq!(snapshot["reasons"]["fixed_composite"], 1);
+        assert_eq!(snapshot["reasons"]["intrinsic_height"], 1);
+    }
+
+    #[test]
+    fn live_text_invalidation_rejects_relative_and_auto_axes() {
+        for (width, height, expected_reason) in [
+            (
+                json!("100%"),
+                json!(44),
+                LiveTextInvalidationReason::IntrinsicWidth,
+            ),
+            (
+                json!("calc(100% - 12px)"),
+                json!(44),
+                LiveTextInvalidationReason::IntrinsicWidth,
+            ),
+            (
+                json!(240),
+                json!("auto"),
+                LiveTextInvalidationReason::IntrinsicHeight,
+            ),
+            (
+                json!("auto"),
+                json!("auto"),
+                LiveTextInvalidationReason::IntrinsicBoth,
+            ),
+        ] {
+            let node = document::parse_widget_node(&json!({
+                "id": "target",
+                "type": "button",
+                "props": {"text": "short"},
+                "style": {"width": width, "height": height}
+            }))
+            .unwrap();
+            let decision = live_text_prop_decision(&node, "text");
+            assert_eq!(decision.dirty, Dirty::Layout, "{width} x {height}");
+            assert_eq!(decision.reason, expected_reason, "{width} x {height}");
+        }
+    }
+
+    #[test]
     fn set_widget_icon_prop_updates_semantic_identity_without_layout_metadata() {
         let mut root = crate::document::parse_widget_node(&json!({
             "id": "root",
@@ -9986,6 +10375,7 @@ struct WgpuState {
     dirty_rebuild_stats: DirtyRebuildStats,
     command_text_rebuild_stats: CommandTextRebuildStats,
     interaction_text_rebuild_stats: InteractionTextRebuildStats,
+    live_text_invalidation_stats: LiveTextInvalidationStats,
     apply_layout_timing: StageTimingStats,
     style_reapply_timing: StageTimingStats,
     transition_sync_timing: StageTimingStats,
@@ -11660,6 +12050,7 @@ impl WgpuState {
             dirty_rebuild_stats: DirtyRebuildStats::default(),
             command_text_rebuild_stats: CommandTextRebuildStats::default(),
             interaction_text_rebuild_stats: InteractionTextRebuildStats::default(),
+            live_text_invalidation_stats: LiveTextInvalidationStats::default(),
             apply_layout_timing: StageTimingStats::default(),
             style_reapply_timing: StageTimingStats::default(),
             transition_sync_timing: StageTimingStats::default(),
@@ -14092,10 +14483,28 @@ impl WgpuState {
             return None;
         }
         if kind == WidgetKind::LoadingSpinner {
+            let text_decision = self
+                .widget_tree
+                .as_ref()
+                .and_then(|tree| find_widget(tree, id))
+                .map(|node| live_text_prop_decision(node, prop))
+                .unwrap_or(LiveTextInvalidationDecision {
+                    dirty: Dirty::Layout,
+                    reason: LiveTextInvalidationReason::UnsupportedProperty,
+                });
             let Some(tree) = self.widget_tree.as_mut() else {
                 return None;
             };
-            let dirty = set_widget_loading_spinner_prop(tree, id, prop, value);
+            let dirty = set_widget_loading_spinner_prop(tree, id, prop, value).map(|dirty| {
+                if matches!(dirty, Dirty::Text) {
+                    text_decision.dirty
+                } else {
+                    dirty
+                }
+            });
+            if dirty.is_some() && matches!(prop, "label" | "text") {
+                self.live_text_invalidation_stats.record(text_decision);
+            }
             if dirty.is_none() {
                 eprintln!(
                     "DragonGUI: ignoring unsupported live SetProp for widget {id:?} ({kind:?}).{prop}"
@@ -14128,9 +14537,19 @@ impl WgpuState {
                     | WidgetKind::Menu
                     | WidgetKind::MenuItem
             ) {
+                let decision = self
+                    .widget_tree
+                    .as_ref()
+                    .and_then(|tree| find_widget(tree, id))
+                    .map(|node| live_text_prop_decision(node, prop))
+                    .unwrap_or(LiveTextInvalidationDecision {
+                        dirty: Dirty::Layout,
+                        reason: LiveTextInvalidationReason::UnsupportedProperty,
+                    });
                 if let Some(tree) = self.widget_tree.as_mut() {
                     if set_widget_text_prop(tree, id, prop, text.clone()) {
-                        return Some(Dirty::Text);
+                        self.live_text_invalidation_stats.record(decision);
+                        return Some(decision.dirty);
                     }
                 }
             }
@@ -14446,6 +14865,15 @@ impl WgpuState {
             WidgetKind::Button | WidgetKind::SmallButton | WidgetKind::Tab | WidgetKind::NavItem
         ) && prop == "badge"
         {
+            let decision = self
+                .widget_tree
+                .as_ref()
+                .and_then(|tree| find_widget(tree, id))
+                .map(|node| live_text_prop_decision(node, prop))
+                .unwrap_or(LiveTextInvalidationDecision {
+                    dirty: Dirty::Layout,
+                    reason: LiveTextInvalidationReason::UnsupportedProperty,
+                });
             let badge = match value {
                 CommandValue::Text(text) => Some(text),
                 CommandValue::Float(value) => Some(format_badge_number(value)),
@@ -14459,7 +14887,8 @@ impl WgpuState {
             };
             if let Some(tree) = self.widget_tree.as_mut() {
                 if set_widget_badge_prop(tree, id, badge) {
-                    return Some(Dirty::Text);
+                    self.live_text_invalidation_stats.record(decision);
+                    return Some(decision.dirty);
                 }
             }
             return None;
@@ -17737,6 +18166,7 @@ impl WgpuState {
             "dirty_rebuilds": self.dirty_rebuild_stats.json_value(),
             "command_text_rebuilds": self.command_text_rebuild_stats.json_value(),
             "interaction_text_rebuilds": self.interaction_text_rebuild_stats.json_value(),
+            "live_text_invalidation": self.live_text_invalidation_stats.json_value(),
             "animation_activity": {
                 "css_active": self.css_animations_active,
                 "style_transition_count":
@@ -20675,6 +21105,20 @@ impl DragonApp {
             .as_ref()
             .map(|bridge| bridge.len())
             .unwrap_or(0);
+        let command_queue_snapshot = self
+            .command_bridge
+            .as_ref()
+            .map(|bridge| bridge.queue_debug_snapshot())
+            .unwrap_or_else(|| {
+                json!({
+                    "depth": 0,
+                    "high_water": 0,
+                    "pushes": 0,
+                    "replacements": 0,
+                    "replacements_by_family": {},
+                    "push_timing": {},
+                })
+            });
         let command_timings = self
             .command_timings
             .iter()
@@ -20871,6 +21315,7 @@ impl DragonApp {
             json!(self.frame_timestamps.len()),
         );
         runtime.insert("command_queue_depth".to_string(), json!(queue_depth));
+        runtime.insert("command_queue".to_string(), command_queue_snapshot);
         runtime.insert("command_drain".to_string(), command_drain_snapshot);
         runtime.insert(
             "command_timings".to_string(),
@@ -21435,6 +21880,64 @@ impl DragonApp {
                     }
                 };
                 self.record_runtime_command("SetProp", Some(id), detail, dirty, &outcome, redraw)
+            }
+            Command::SetProps { updates } => {
+                let update_count = updates.len();
+                let (dirty, detail, outcome, redraw) = {
+                    let Some(gpu) = &mut self.gpu else {
+                        return self.record_runtime_command(
+                            "SetProps",
+                            None,
+                            Some(format!("updates={update_count}")),
+                            None,
+                            "gpu_not_ready",
+                            false,
+                        );
+                    };
+                    let mut merged_dirty = None;
+                    let mut applied = 0usize;
+                    let mut stale = 0usize;
+                    let mut noops = 0usize;
+                    let mut packet_redraw = false;
+                    for (index, update) in updates.into_iter().enumerate() {
+                        match gpu.apply_set_prop(&update.id, &update.prop, update.value) {
+                            Some(update_dirty) => {
+                                gpu.rebuild_for_widget_dirty(update_dirty, Some(&update.id));
+                                merged_dirty = Some(merge_dirty(merged_dirty, update_dirty));
+                                applied += 1;
+                            }
+                            None if !gpu.has_widget(&update.id) => stale += 1,
+                            None => noops += 1,
+                        }
+                        let deferred_target_count = gpu.deferred_text_targets.len()
+                            + gpu.deferred_visual_targets.len()
+                            + gpu.deferred_table_text_targets.len();
+                        if index + 1 < update_count
+                            && deferred_target_count >= MAX_TARGETED_TEXT_ROOTS_PER_BATCH
+                        {
+                            packet_redraw |= gpu.flush_deferred_rebuilds();
+                            gpu.begin_deferred_rebuilds();
+                        }
+                    }
+                    let outcome = if applied == update_count {
+                        "applied"
+                    } else if applied > 0 {
+                        "partially_applied"
+                    } else if stale > 0 {
+                        "stale_or_noop"
+                    } else {
+                        "unsupported_or_noop"
+                    };
+                    (
+                        merged_dirty,
+                        Some(format!(
+                            "updates={update_count}; applied={applied}; stale={stale}; noops={noops}"
+                        )),
+                        outcome.to_string(),
+                        packet_redraw || applied > 0,
+                    )
+                };
+                self.record_runtime_command("SetProps", None, detail, dirty, &outcome, redraw)
             }
             Command::SetStyle { id, patch_json } => {
                 let detail = Some(format!("patch_bytes={}", patch_json.len()));
@@ -24131,6 +24634,20 @@ impl DragonApp {
                     }
                 }
                 flushed
+            }
+            Command::LatencyProbe { request_id } => {
+                self.record_runtime_command(
+                    "LatencyProbe",
+                    None,
+                    Some(format!("request_id={request_id}")),
+                    None,
+                    "completed",
+                    false,
+                );
+                if let Some(bridge) = &self.command_bridge {
+                    bridge.complete_response(request_id, "{}".to_string());
+                }
+                false
             }
         }
     }

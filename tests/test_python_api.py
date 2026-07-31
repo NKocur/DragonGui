@@ -232,6 +232,12 @@ def test_builtin_help_manual_exposes_nested_sections() -> None:
     assert "CSS type selector: `ColorPicker`" in dg.help.reference.widgets.color_picker()
     assert "CSS Limits" in dg.help.reference.css_limits()
     assert "Thread-Safe Updates" in dg.help.live_updates.threads()
+    batching_help = dg.help.live_updates.batching()
+    assert "Batched Property Updates" in batching_help
+    assert "with app.update_batch():" in batching_help
+    assert "last value wins" in batching_help
+    assert "There is no atomic rollback" in batching_help
+    assert "`update_batch()`" in dg.help.app_model.app()
     assert dg.help.search("thread safe updates")[0]["path"] == "live_updates.threads"
     assert "Dashboard Recipe" in dg.help.recipes.dashboard()
     assert "examples/older/pytorch_training_dashboard.py" in dg.help.recipes.pytorch_dashboard()
@@ -3261,6 +3267,11 @@ def test_app_handle_queues_and_drains_python_tasks() -> None:
 
     assert sender.wake_count == 1
     assert sender.props == [("field", "value", "queued")]
+    handle.enqueue_set_prop("field", "value", "direct")
+    assert sender.props == [
+        ("field", "value", "queued"),
+        ("field", "value", "direct"),
+    ]
     handle._drain_python_tasks()
     assert calls == ["before-bind"]
 
@@ -3269,10 +3280,180 @@ def test_app_handle_queues_and_drains_python_tasks() -> None:
     handle._drain_python_tasks()
     assert calls == ["before-bind", "after-bind"]
 
+    sends = handle._python_debug_snapshot()["native_sends"]
+    assert sends["requested"] == 2
+    assert sends["queued_before_bind"] == 1
+    assert sends["flushed_after_bind"] == 1
+    assert sends["direct"] == 1
+    assert sends["errors"] == 0
+    assert sends["timing"]["count"] == 2
+    assert sends["methods"]["enqueue_set_prop"]["requested"] == 2
+    assert sends["methods"]["enqueue_set_prop"]["timing"]["count"] == 2
+
     handle._close()
     assert sender.closed is True
     with pytest.raises(RuntimeError, match="closed"):
         handle.call_soon_threadsafe(lambda: None)
+
+
+def test_app_handle_update_batch_deduplicates_and_nests() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.packets: list[list[tuple[str, str, object]]] = []
+
+        def enqueue_set_props(self, updates: list[tuple[str, str, object]]) -> None:
+            self.packets.append(list(updates))
+
+        def close(self) -> None:
+            pass
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+
+    with handle.update_batch():
+        handle.enqueue_set_prop("alpha", "text", "first")
+        with handle.update_batch():
+            handle.enqueue_set_prop("beta", "text", "kept")
+            handle.enqueue_set_prop("alpha", "text", "final")
+
+    assert sender.packets == [
+        [("beta", "text", "kept"), ("alpha", "text", "final")]
+    ]
+    batches = handle._python_debug_snapshot()["native_sends"]["batches"]
+    assert batches == {
+        "started": 2,
+        "completed": 2,
+        "nested": 1,
+        "packets": 1,
+        "barrier_flushes": 0,
+        "updates_collected": 3,
+        "updates_submitted": 2,
+        "duplicates_removed": 1,
+        "max_updates": 2,
+        "fallback_packets": 0,
+    }
+
+
+def test_app_handle_update_batch_flushes_before_ordering_barrier_and_on_error() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, object]] = []
+
+        def enqueue_set_props(self, updates: list[tuple[str, str, object]]) -> None:
+            self.calls.append(("props", list(updates)))
+
+        def enqueue_set_style(self, widget_id: str, patch_json: str) -> None:
+            self.calls.append(("style", (widget_id, patch_json)))
+
+        def close(self) -> None:
+            pass
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+
+    with pytest.raises(ValueError, match="preserve"):
+        with handle.update_batch():
+            handle.enqueue_set_prop("before", "text", "one")
+            handle._send_or_queue_native("enqueue_set_style", "panel", "{}")
+            handle.enqueue_set_prop("after", "text", "two")
+            raise ValueError("preserve")
+
+    assert sender.calls == [
+        ("props", [("before", "text", "one")]),
+        ("style", ("panel", "{}")),
+        ("props", [("after", "text", "two")]),
+    ]
+    batches = handle._python_debug_snapshot()["native_sends"]["batches"]
+    assert batches["barrier_flushes"] == 1
+    assert batches["completed"] == 1
+
+
+def test_app_handle_update_batch_falls_back_for_older_native_sender() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.props: list[tuple[str, str, object]] = []
+
+        def enqueue_set_prop(self, widget_id: str, prop: str, value: object) -> None:
+            self.props.append((widget_id, prop, value))
+
+        def close(self) -> None:
+            pass
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+
+    with handle.update_batch():
+        handle.enqueue_set_prop("one", "text", "1")
+        handle.enqueue_set_prop("two", "text", "2")
+
+    assert sender.props == [("one", "text", "1"), ("two", "text", "2")]
+    sends = handle._python_debug_snapshot()["native_sends"]
+    assert sends["batches"]["fallback_packets"] == 1
+    assert sends["methods"]["enqueue_set_prop"]["requested"] == 2
+
+
+def test_app_handle_update_batch_preserves_supported_value_types() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.packets: list[list[tuple[str, str, object]]] = []
+
+        def enqueue_set_props(self, updates: list[tuple[str, str, object]]) -> None:
+            self.packets.append(list(updates))
+
+        def close(self) -> None:
+            pass
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+
+    values = [None, False, True, -7, 2.5, "ready"]
+    with handle.update_batch():
+        for index, value in enumerate(values):
+            handle.enqueue_set_prop(f"widget-{index}", "value", value)
+
+    assert sender.packets == [
+        [(f"widget-{index}", "value", value) for index, value in enumerate(values)]
+    ]
+
+
+def test_app_handle_update_batch_cleans_up_after_native_send_failure() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.fail = True
+            self.packets: list[list[tuple[str, str, object]]] = []
+
+        def enqueue_set_props(self, updates: list[tuple[str, str, object]]) -> None:
+            if self.fail:
+                raise RuntimeError("synthetic packet failure")
+            self.packets.append(list(updates))
+
+        def is_closed(self) -> bool:
+            return False
+
+        def close(self) -> None:
+            pass
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+
+    with pytest.raises(RuntimeError, match="synthetic packet failure"):
+        with handle.update_batch():
+            handle.enqueue_set_prop("first", "text", "failed")
+
+    assert handle._update_batch_state() is None
+    sender.fail = False
+    with handle.update_batch():
+        handle.enqueue_set_prop("second", "text", "recovered")
+
+    assert sender.packets == [[("second", "text", "recovered")]]
+    sends = handle._python_debug_snapshot()["native_sends"]
+    assert sends["errors"] == 1
+    assert sends["batches"]["completed"] == 2
 
 
 def test_app_handle_coalesces_python_task_drain_wakeups() -> None:
@@ -3487,6 +3668,26 @@ def test_app_handle_debug_snapshot_uses_native_sender() -> None:
     assert sender.timeout_ms == 250
     assert snapshot["schema"] == 1
     assert snapshot["runtime"]["frames_rendered"] == 3
+
+
+def test_app_handle_latency_probe_uses_lightweight_native_sender_method() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.timeout_ms: int | None = None
+
+        def latency_probe(self, timeout_ms: int) -> None:
+            self.timeout_ms = timeout_ms
+
+        def close(self) -> None:
+            pass
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+
+    assert handle.latency_probe(timeout_ms=275) is True
+    assert sender.timeout_ms == 275
+    assert AppHandle().latency_probe() is None
 
 
 def test_app_handle_window_screenshot_uses_native_sender() -> None:

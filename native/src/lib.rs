@@ -1,4 +1,6 @@
 mod app;
+#[cfg(test)]
+mod command_queue_model;
 mod commands;
 pub mod css_style;
 mod document;

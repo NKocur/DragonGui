@@ -2455,16 +2455,19 @@ Important methods:
 - `call_soon_threadsafe(fn, coalesce_key=None)` schedules a callable from
   producer/background threads. Reusing a key keeps only the newest pending
   snapshot callback; omit the key for events and append-only streams.
+- `update_batch()` is a context manager for grouping ordinary live widget
+  property setters into one ordered native packet. Use it inside a scheduled
+  callback when one logical frame changes many labels, values, or styles.
 - `toast(...)` posts a native notification and returns a `ToastHandle`.
 - `set_buffer_resource(...)` and `release_resource(...)` manage retained native
   buffers while the app is running. Supplying a widget owner makes removal of
   that widget release its buffers automatically.
 
-`call_soon_threadsafe`, toasts, diagnostics, redraw/exit requests, and generic
-buffer methods require a running app. Startup CSS, themes, icon mappings, and
-image resources can be configured before `run(...)`; their setters also have
-live paths. Named stylesheet and theme changes are safe inside
-`call_soon_threadsafe`.
+`call_soon_threadsafe`, `update_batch`, toasts, diagnostics, redraw/exit
+requests, and generic buffer methods require a running app. Startup CSS,
+themes, icon mappings, and image resources can be configured before `run(...)`;
+their setters also have live paths. Named stylesheet and theme changes are safe
+inside `call_soon_threadsafe`.
 See `examples/older/runtime_theme_switching_demo.py` for live Nexus, Windows 3.11,
 and classic Mac-style switching.
 """,
@@ -3548,6 +3551,53 @@ Guidelines:
 - Prefer latest-frame semantics when old frames are not useful.
 """,
     )
+    live_batching = _section(
+        "batching",
+        "Batched Property Updates",
+        "Grouping one logical frame of ordinary live setters into one native packet.",
+        """
+Use `app.update_batch()` when one callback changes many ordinary widget
+properties:
+
+```python
+def apply_snapshot(snapshot):
+    with app.update_batch():
+        status.set_value(snapshot.status)
+        progress.set_value(snapshot.progress)
+        badge.set_value(snapshot.mode)
+        badge.set_level(snapshot.level)
+
+app.call_soon_threadsafe(
+    lambda: apply_snapshot(latest_snapshot),
+    coalesce_key="telemetry-frame",
+)
+```
+
+The Python widget objects update immediately. At the outer context exit,
+DragonGUI submits the collected property changes as one ordered native packet.
+This reduces Python/native boundary and queue overhead; it does not make the
+updates transactional and it does not provide rollback.
+
+Semantics:
+- Batches are local to the current thread and running `App` handle.
+- Nested `update_batch()` contexts merge into their outer context.
+- If the same widget property is written more than once, the last value wins
+  and occupies the position of that last write.
+- A non-property live command, such as a plot data update, stylesheet change,
+  child replacement, or explicit redraw request, first flushes collected
+  properties so call order remains observable.
+- Leaving the context because of an exception still flushes collected updates,
+  then re-raises the exception. There is no atomic rollback.
+- Calling `app.update_batch()` before `app.run(...)` has bound the runtime, or
+  after it has returned, raises `RuntimeError`.
+
+Batch complete latest-state frames, especially dashboards with many labels,
+badges, progress values, or styles. Keep lossless append/event streams separate,
+and continue using dedicated packed methods such as `LinePlot.set_data(...)`,
+`Scatter3D.set_prepared_points(...)`, and `DataFrameTable.set_frame(...)` for
+large data resources.
+""",
+    )
     live_updates = _section(
         "live_updates",
         "Live Updates",
@@ -3566,7 +3616,7 @@ modal.show()
 toast_handle.update("Done", level="success")
 ```
 """,
-        [live_value_updates, live_data_updates, live_threads],
+        [live_value_updates, live_data_updates, live_threads, live_batching],
     )
     components = _section(
         "components",

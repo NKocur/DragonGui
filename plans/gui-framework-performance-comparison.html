@@ -1,0 +1,812 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DragonGUI Cross-Framework Performance Report</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #09101d;
+      --surface: #111b2c;
+      --surface-2: #17243a;
+      --border: #2a3a55;
+      --text: #edf4ff;
+      --muted: #9fb0c9;
+      --dragon: #65e6be;
+      --dpg: #70a9ff;
+      --qt: #c995ff;
+      --tk: #ffbc6b;
+      --good: #69e59e;
+      --warning: #ffcc66;
+      --bad: #ff7e8b;
+      --shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 8% -10%, rgba(101, 230, 190, 0.12), transparent 34rem),
+        radial-gradient(circle at 100% 0%, rgba(112, 169, 255, 0.11), transparent 32rem),
+        var(--bg);
+      color: var(--text);
+      font: 15px/1.58 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", sans-serif;
+    }
+
+    a { color: #8fc0ff; }
+    a:hover { color: #b7d7ff; }
+
+    .shell {
+      width: min(1440px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 34px 0 72px;
+    }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: 34px;
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      background: linear-gradient(145deg, rgba(23, 36, 58, 0.96), rgba(12, 21, 36, 0.96));
+      box-shadow: var(--shadow);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -90px;
+      top: -120px;
+      width: 360px;
+      height: 360px;
+      border-radius: 50%;
+      border: 58px solid rgba(101, 230, 190, 0.06);
+      pointer-events: none;
+    }
+
+    .eyebrow {
+      margin: 0 0 8px;
+      color: var(--dragon);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      max-width: 920px;
+      margin: 0;
+      font-size: clamp(34px, 5vw, 64px);
+      line-height: 1.04;
+      letter-spacing: -0.045em;
+    }
+
+    .lede {
+      max-width: 880px;
+      margin: 18px 0 0;
+      color: #c4d1e5;
+      font-size: 18px;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 24px;
+    }
+
+    .pill {
+      padding: 7px 11px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: rgba(7, 14, 25, 0.42);
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .toc {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 18px 0 0;
+    }
+
+    .toc a {
+      padding: 7px 11px;
+      border-radius: 9px;
+      color: #d5e4f8;
+      background: rgba(255, 255, 255, 0.04);
+      text-decoration: none;
+    }
+
+    .toc a:hover { background: rgba(255, 255, 255, 0.08); }
+
+    section { margin-top: 34px; }
+
+    .section-heading {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 16px;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 27px;
+      letter-spacing: -0.025em;
+    }
+
+    h3 { margin: 0 0 8px; font-size: 18px; }
+    p { margin: 0 0 12px; }
+
+    .muted { color: var(--muted); }
+
+    .verdict-grid,
+    .metric-grid,
+    .chart-grid,
+    .priority-grid {
+      display: grid;
+      gap: 16px;
+    }
+
+    .verdict-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .metric-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .chart-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .priority-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+    .card {
+      min-width: 0;
+      padding: 20px;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: linear-gradient(145deg, rgba(23, 36, 58, 0.88), rgba(14, 24, 40, 0.9));
+      box-shadow: 0 12px 34px rgba(0, 0, 0, 0.16);
+    }
+
+    .verdict-card {
+      border-top: 3px solid var(--accent);
+    }
+
+    .verdict-card strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 20px;
+    }
+
+    .metric-value {
+      display: block;
+      margin: 7px 0 4px;
+      font-size: 32px;
+      font-weight: 780;
+      letter-spacing: -0.04em;
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .delta-good { color: var(--good); }
+    .delta-warning { color: var(--warning); }
+    .delta-bad { color: var(--bad); }
+
+    .callout {
+      padding: 18px 20px;
+      border: 1px solid rgba(255, 204, 102, 0.45);
+      border-left: 4px solid var(--warning);
+      border-radius: 12px;
+      background: rgba(255, 204, 102, 0.075);
+      color: #ebddbc;
+    }
+
+    .chart-card { min-height: 385px; }
+
+    .chart-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: start;
+    }
+
+    .chart-title small {
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .chart {
+      width: 100%;
+      min-height: 285px;
+      margin-top: 10px;
+    }
+
+    .chart svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      overflow: visible;
+    }
+
+    .chart text {
+      fill: var(--muted);
+      font-family: inherit;
+      font-size: 12px;
+    }
+
+    .chart .value-label { fill: var(--text); font-weight: 750; }
+    .chart .axis { stroke: #40516d; stroke-width: 1; }
+    .chart .grid { stroke: rgba(159, 176, 201, 0.16); stroke-width: 1; }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 9px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .swatch { width: 9px; height: 9px; border-radius: 50%; background: var(--color); }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 760px;
+      background: rgba(13, 22, 37, 0.82);
+    }
+
+    th, td {
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(42, 58, 85, 0.8);
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    th:first-child, td:first-child { text-align: left; }
+    th {
+      color: #b9c8dc;
+      background: rgba(23, 36, 58, 0.92);
+      font-size: 12px;
+      letter-spacing: 0.055em;
+      text-transform: uppercase;
+    }
+
+    tbody tr:hover { background: rgba(112, 169, 255, 0.055); }
+    tbody tr:last-child td { border-bottom: 0; }
+
+    .framework-name {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 720;
+    }
+
+    .framework-name::before {
+      content: "";
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--framework-color);
+    }
+
+    details {
+      border: 1px solid var(--border);
+      border-radius: 13px;
+      background: rgba(15, 26, 43, 0.78);
+    }
+
+    details + details { margin-top: 10px; }
+
+    summary {
+      cursor: pointer;
+      padding: 15px 18px;
+      font-weight: 730;
+    }
+
+    details > div { padding: 0 18px 16px; color: #c2d0e3; }
+
+    ol, ul { margin: 8px 0 0; padding-left: 22px; }
+    li + li { margin-top: 6px; }
+
+    .priority-card { border-left: 4px solid var(--accent); }
+
+    code {
+      padding: 2px 6px;
+      border-radius: 6px;
+      background: #08101d;
+      color: #b9dcff;
+    }
+
+    pre {
+      overflow-x: auto;
+      padding: 16px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #070e19;
+      color: #cfe0f5;
+    }
+
+    footer {
+      margin-top: 40px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 1050px) {
+      .verdict-grid, .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .chart-grid, .priority-grid { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 650px) {
+      .shell { width: min(100% - 22px, 1440px); padding-top: 14px; }
+      .hero { padding: 24px 20px; border-radius: 18px; }
+      .verdict-grid, .metric-grid { grid-template-columns: 1fr; }
+      .card { padding: 17px; }
+      .section-heading { align-items: start; flex-direction: column; gap: 5px; }
+    }
+
+    @media print {
+      :root { color-scheme: light; --bg: #fff; --surface: #fff; --surface-2: #f4f6f9;
+        --border: #ccd4df; --text: #172033; --muted: #526176; }
+      body { background: #fff; }
+      .shell { width: 100%; padding: 0; }
+      .hero, .card { box-shadow: none; background: #fff; break-inside: avoid; }
+      .toc { display: none; }
+      section { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <p class="eyebrow">Performance benchmark · Initial controls matrix</p>
+      <h1>Where DragonGUI stands against efficient Python GUI frameworks</h1>
+      <p class="lede">
+        DragonGUI is already competitive in steady GPU rendering and batched updates—generally
+        second to Dear PyGui—but native startup and process memory are now the dominant gaps.
+      </p>
+      <div class="meta">
+        <span class="pill">Windows 11 24H2</span>
+        <span class="pill">Intel Core Ultra 7 265H</span>
+        <span class="pill">Python 3.12.10</span>
+        <span class="pill">3 repetitions per case</span>
+        <span class="pill">Fresh process per sample</span>
+        <span class="pill">Benchmark date: 2026-07-31</span>
+      </div>
+      <nav class="toc" aria-label="Report sections">
+        <a href="#verdict">Verdict</a>
+        <a href="#plots">Comparative plots</a>
+        <a href="#tables">Result tables</a>
+        <a href="#method">Method</a>
+        <a href="#limits">Limitations</a>
+        <a href="#priorities">Next priorities</a>
+      </nav>
+    </header>
+
+    <section id="verdict">
+      <div class="section-heading">
+        <h2>Executive verdict</h2>
+        <span class="muted">Lower is better for every plotted metric</span>
+      </div>
+      <div class="verdict-grid">
+        <article class="card verdict-card" style="--accent: var(--good)">
+          <span class="metric-label">Steady rendering</span>
+          <strong>Competitive</strong>
+          <p class="muted">1.09 ms dense-control median; second to Dear PyGui and well ahead of the forced Qt repaint.</p>
+        </article>
+        <article class="card verdict-card" style="--accent: var(--good)">
+          <span class="metric-label">Live updates</span>
+          <strong>Strong second</strong>
+          <p class="muted">Approximately 2–3 ms conservative p95 pipeline after including the separate native command drain.</p>
+        </article>
+        <article class="card verdict-card" style="--accent: var(--bad)">
+          <span class="metric-label">Startup</span>
+          <strong>Needs focused work</strong>
+          <p class="muted">135–151 ms import plus roughly 3 seconds of native GPU/runtime lifecycle overhead.</p>
+        </article>
+        <article class="card verdict-card" style="--accent: var(--bad)">
+          <span class="metric-label">Memory</span>
+          <strong>Largest concern</strong>
+          <p class="muted">Dense live RSS was high and bimodal, with a three-run median of 434.5 MiB.</p>
+        </article>
+      </div>
+
+      <div class="metric-grid" style="margin-top: 16px">
+        <article class="card">
+          <span class="metric-label">Dense active frame</span>
+          <span class="metric-value">1.09 ms</span>
+          <span class="delta-warning">1.6× Dear PyGui</span>
+        </article>
+        <article class="card">
+          <span class="metric-label">Dense vs PyQt6</span>
+          <span class="metric-value">2.7×</span>
+          <span class="delta-good">less active frame work</span>
+        </article>
+        <article class="card">
+          <span class="metric-label">Corrected updates</span>
+          <span class="metric-value">60 / 60</span>
+          <span class="delta-good">batches completed</span>
+        </article>
+        <article class="card">
+          <span class="metric-label">Layout diagnostics</span>
+          <span class="metric-value">0</span>
+          <span class="delta-good">in all DragonGUI cases</span>
+        </article>
+      </div>
+
+      <div class="callout" style="margin-top: 16px">
+        <strong>Timing boundary that matters:</strong> DragonGUI's render-work timer does not include
+        its native command drain. The update plot uses a conservative ≈3 ms combined p95, not the
+        misleadingly smaller 0.79 ms render-only p95.
+      </div>
+    </section>
+
+    <section id="plots">
+      <div class="section-heading">
+        <h2>Comparative plots</h2>
+        <span class="muted">Medians across three fresh-process runs</span>
+      </div>
+      <div class="chart-grid">
+        <article class="card chart-card">
+          <div class="chart-title">
+            <div><h3>Dense controls: active frame p50</h3><p class="muted">200 rows / 800 logical controls</p></div>
+            <small>milliseconds</small>
+          </div>
+          <div class="chart" data-chart="denseFrame"></div>
+        </article>
+
+        <article class="card chart-card">
+          <div class="chart-title">
+            <div><h3>Batched updates: p95 pipeline</h3><p class="muted">50 labels + 50 progress bars</p></div>
+            <small>milliseconds</small>
+          </div>
+          <div class="chart" data-chart="updatePipeline"></div>
+        </article>
+
+        <article class="card chart-card">
+          <div class="chart-title">
+            <div><h3>Dense controls: live process RSS</h3><p class="muted">Last sample while event loop was alive</p></div>
+            <small>MiB</small>
+          </div>
+          <div class="chart" data-chart="denseMemory"></div>
+        </article>
+
+        <article class="card chart-card">
+          <div class="chart-title">
+            <div><h3>Framework import cost</h3><p class="muted">Dynamic import in a fresh Python process</p></div>
+            <small>milliseconds</small>
+          </div>
+          <div class="chart" data-chart="importCost"></div>
+        </article>
+
+        <article class="card chart-card">
+          <div class="chart-title">
+            <div><h3>Active-frame scaling</h3><p class="muted">Empty → 50 rows → 200 rows</p></div>
+            <small>milliseconds</small>
+          </div>
+          <div class="chart" data-chart="frameScaling"></div>
+          <div class="legend" id="scaling-legend"></div>
+        </article>
+
+        <article class="card chart-card">
+          <div class="chart-title">
+            <div><h3>Public widget construction</h3><p class="muted">Not time-to-interactive; DragonGUI defers native work</p></div>
+            <small>milliseconds · log scale</small>
+          </div>
+          <div class="chart" data-chart="buildScaling"></div>
+        </article>
+      </div>
+    </section>
+
+    <section id="tables">
+      <div class="section-heading">
+        <h2>Result tables</h2>
+        <span class="muted">Times in ms; memory in MiB</span>
+      </div>
+
+      <h3>Dense controls</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Framework</th><th>Import</th><th>Public build</th><th>First event</th><th>Active p50</th><th>Active p95</th><th>Live RSS</th><th>Peak RSS</th></tr></thead>
+          <tbody id="dense-table"></tbody>
+        </table>
+      </div>
+
+      <h3 style="margin-top: 24px">Corrected batched updates</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Framework</th><th>Apply p50</th><th>Apply p95</th><th>Active p50</th><th>Active p95</th><th>Dragon command drain p95</th><th>Completed</th><th>Live RSS</th></tr></thead>
+          <tbody id="update-table"></tbody>
+        </table>
+      </div>
+
+      <div class="callout" style="margin-top: 16px">
+        Tkinter's unchanged-frame values are excluded from the static-render verdict. Calling
+        <code>update()</code> services events but does not force clean Tk widgets through an equivalent
+        continuous GPU repaint. Its dynamic-update results remain useful.
+      </div>
+    </section>
+
+    <section id="method">
+      <div class="section-heading"><h2>Methodology</h2></div>
+      <div class="card">
+        <p>Every non-empty row contains the same logical structure: row container, label, text input, button, and progress bar inside a vertically scrollable 1000 × 720 window.</p>
+        <div class="table-wrap" style="margin-top: 14px">
+          <table>
+            <thead><tr><th>Case</th><th>Rows</th><th>Logical controls</th><th>Frames</th><th>Update frames</th></tr></thead>
+            <tbody>
+              <tr><td>Empty startup</td><td>0</td><td>0</td><td>30</td><td>0</td></tr>
+              <tr><td>Moderate controls</td><td>50</td><td>200</td><td>60</td><td>0</td></tr>
+              <tr><td>Dense controls</td><td>200</td><td>800</td><td>60</td><td>0</td></tr>
+              <tr><td>Batched updates</td><td>50</td><td>200</td><td>120</td><td>60</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <ul>
+          <li>Fresh process for every framework/case/repetition.</li>
+          <li>Three repetitions, with deterministic framework-order rotation.</li>
+          <li>60 Hz benchmark pacing where manual event-loop control is available.</li>
+          <li>DragonGUI loading screen disabled for presentation-policy neutrality.</li>
+          <li>DragonGUI updates begin only after the first application frame is presented.</li>
+          <li>All 60 update batches completed in every toolkit.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="limits">
+      <div class="section-heading"><h2>How to read this responsibly</h2></div>
+      <details open>
+        <summary>Build time is not time-to-interactive</summary>
+        <div>DragonGUI's public build creates its Python retained tree, then defers native document parsing, cascade, layout, text preparation, GPU setup, and presentation to blocking <code>App.run()</code>. Qt and Dear PyGui create more native state during their build/setup stages.</div>
+      </details>
+      <details>
+        <summary>DragonGUI first-present latency is not yet exposed</summary>
+        <div>The report intentionally leaves DragonGUI's “first event” blank. Its fresh lifecycle shows roughly three seconds of excess native initialization, but the runtime needs monotonic stage timestamps before that can be broken down fairly.</div>
+      </details>
+      <details>
+        <summary>Process RSS is a warning signal, not a heap attribution</summary>
+        <div>RSS includes native libraries, allocator retention, driver mappings, shared GPU memory, atlases, buffers, and pipeline caches. Dense DragonGUI results were bimodal. Adapter identity and CPU/GPU byte accounting are required before assigning a per-widget cost.</div>
+      </details>
+      <details>
+        <summary>This is a controls benchmark, not a universal framework ranking</summary>
+        <div>It does not yet compare scatter plots, large virtualized tables, accessibility, complex text editing, resize latency, platform integration, or application architecture. Qt's mature invalidation and model/view systems may behave very differently in other workloads.</div>
+      </details>
+    </section>
+
+    <section id="priorities">
+      <div class="section-heading"><h2>Recommended next priorities</h2></div>
+      <div class="priority-grid">
+        <article class="card priority-card" style="--accent: var(--bad)">
+          <span class="metric-label">P0</span>
+          <h3>Instrument and reduce startup</h3>
+          <ol>
+            <li>Timestamp adapter/device creation, document parse, cascade, layout, pipelines, submit, and first present.</li>
+            <li>Expose adapter, backend, driver, device type, and limits.</li>
+            <li>Lazily create shaders and pipelines absent from the initial document.</li>
+            <li>Add a first-present exit mode for direct startup comparisons.</li>
+          </ol>
+        </article>
+        <article class="card priority-card" style="--accent: var(--bad)">
+          <span class="metric-label">P0</span>
+          <h3>Attribute memory precisely</h3>
+          <ol>
+            <li>Report retained tree, styles, provenance, layout, text, and CPU buffer bytes.</li>
+            <li>Report GPU buffers, textures, atlases, pipelines, and cache bytes separately.</li>
+            <li>Investigate the 207–484 MiB dense-run split before optimizing by assumption.</li>
+          </ol>
+        </article>
+        <article class="card priority-card" style="--accent: var(--warning)">
+          <span class="metric-label">P1</span>
+          <h3>Measure mutation-to-present</h3>
+          <ol>
+            <li>Carry one update ID from Python mutation through queue, rebuild, submit, and presentation.</li>
+            <li>Benchmark 1, 10, 100, and 1,000 mutations per frame.</li>
+            <li>Use end-to-end p50/p95/p99 instead of adding separately sampled phases.</li>
+          </ol>
+        </article>
+        <article class="card priority-card" style="--accent: var(--dragon)">
+          <span class="metric-label">P2</span>
+          <h3>Benchmark DragonGUI's differentiators</h3>
+          <ol>
+            <li>100k, 500k, and 1M point scatter upload, replacement, and steady rendering.</li>
+            <li>100k and 1M row virtualized tables with 20 columns.</li>
+            <li>Streaming plots, background-thread updates, resize, and deep-layout scrolling.</li>
+          </ol>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-heading"><h2>Reproduce and inspect</h2></div>
+      <pre><code>py -3.12 benchmarks\run_gui_framework_matrix.py `
+  --repetitions 3 `
+  --output-dir artifacts\gui-framework-comparison-v2
+
+py -3.12 benchmarks\run_gui_framework_matrix.py `
+  --repetitions 3 `
+  --case batched_updates `
+  --output-dir artifacts\gui-framework-comparison-updates-v3</code></pre>
+      <p class="muted">Raw JSON is intentionally stored under ignored <code>artifacts/</code>. See the <a href="gui-framework-performance-comparison.md">full Markdown report</a> for the extended discussion.</p>
+    </section>
+
+    <footer>
+      <p><strong>Framework references:</strong>
+        <a href="https://dearpygui.readthedocs.io/en/latest/about/what-why.html">Dear PyGui architecture</a> ·
+        <a href="https://dearpygui.readthedocs.io/en/latest/documentation/render-loop.html">Dear PyGui render loop</a> ·
+        <a href="https://doc.qt.io/qt-6/qtwidgets-index.html">Qt Widgets</a> ·
+        <a href="https://doc.qt.io/qt-6/eventsandfilters.html">Qt event system</a> ·
+        <a href="https://docs.python.org/3/library/tkinter.html#threading-model">Tkinter event model</a>
+      </p>
+      <p>DragonGUI cross-framework benchmark · Initial controls and updates matrix</p>
+    </footer>
+  </main>
+
+  <script>
+    const colors = {
+      DragonGUI: "#65e6be",
+      "Dear PyGui": "#70a9ff",
+      PyQt6: "#c995ff",
+      Tkinter: "#ffbc6b"
+    };
+
+    const order = ["DragonGUI", "Dear PyGui", "PyQt6", "Tkinter"];
+
+    const data = {
+      dense: {
+        DragonGUI: { import: 135.12, build: 4.07, first: null, p50: 1.09, p95: 1.70, rss: 434.5, peak: 482.7 },
+        "Dear PyGui": { import: 19.19, build: 10.15, first: 183.56, p50: 0.68, p95: 1.64, rss: 92.4, peak: 94.6 },
+        PyQt6: { import: 34.63, build: 86.91, first: 254.37, p50: 2.92, p95: 4.34, rss: 73.6, peak: 75.1 },
+        Tkinter: { import: 15.53, build: 674.93, first: 89.97, p50: 0.07, p95: 0.18, rss: 50.8, peak: 51.6 }
+      },
+      updates: {
+        DragonGUI: { apply50: 0.22, apply95: 0.43, active50: 0.52, active95: 0.79, drain95: 2.49, pipeline95: 3.0, completed: 60, rss: 272.9 },
+        "Dear PyGui": { apply50: 0.15, apply95: 0.27, active50: 0.44, active95: 1.09, drain95: null, pipeline95: 1.09, completed: 60, rss: 93.2 },
+        PyQt6: { apply50: 3.55, apply95: 5.41, active50: 4.71, active95: 8.71, drain95: null, pipeline95: 8.71, completed: 60, rss: 71.1 },
+        Tkinter: { apply50: 1.21, apply95: 2.02, active50: 8.93, active95: 22.70, drain95: null, pipeline95: 22.70, completed: 60, rss: 47.9 }
+      },
+      cases: {
+        Empty: {
+          DragonGUI: { frame: 0.63, build: 0.20 }, "Dear PyGui": { frame: 0.42, build: 0.79 },
+          PyQt6: { frame: 2.37, build: 47.02 }, Tkinter: { frame: 0.09, build: 99.87 }
+        },
+        "50 rows": {
+          DragonGUI: { frame: 1.03, build: 1.30 }, "Dear PyGui": { frame: 0.49, build: 3.08 },
+          PyQt6: { frame: 3.22, build: 72.89 }, Tkinter: { frame: 0.07, build: 251.91 }
+        },
+        "200 rows": {
+          DragonGUI: { frame: 1.09, build: 4.07 }, "Dear PyGui": { frame: 0.68, build: 10.15 },
+          PyQt6: { frame: 2.92, build: 86.91 }, Tkinter: { frame: 0.07, build: 674.93 }
+        }
+      },
+      imports: { DragonGUI: 145.90, "Dear PyGui": 15.05, PyQt6: 32.94, Tkinter: 15.91 }
+    };
+
+    const svgNS = "http://www.w3.org/2000/svg";
+    const el = (name, attributes = {}) => {
+      const node = document.createElementNS(svgNS, name);
+      Object.entries(attributes).forEach(([key, value]) => node.setAttribute(key, value));
+      return node;
+    };
+
+    function niceMax(value) {
+      const exponent = Math.pow(10, Math.floor(Math.log10(value || 1)));
+      return Math.ceil(value / exponent / 2) * 2 * exponent;
+    }
+
+    function barChart(host, values, options = {}) {
+      const width = 650, height = 285, left = 112, right = 70, top = 24, bottom = 38;
+      const plotWidth = width - left - right;
+      const max = options.max || niceMax(Math.max(...values.map(item => item.value)) * 1.08);
+      const svg = el("svg", { viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": options.label || "Comparison bar chart" });
+      [0, 0.25, 0.5, 0.75, 1].forEach(fraction => {
+        const x = left + plotWidth * fraction;
+        svg.appendChild(el("line", { x1: x, y1: top, x2: x, y2: height - bottom, class: "grid" }));
+        const tick = el("text", { x, y: height - 14, "text-anchor": "middle" });
+        tick.textContent = (max * fraction).toFixed(options.decimals ?? (max < 10 ? 1 : 0));
+        svg.appendChild(tick);
+      });
+      const rowHeight = (height - top - bottom) / values.length;
+      values.forEach((item, index) => {
+        const y = top + index * rowHeight + rowHeight * 0.2;
+        const barHeight = rowHeight * 0.55;
+        const label = el("text", { x: left - 12, y: y + barHeight * 0.72, "text-anchor": "end" });
+        label.textContent = item.name;
+        svg.appendChild(label);
+        const barWidth = Math.max(2, item.value / max * plotWidth);
+        svg.appendChild(el("rect", { x: left, y, width: barWidth, height: barHeight, rx: 6, fill: colors[item.name], opacity: 0.92 }));
+        const value = el("text", { x: Math.min(left + barWidth + 9, width - right + 4), y: y + barHeight * 0.72, class: "value-label" });
+        value.textContent = `${item.value.toFixed(options.valueDecimals ?? 2)}${options.suffix || ""}`;
+        svg.appendChild(value);
+      });
+      host.replaceChildren(svg);
+    }
+
+    function lineChart(host, selector, options = {}) {
+      const width = 650, height = 285, left = 58, right = 24, top = 24, bottom = 48;
+      const labels = Object.keys(data.cases);
+      const allValues = order.flatMap(name => labels.map(label => data.cases[label][name][selector]));
+      const max = options.log ? Math.max(...allValues) : niceMax(Math.max(...allValues) * 1.05);
+      const minPositive = options.log ? Math.min(...allValues.filter(value => value > 0)) : 0;
+      const yValue = value => {
+        if (options.log) {
+          const minLog = Math.log10(minPositive * 0.65);
+          const maxLog = Math.log10(max * 1.1);
+          return top + (maxLog - Math.log10(value)) / (maxLog - minLog) * (height - top - bottom);
+        }
+        return top + (1 - value / max) * (height - top - bottom);
+      };
+      const svg = el("svg", { viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": options.label || "Scaling line chart" });
+      [0, 0.25, 0.5, 0.75, 1].forEach(fraction => {
+        const y = top + (height - top - bottom) * fraction;
+        svg.appendChild(el("line", { x1: left, y1: y, x2: width - right, y2: y, class: "grid" }));
+      });
+      const xAt = index => left + index / (labels.length - 1) * (width - left - right);
+      labels.forEach((label, index) => {
+        const text = el("text", { x: xAt(index), y: height - 18, "text-anchor": "middle" });
+        text.textContent = label;
+        svg.appendChild(text);
+      });
+      order.forEach(name => {
+        const points = labels.map((label, index) => `${xAt(index)},${yValue(data.cases[label][name][selector])}`).join(" ");
+        svg.appendChild(el("polyline", { points, fill: "none", stroke: colors[name], "stroke-width": 3, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+        labels.forEach((label, index) => {
+          const value = data.cases[label][name][selector];
+          svg.appendChild(el("circle", { cx: xAt(index), cy: yValue(value), r: 5, fill: colors[name], stroke: "#0b1423", "stroke-width": 2 }));
+        });
+      });
+      host.replaceChildren(svg);
+    }
+
+    const chartDefinitions = {
+      denseFrame: () => ({ values: order.filter(name => name !== "Tkinter").map(name => ({ name, value: data.dense[name].p50 })), options: { max: 4, suffix: " ms", label: "Dense active frame median" } }),
+      updatePipeline: () => ({ values: order.map(name => ({ name, value: data.updates[name].pipeline95 })), options: { max: 24, suffix: " ms", label: "Batched update p95 pipeline" } }),
+      denseMemory: () => ({ values: order.map(name => ({ name, value: data.dense[name].rss })), options: { max: 500, valueDecimals: 1, suffix: " MiB", label: "Dense live process memory" } }),
+      importCost: () => ({ values: order.map(name => ({ name, value: data.imports[name] })), options: { max: 160, valueDecimals: 1, suffix: " ms", label: "Framework import cost" } })
+    };
+
+    document.querySelectorAll("[data-chart]").forEach(host => {
+      const name = host.dataset.chart;
+      if (name === "frameScaling") lineChart(host, "frame", { label: "Active frame scaling" });
+      else if (name === "buildScaling") lineChart(host, "build", { label: "Public build scaling", log: true });
+      else {
+        const definition = chartDefinitions[name]();
+        barChart(host, definition.values, definition.options);
+      }
+    });
+
+    document.getElementById("scaling-legend").innerHTML = order.map(name =>
+      `<span><i class="swatch" style="--color:${colors[name]}"></i>${name}</span>`
+    ).join("");
+
+    const frameworkCell = name => `<span class="framework-name" style="--framework-color:${colors[name]}">${name}</span>`;
+    const number = value => value == null ? "—" : value.toFixed(2);
+
+    document.getElementById("dense-table").innerHTML = order.map(name => {
+      const row = data.dense[name];
+      return `<tr><td>${frameworkCell(name)}</td><td>${number(row.import)}</td><td>${number(row.build)}</td><td>${number(row.first)}</td><td>${number(row.p50)}</td><td>${number(row.p95)}</td><td>${row.rss.toFixed(1)}</td><td>${row.peak.toFixed(1)}</td></tr>`;
+    }).join("");
+
+    document.getElementById("update-table").innerHTML = order.map(name => {
+      const row = data.updates[name];
+      return `<tr><td>${frameworkCell(name)}</td><td>${number(row.apply50)}</td><td>${number(row.apply95)}</td><td>${number(row.active50)}</td><td>${number(row.active95)}</td><td>${number(row.drain95)}</td><td>${row.completed}/60</td><td>${row.rss.toFixed(1)}</td></tr>`;
+    }).join("");
+  </script>
+</body>
+</html>

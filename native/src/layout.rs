@@ -3365,7 +3365,10 @@ pub(crate) fn titled_container_geometry(
         resolved_box.padding_box.y
             + title_inset.max((header_height - metrics.title_line_height) * 0.5)
     } else {
-        resolved_box.content_box.y
+        resolved_box
+            .content_box
+            .y
+            .min(resolved_box.padding_box.y + (header_height - metrics.title_line_height).max(0.0))
     };
     let title_box = Rect {
         x: title_x,
@@ -10986,6 +10989,52 @@ mod tests {
         assert!(
             (pin.y - (geometry.body_content_origin_y + 5.0)).abs() <= 0.5,
             "absolute body child should use the same origin: pin={pin:?} geometry={geometry:?}"
+        );
+    }
+
+    #[test]
+    fn compact_empty_titled_panel_keeps_title_inside_header_band() {
+        let mut panel = node(
+            "panel",
+            WidgetKind::Panel,
+            NodeProps {
+                text: Some("A deliberately long compact panel title".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        panel.style.layout.width = Some(220.0);
+        panel.style.layout.height = Some(32.0);
+        panel.style.layout.flex_grow = Some(0.0);
+        panel.style.layout.flex_shrink = Some(0.0);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![panel],
+        );
+        let theme = Theme::dark();
+        let layout = compute_layout(
+            &root,
+            320.0,
+            120.0,
+            1.0,
+            &theme,
+            Some(&WidgetState::default()),
+        );
+        let panel = root.children.first().expect("panel node");
+        let panel_rect = layout.rects.get("panel").expect("panel rect");
+        let geometry =
+            titled_container_geometry(panel, &layout, 1.0, &theme).expect("title geometry");
+
+        assert!(geometry.title_box.y >= panel_rect.y);
+        assert!(
+            geometry.title_box.y + geometry.title_box.h <= panel_rect.y + panel_rect.h + 0.5,
+            "compact title must remain visible: panel={panel_rect:?} geometry={geometry:?}"
+        );
+        assert!(
+            geometry.title_box.h >= panel_title_line_height_lp(panel, &theme) - 0.5,
+            "compact panel should retain a complete title line: geometry={geometry:?}"
         );
     }
 

@@ -1,7 +1,7 @@
 # THEME FORGE Performance Remediation
 
 **Started:** 2026-07-30  
-**Status:** In progress — live animation and rapid theme replacement optimized
+**Status:** In progress — live animation, rapid theme replacement, and full-cascade allocation pressure optimized
 
 ## Scope
 
@@ -227,6 +227,84 @@ Result on a repeated three-pass theme-cycle profile:
 - Total rapid-cycle command drain: 109.68 ms → 94.79 ms.
 - Live workload: 60.01 wall FPS with zero layout diagnostics.
 - Live command-drain p95: 9.54 ms.
+
+## Fix 6 — share native-fallback provenance and inline attribute snapshots
+
+A refreshed profile of the expanded 2,021-widget THEME FORGE workload showed
+that the final required cascade remained the dominant operation:
+
+- Median `style_reapply`: 32.81 ms.
+- Native-fallback provenance: 3.24 ms.
+- Attribute snapshot construction: 3.50 ms for 2,021 snapshots containing
+  5,077 entries.
+- Steady frame work remained inexpensive at 1.33 ms median.
+
+The native-fallback pass was allocating new property keys and complete
+provenance records for `font-size`, `font-weight`, and `color` on every widget.
+Those records are immutable and vary only by active theme and widget kind.
+The cascade now creates each distinct record once, retains it in the existing
+cascade-local provenance cache, and shares it through `Arc` across matching
+widgets. Each widget still owns its provenance candidate list, so diagnostic
+ordering and computed values are unchanged.
+
+Attribute selector snapshots also used a heap-backed `Vec` for every visited
+widget and ancestor even though the current workload averages only 2.5
+materialized attributes per snapshot. The common four-or-fewer case now uses a
+four-entry inline `SmallVec`; unusually attribute-heavy widgets spill to the
+heap without changing selector behavior.
+
+Measured results:
+
+- Native-fallback phase: 3.24 ms → 1.56 ms (**51.9% lower**).
+- Median full style pass after fallback sharing: 32.81 ms → 26.39 ms
+  (**19.6% lower**).
+- Total six-sample `style_reapply` time: 163.61 ms → 138.32 ms
+  (**15.5% lower**).
+- Attribute snapshot phase in the clean follow-up: 3.62 ms → 3.09 ms
+  (**14.6% lower**).
+- Two post-snapshot runs placed median `style_reapply` at 26.89–27.04 ms.
+  One repeat experienced proportional contention in every cascade phase, so
+  the phase reduction is treated as stronger evidence than its noisy maximum.
+- Candidate rules (56,844), matched declarations (23,368), attribute entries
+  (5,077), and layout diagnostics (zero) remained identical.
+
+A regression verifies that equal-kind widgets share the immutable native
+fallback records for all three inherited properties. The complete focused CSS
+suite passes: 235 passed, 5 ignored.
+
+## Fix 7 — skip empty inline-style merges
+
+The retained cascade merged a complete `NodeStyle` inline layer for every
+widget, including walking layout, visual, text, widget, transition, animation,
+parts, nine state slots, and provenance when the widget had no inline
+declarations. The parsed inline layer is derived from the retained
+`style_json`; live style patches update that map before reparsing it, so an
+empty map is a reliable no-op condition.
+
+The current THEME FORGE document contains:
+
+- 2,021 total widgets;
+- 341 widgets with inline declarations;
+- 1,680 widgets with an empty inline layer (**83.1%**).
+
+The cascade now skips `merge_node_style` for those 1,680 empty layers. Inline
+styles that are authored initially, added live, replaced, or cleared continue
+to follow the same serialized-map/reparse path.
+
+Measured against the immediately preceding inline-snapshot run:
+
+- Style-merge phase: 3.54 ms → 2.38 ms (**32.9% lower**).
+- Declaration-application envelope: 8.91 ms → 7.19 ms
+  (**19.3% lower**).
+- Total six-sample `style_reapply`: 142.08 ms → 130.96 ms
+  (**7.8% lower**).
+- Median `style_reapply` remained effectively flat at 27.04 ms → 26.95 ms;
+  the phase and accumulated timings are used because the GUI samples include
+  scheduling variance.
+- Compared with the refreshed pre-Fix-6 baseline, accumulated
+  `style_reapply` is 163.61 ms → 130.96 ms (**20.0% lower**).
+- Candidate rules, matched declarations, retained geometry, and zero layout
+  diagnostics remained unchanged.
 
 ## Hidden-page lazy cascade assessment
 
@@ -738,7 +816,16 @@ blocking `run(...)` call has returned and detached native handles.
 - [x] Direct dimension fast-path profile captured.
 - [x] Three-pass rapid-theme-cycle baseline and final profiles captured.
 - [x] Leaf-ancestor and fixed-array inheritance profiles captured separately.
+- [x] Native-fallback provenance sharing and inline attribute-snapshot profiles
+      captured, including a repeat run to characterize GUI timing variance.
 - [x] Focused native style-patch tests pass.
+- [x] Focused CSS suite passes after full-cascade allocation changes:
+      235 passed, 5 ignored.
+- [x] Complete native suite passes after full-cascade allocation and empty
+      inline-merge changes:
+      898 passed, 12 ignored.
+- [x] Headless THEME FORGE construction smoke test passes after the cascade
+      fast paths: 1 passed.
 - [x] Theme/stylesheet/property queue-coalescing tests pass.
 - [x] Live profiles finish with zero layout diagnostics.
 - [x] Complete native suite passes: 889 passed, 12 ignored.
@@ -843,9 +930,12 @@ blocking `run(...)` call has returned and detached native handles.
 1. **Single full-cascade latency**
 
    Superseded theme operations no longer cascade, but the final deliberate
-   theme or stylesheet replacement still costs approximately 25–28 ms because
-   all 2,016 nodes are recascaded. The next step is to reduce the cost of that
-   required final cascade rather than further optimize burst handling.
+   theme or stylesheet replacement still costs approximately 27 ms on the
+   current 2,021-node workload because every retained node is recascaded. The
+   largest measured subphases are now attribute snapshots, selector matching,
+   property application, and the remaining non-empty/default style merges.
+   Further work should target one of those phases with an isolated benchmark
+   rather than infer gains from GUI wall-clock variance.
 
 2. **Unnecessary hidden-page cascade work**
 

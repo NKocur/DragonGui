@@ -56,6 +56,13 @@ pub enum CommandValue {
     Text(String),
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct PropUpdate {
+    pub id: String,
+    pub prop: String,
+    pub value: CommandValue,
+}
+
 /// Native runtime command consumed by the winit UI thread.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
@@ -63,6 +70,9 @@ pub enum Command {
         id: String,
         prop: String,
         value: CommandValue,
+    },
+    SetProps {
+        updates: Vec<PropUpdate>,
     },
     SetStyle {
         id: String,
@@ -532,6 +542,9 @@ pub enum Command {
     DebugSnapshot {
         request_id: u64,
     },
+    LatencyProbe {
+        request_id: u64,
+    },
     DrainPythonTasks,
     RequestRedraw,
     RequestExit,
@@ -566,9 +579,285 @@ pub enum CommandQueueError {
     Closed,
 }
 
+#[derive(Debug)]
+struct CommandQueueNode {
+    command: Command,
+    previous: Option<usize>,
+    next: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum CommandCoalesceKey {
+    SetProp(String, String),
+    Theme,
+    Stylesheet(StylesheetOrigin, Option<String>),
+    ClearStylesheets(StylesheetOrigin),
+    ScatterPoints(String),
+    LinePlot(String, String),
+    Histogram(String),
+    ScatterScalarBar(String),
+    ScatterActor(String, u32),
+}
+
+impl CommandCoalesceKey {
+    fn stylesheet_origin(&self) -> Option<StylesheetOrigin> {
+        match self {
+            Self::Stylesheet(origin, _) | Self::ClearStylesheets(origin) => Some(*origin),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct CommandQueueInner {
-    items: VecDeque<Command>,
+    nodes: Vec<Option<CommandQueueNode>>,
+    free: Vec<usize>,
+    latest: HashMap<CommandCoalesceKey, usize>,
+    head: Option<usize>,
+    tail: Option<usize>,
+    len: usize,
+    stats: CommandQueueStats,
+}
+
+impl CommandQueueInner {
+    fn unlink(&mut self, index: usize) -> Command {
+        let node = self.nodes[index]
+            .take()
+            .expect("command queue index must reference a live node");
+        if let Some(previous) = node.previous {
+            self.nodes[previous]
+                .as_mut()
+                .expect("previous command queue node must be live")
+                .next = node.next;
+        } else {
+            self.head = node.next;
+        }
+        if let Some(next) = node.next {
+            self.nodes[next]
+                .as_mut()
+                .expect("next command queue node must be live")
+                .previous = node.previous;
+        } else {
+            self.tail = node.previous;
+        }
+        self.len -= 1;
+        self.free.push(index);
+        node.command
+    }
+
+    fn remove_key(&mut self, key: &CommandCoalesceKey) -> Option<Command> {
+        let index = self.latest.remove(key)?;
+        Some(self.unlink(index))
+    }
+
+    fn append(&mut self, command: Command, key: Option<CommandCoalesceKey>) {
+        let index = self.free.pop().unwrap_or(self.nodes.len());
+        let node = CommandQueueNode {
+            command,
+            previous: self.tail,
+            next: None,
+        };
+        if index == self.nodes.len() {
+            self.nodes.push(Some(node));
+        } else {
+            self.nodes[index] = Some(node);
+        }
+        if let Some(tail) = self.tail {
+            self.nodes[tail]
+                .as_mut()
+                .expect("tail command queue node must be live")
+                .next = Some(index);
+        } else {
+            self.head = Some(index);
+        }
+        self.tail = Some(index);
+        self.len += 1;
+        if let Some(key) = key {
+            self.latest.insert(key, index);
+        }
+    }
+
+    fn pop_front(&mut self) -> Option<Command> {
+        let index = self.head?;
+        let key = command_coalesce_key(&self.nodes[index].as_ref()?.command);
+        if let Some(key) = key {
+            if self.latest.get(&key) == Some(&index) {
+                self.latest.remove(&key);
+            }
+        }
+        Some(self.unlink(index))
+    }
+}
+
+const COMMAND_QUEUE_TIMING_SAMPLE_WINDOW: usize = 128;
+
+#[derive(Debug, Clone, Copy)]
+enum QueueReplacementFamily {
+    SetProp,
+    ThemeStylesheet,
+    ScatterPoints,
+    LinePlot,
+    Histogram,
+    ScatterScalarBar,
+    ScatterActor,
+    Other,
+}
+
+#[derive(Debug, Default)]
+struct CommandQueueStats {
+    pushes: u64,
+    replacements: u64,
+    set_prop_replacements: u64,
+    theme_stylesheet_replacements: u64,
+    scatter_point_replacements: u64,
+    line_plot_replacements: u64,
+    histogram_replacements: u64,
+    scatter_scalar_bar_replacements: u64,
+    scatter_actor_replacements: u64,
+    high_water: usize,
+    push_ms: VecDeque<f64>,
+    push_total_ms: f64,
+    push_max_ms: f64,
+}
+
+impl CommandQueueStats {
+    fn record_push(
+        &mut self,
+        elapsed_ms: f64,
+        depth: usize,
+        replacements: usize,
+        family: QueueReplacementFamily,
+    ) {
+        self.pushes = self.pushes.saturating_add(1);
+        self.replacements = self.replacements.saturating_add(replacements as u64);
+        self.high_water = self.high_water.max(depth);
+        self.push_total_ms += elapsed_ms;
+        self.push_max_ms = self.push_max_ms.max(elapsed_ms);
+        if self.push_ms.len() == COMMAND_QUEUE_TIMING_SAMPLE_WINDOW {
+            self.push_ms.pop_front();
+        }
+        self.push_ms.push_back(elapsed_ms);
+        let target = match family {
+            QueueReplacementFamily::SetProp => &mut self.set_prop_replacements,
+            QueueReplacementFamily::ThemeStylesheet => &mut self.theme_stylesheet_replacements,
+            QueueReplacementFamily::ScatterPoints => &mut self.scatter_point_replacements,
+            QueueReplacementFamily::LinePlot => &mut self.line_plot_replacements,
+            QueueReplacementFamily::Histogram => &mut self.histogram_replacements,
+            QueueReplacementFamily::ScatterScalarBar => &mut self.scatter_scalar_bar_replacements,
+            QueueReplacementFamily::ScatterActor => &mut self.scatter_actor_replacements,
+            QueueReplacementFamily::Other => return,
+        };
+        *target = target.saturating_add(replacements as u64);
+    }
+
+    fn percentile_ms(&self, percentile: f64) -> f64 {
+        if self.push_ms.is_empty() {
+            return 0.0;
+        }
+        let mut samples = self.push_ms.iter().copied().collect::<Vec<_>>();
+        samples.sort_by(f64::total_cmp);
+        let rank = ((samples.len() - 1) as f64 * percentile.clamp(0.0, 1.0)).round() as usize;
+        samples[rank]
+    }
+
+    fn json_value(&self, depth: usize, physical_slots: usize, free_slots: usize) -> Value {
+        let avg_ms = if self.pushes == 0 {
+            0.0
+        } else {
+            self.push_total_ms / self.pushes as f64
+        };
+        serde_json::json!({
+            "depth": depth,
+            "live_entries": depth,
+            "physical_slots": physical_slots,
+            "free_slots": free_slots,
+            "stale_entries": 0,
+            "compactions": 0,
+            "peak_physical_queue_length": self.high_water,
+            "high_water": self.high_water,
+            "pushes": self.pushes,
+            "replacements": self.replacements,
+            "replacements_by_family": {
+                "set_prop": self.set_prop_replacements,
+                "theme_stylesheet": self.theme_stylesheet_replacements,
+                "scatter_points": self.scatter_point_replacements,
+                "line_plot": self.line_plot_replacements,
+                "histogram": self.histogram_replacements,
+                "scatter_scalar_bar": self.scatter_scalar_bar_replacements,
+                "scatter_actor": self.scatter_actor_replacements,
+            },
+            "push_timing": {
+                "count": self.pushes,
+                "avg_ms": avg_ms,
+                "total_ms": self.push_total_ms,
+                "max_ms": self.push_max_ms,
+                "p50_ms": self.percentile_ms(0.50),
+                "p95_ms": self.percentile_ms(0.95),
+                "p99_ms": self.percentile_ms(0.99),
+                "sample_window": self.push_ms.len(),
+            },
+        })
+    }
+}
+
+fn command_coalesce_key(command: &Command) -> Option<CommandCoalesceKey> {
+    match command {
+        Command::SetProp { id, prop, .. } => {
+            Some(CommandCoalesceKey::SetProp(id.clone(), prop.clone()))
+        }
+        Command::SetTheme { .. } => Some(CommandCoalesceKey::Theme),
+        Command::SetStylesheet { origin, id, .. } => {
+            Some(CommandCoalesceKey::Stylesheet(*origin, id.clone()))
+        }
+        Command::RemoveStylesheet { origin, id } => {
+            Some(CommandCoalesceKey::Stylesheet(*origin, Some(id.clone())))
+        }
+        Command::ClearStylesheets { origin } => Some(CommandCoalesceKey::ClearStylesheets(*origin)),
+        Command::SetScatterPointsPacked {
+            id, coalesce: true, ..
+        } => Some(CommandCoalesceKey::ScatterPoints(id.clone())),
+        Command::SetLinePlotDataPacked {
+            id,
+            series,
+            coalesce: true,
+            ..
+        } => Some(CommandCoalesceKey::LinePlot(id.clone(), series.clone())),
+        Command::SetHistogramData {
+            id, coalesce: true, ..
+        } => Some(CommandCoalesceKey::Histogram(id.clone())),
+        Command::SetScatterScalarBar { id, .. } => {
+            Some(CommandCoalesceKey::ScatterScalarBar(id.clone()))
+        }
+        Command::UpdateScatterActorPacked { id, actor_id, .. } => {
+            Some(CommandCoalesceKey::ScatterActor(id.clone(), *actor_id))
+        }
+        _ => None,
+    }
+}
+
+fn merge_replaced_command_flags(command: &mut Command, previous: &Command) {
+    match (command, previous) {
+        (
+            Command::SetScatterPointsPacked { fit, .. },
+            Command::SetScatterPointsPacked {
+                fit: previous_fit, ..
+            },
+        )
+        | (
+            Command::SetLinePlotDataPacked { fit, .. },
+            Command::SetLinePlotDataPacked {
+                fit: previous_fit, ..
+            },
+        ) => *fit |= *previous_fit,
+        (
+            Command::SetHistogramData { auto_fit, .. },
+            Command::SetHistogramData {
+                auto_fit: previous_auto_fit,
+                ..
+            },
+        ) => *auto_fit |= *previous_auto_fit,
+        _ => {}
+    }
 }
 
 /// Thread-safe command queue shared by Python-facing senders and the future UI
@@ -581,212 +870,71 @@ pub struct CommandQueue {
 
 impl CommandQueue {
     pub fn push(&self, mut command: Command) -> Result<(), CommandQueueError> {
+        let push_t0 = Instant::now();
         if self.is_closed() {
             return Err(CommandQueueError::Closed);
         }
         let mut inner = self.inner.lock().expect("command queue mutex poisoned");
-        match &command {
-            Command::SetProp { id, prop, .. } => {
-                inner.items.retain(|queued| {
-                    !matches!(
-                        queued,
-                        Command::SetProp {
-                            id: queued_id,
-                            prop: queued_prop,
-                            ..
-                        } if queued_id == id && queued_prop == prop
-                    )
-                });
-            }
-            Command::SetTheme { .. } => {
-                inner
-                    .items
-                    .retain(|queued| !matches!(queued, Command::SetTheme { .. }));
-            }
-            Command::SetStylesheet { origin, id, .. } => {
-                inner.items.retain(|queued| match queued {
-                    Command::SetStylesheet {
-                        origin: queued_origin,
-                        id: queued_id,
-                        ..
-                    } => queued_origin != origin || queued_id != id,
-                    Command::RemoveStylesheet {
-                        origin: queued_origin,
-                        id: queued_id,
-                    } => queued_origin != origin || Some(queued_id.as_str()) != id.as_deref(),
-                    _ => true,
-                });
-            }
-            Command::RemoveStylesheet { origin, id } => {
-                inner.items.retain(|queued| match queued {
-                    Command::SetStylesheet {
-                        origin: queued_origin,
-                        id: Some(queued_id),
-                        ..
-                    } => queued_origin != origin || queued_id != id,
-                    Command::RemoveStylesheet {
-                        origin: queued_origin,
-                        id: queued_id,
-                    } => queued_origin != origin || queued_id != id,
-                    _ => true,
-                });
-            }
-            Command::ClearStylesheets { origin } => {
-                inner.items.retain(|queued| {
-                    !matches!(
-                        queued,
-                        Command::SetStylesheet {
-                            origin: queued_origin,
-                            ..
-                        } | Command::RemoveStylesheet {
-                            origin: queued_origin,
-                            ..
-                        } | Command::ClearStylesheets {
-                            origin: queued_origin,
-                        } if queued_origin == origin
-                    )
-                });
-            }
-            _ => {}
-        }
-        if let Command::SetScatterPointsPacked {
-            id,
-            fit,
-            coalesce: true,
-            ..
-        } = &mut command
-        {
-            let target_id = id.clone();
-            let mut fit_after_upload = *fit;
-            let mut index = inner.items.len();
-            while index > 0 {
-                index -= 1;
-                let remove = match &inner.items[index] {
-                    Command::SetScatterPointsPacked {
-                        id: queued_id,
-                        fit: queued_fit,
-                        coalesce: true,
-                        ..
-                    } if queued_id == &target_id => {
-                        fit_after_upload |= *queued_fit;
-                        true
-                    }
-                    _ => false,
-                };
-                if remove {
-                    inner.items.remove(index);
+        let depth_before = inner.len;
+        let replacement_family = match &command {
+            Command::SetProp { .. } => QueueReplacementFamily::SetProp,
+            Command::SetTheme { .. }
+            | Command::SetStylesheet { .. }
+            | Command::RemoveStylesheet { .. }
+            | Command::ClearStylesheets { .. } => QueueReplacementFamily::ThemeStylesheet,
+            Command::SetScatterPointsPacked { .. } => QueueReplacementFamily::ScatterPoints,
+            Command::SetLinePlotDataPacked { .. } => QueueReplacementFamily::LinePlot,
+            Command::SetHistogramData { .. } => QueueReplacementFamily::Histogram,
+            Command::SetScatterScalarBar { .. } => QueueReplacementFamily::ScatterScalarBar,
+            Command::UpdateScatterActorPacked { .. } => QueueReplacementFamily::ScatterActor,
+            _ => QueueReplacementFamily::Other,
+        };
+        let mut replacements = 0;
+        if let Command::ClearStylesheets { origin } = &command {
+            let keys = inner
+                .latest
+                .keys()
+                .filter(|key| key.stylesheet_origin() == Some(*origin))
+                .cloned()
+                .collect::<Vec<_>>();
+            for key in keys {
+                if inner.remove_key(&key).is_some() {
+                    replacements += 1;
                 }
             }
-            *fit = fit_after_upload;
-        }
-        if let Command::SetLinePlotDataPacked {
-            id,
-            series,
-            fit,
-            coalesce: true,
-            ..
-        } = &mut command
-        {
-            let target_id = id.clone();
-            let target_series = series.clone();
-            let mut fit_after_upload = *fit;
-            let mut index = inner.items.len();
-            while index > 0 {
-                index -= 1;
-                let remove = match &inner.items[index] {
-                    Command::SetLinePlotDataPacked {
-                        id: queued_id,
-                        series: queued_series,
-                        fit: queued_fit,
-                        coalesce: true,
-                        ..
-                    } if queued_id == &target_id && queued_series == &target_series => {
-                        fit_after_upload |= *queued_fit;
-                        true
-                    }
-                    _ => false,
-                };
-                if remove {
-                    inner.items.remove(index);
-                }
-            }
-            *fit = fit_after_upload;
-        }
-        if let Command::SetHistogramData {
-            id,
-            auto_fit,
-            coalesce: true,
-            ..
-        } = &mut command
-        {
-            let target_id = id.clone();
-            let mut auto_fit_after_update = *auto_fit;
-            let mut index = inner.items.len();
-            while index > 0 {
-                index -= 1;
-                let remove = match &inner.items[index] {
-                    Command::SetHistogramData {
-                        id: queued_id,
-                        auto_fit: queued_auto_fit,
-                        coalesce: true,
-                        ..
-                    } if queued_id == &target_id => {
-                        auto_fit_after_update |= *queued_auto_fit;
-                        true
-                    }
-                    _ => false,
-                };
-                if remove {
-                    inner.items.remove(index);
-                }
-            }
-            *auto_fit = auto_fit_after_update;
-        }
-        if let Command::SetScatterScalarBar { id, .. } = &command {
-            let target_id = id.clone();
-            let mut index = inner.items.len();
-            while index > 0 {
-                index -= 1;
-                let remove = matches!(
-                    &inner.items[index],
-                    Command::SetScatterScalarBar { id: queued_id, .. } if queued_id == &target_id
-                );
-                if remove {
-                    inner.items.remove(index);
-                }
+        } else if let Some(key) = command_coalesce_key(&command) {
+            if let Some(previous) = inner.remove_key(&key) {
+                merge_replaced_command_flags(&mut command, &previous);
+                replacements = 1;
             }
         }
-        if let Command::UpdateScatterActorPacked { id, actor_id, .. } = &command {
-            let target_id = id.clone();
-            let target_actor_id = *actor_id;
-            let mut index = inner.items.len();
-            while index > 0 {
-                index -= 1;
-                let remove = matches!(
-                    &inner.items[index],
-                    Command::UpdateScatterActorPacked {
-                        id: queued_id,
-                        actor_id: queued_actor_id,
-                        ..
-                    } if queued_id == &target_id && *queued_actor_id == target_actor_id
-                );
-                if remove {
-                    inner.items.remove(index);
-                }
-            }
-        }
-        inner.items.push_back(command);
+        debug_assert_eq!(replacements, depth_before.saturating_sub(inner.len));
+        let key = command_coalesce_key(&command);
+        inner.append(command, key);
+        let depth = inner.len;
+        inner.stats.record_push(
+            push_t0.elapsed().as_secs_f64() * 1000.0,
+            depth,
+            replacements,
+            replacement_family,
+        );
         Ok(())
     }
 
     pub fn drain(&self) -> Vec<Command> {
         let mut inner = self.inner.lock().expect("command queue mutex poisoned");
-        inner.items.drain(..).collect()
+        let mut drained = Vec::with_capacity(inner.len);
+        while let Some(command) = inner.pop_front() {
+            drained.push(command);
+        }
+        drained
     }
 
     pub fn drain_into(&self, out: &mut Vec<Command>) {
         let mut inner = self.inner.lock().expect("command queue mutex poisoned");
-        out.extend(inner.items.drain(..));
+        while let Some(command) = inner.pop_front() {
+            out.push(command);
+        }
     }
 
     pub fn drain_limited_into(&self, out: &mut Vec<Command>, limit: usize) {
@@ -795,7 +943,7 @@ impl CommandQueue {
         }
         let mut inner = self.inner.lock().expect("command queue mutex poisoned");
         for _ in 0..limit {
-            let Some(command) = inner.items.pop_front() else {
+            let Some(command) = inner.pop_front() else {
                 break;
             };
             out.push(command);
@@ -803,15 +951,18 @@ impl CommandQueue {
     }
 
     pub fn len(&self) -> usize {
-        self.inner
-            .lock()
-            .expect("command queue mutex poisoned")
-            .items
-            .len()
+        self.inner.lock().expect("command queue mutex poisoned").len
     }
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    pub fn debug_snapshot(&self) -> Value {
+        let inner = self.inner.lock().expect("command queue mutex poisoned");
+        inner
+            .stats
+            .json_value(inner.len, inner.nodes.len(), inner.free.len())
     }
 
     pub fn close(&self) {
@@ -863,6 +1014,10 @@ impl CommandBridge {
 
     pub fn is_empty(&self) -> bool {
         self.queue.is_empty()
+    }
+
+    pub fn queue_debug_snapshot(&self) -> Value {
+        self.queue.debug_snapshot()
     }
 
     pub fn close(&self) {
@@ -937,6 +1092,14 @@ impl CommandBridge {
             timeout,
             |request_id| Command::DebugSnapshot { request_id },
             "debug snapshot response disappeared",
+        )
+    }
+
+    pub fn request_latency_probe(&self, timeout: Duration) -> Result<String, SnapshotError> {
+        self.request_response(
+            timeout,
+            |request_id| Command::LatencyProbe { request_id },
+            "latency probe response disappeared",
         )
     }
 
@@ -1076,12 +1239,42 @@ impl NativeCommandSender {
         Self::new(Arc::new(CommandBridge::new()))
     }
 
+    #[pyo3(name = "_queue_debug_snapshot")]
+    fn py_queue_debug_snapshot(&self) -> PyResult<String> {
+        serde_json::to_string(&self.bridge.queue_debug_snapshot())
+            .map_err(|err| PyRuntimeError::new_err(err.to_string()))
+    }
+
+    #[pyo3(name = "_drain_for_test")]
+    fn py_drain_for_test(&self) -> usize {
+        self.bridge.drain().len()
+    }
+
     fn enqueue_set_prop(&self, id: String, prop: String, value: &Bound<'_, PyAny>) -> PyResult<()> {
         self.enqueue(Command::SetProp {
             id,
             prop,
             value: command_value_from_py(value)?,
         })
+    }
+
+    fn enqueue_set_props(&self, updates: &Bound<'_, PyAny>) -> PyResult<()> {
+        let raw_updates = updates.extract::<Vec<(String, String, Py<PyAny>)>>()?;
+        if raw_updates.is_empty() {
+            return Ok(());
+        }
+        let py = updates.py();
+        let updates = raw_updates
+            .into_iter()
+            .map(|(id, prop, value)| {
+                Ok(PropUpdate {
+                    id,
+                    prop,
+                    value: command_value_from_py(value.bind(py))?,
+                })
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        self.enqueue(Command::SetProps { updates })
     }
 
     fn enqueue_set_style(&self, id: String, patch_json: String) -> PyResult<()> {
@@ -2413,6 +2606,21 @@ impl NativeCommandSender {
                 ),
             })
     }
+
+    #[pyo3(signature = (timeout_ms=1000))]
+    fn latency_probe(&self, py: Python<'_>, timeout_ms: u64) -> PyResult<()> {
+        py.allow_threads(|| {
+            self.bridge
+                .request_latency_probe(Duration::from_millis(timeout_ms))
+        })
+        .map(|_| ())
+        .map_err(|err| match err {
+            SnapshotError::Closed => PyRuntimeError::new_err("DragonGUI command sender is closed"),
+            SnapshotError::Timeout => PyRuntimeError::new_err(
+                "timed out waiting for DragonGUI latency probe; avoid calling it from a UI callback",
+            ),
+        })
+    }
 }
 
 fn now_epoch_ms() -> f64 {
@@ -2687,6 +2895,38 @@ mod tests {
     }
 
     #[test]
+    fn queue_preserves_property_packet_as_one_ordered_command() {
+        let queue = CommandQueue::default();
+        let updates = vec![
+            PropUpdate {
+                id: "first".to_string(),
+                prop: "text".to_string(),
+                value: CommandValue::Text("one".to_string()),
+            },
+            PropUpdate {
+                id: "second".to_string(),
+                prop: "value".to_string(),
+                value: CommandValue::Float(0.5),
+            },
+        ];
+
+        queue
+            .push(Command::SetProps {
+                updates: updates.clone(),
+            })
+            .unwrap();
+
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue.debug_snapshot()["pushes"], 1);
+        assert_eq!(
+            queue.drain(),
+            vec![Command::SetProps {
+                updates: updates.clone(),
+            }]
+        );
+    }
+
+    #[test]
     fn queue_coalesces_pending_theme_and_stylesheet_replacements() {
         let queue = CommandQueue::default();
         let mut first_theme = Theme::dark();
@@ -2766,6 +3006,135 @@ mod tests {
                 ..
             } if prop == "class" && value == "active"
         ));
+    }
+
+    #[test]
+    fn queue_debug_snapshot_counts_pushes_replacements_and_high_water() {
+        let queue = CommandQueue::default();
+        for value in ["first", "final"] {
+            queue
+                .push(Command::SetProp {
+                    id: "status".to_string(),
+                    prop: "text".to_string(),
+                    value: CommandValue::Text(value.to_string()),
+                })
+                .unwrap();
+        }
+        queue
+            .push(Command::SetProp {
+                id: "status".to_string(),
+                prop: "class".to_string(),
+                value: CommandValue::Text("active".to_string()),
+            })
+            .unwrap();
+        queue
+            .push(Command::Invalidate {
+                id: "status".to_string(),
+                dirty: Dirty::Visual,
+            })
+            .unwrap();
+
+        let snapshot = queue.debug_snapshot();
+        assert_eq!(snapshot["depth"], 3);
+        assert_eq!(snapshot["high_water"], 3);
+        assert_eq!(snapshot["pushes"], 4);
+        assert_eq!(snapshot["replacements"], 1);
+        assert_eq!(snapshot["replacements_by_family"]["set_prop"], 1);
+        assert_eq!(snapshot["push_timing"]["count"], 4);
+        assert_eq!(snapshot["push_timing"]["sample_window"], 4);
+        assert!(snapshot["push_timing"]["max_ms"].as_f64().unwrap() >= 0.0);
+        assert_eq!(snapshot["live_entries"], 3);
+        assert_eq!(snapshot["physical_slots"], 3);
+        assert_eq!(snapshot["free_slots"], 0);
+        assert_eq!(snapshot["stale_entries"], 0);
+        assert_eq!(snapshot["compactions"], 0);
+        assert_eq!(snapshot["peak_physical_queue_length"], 3);
+    }
+
+    #[test]
+    fn queue_replacement_moves_latest_value_after_intervening_lossless_commands() {
+        let queue = CommandQueue::default();
+        queue
+            .push(Command::SetProp {
+                id: "a".to_string(),
+                prop: "text".to_string(),
+                value: CommandValue::Text("first".to_string()),
+            })
+            .unwrap();
+        queue
+            .push(Command::DebugSnapshot { request_id: 17 })
+            .unwrap();
+        queue
+            .push(Command::SetProp {
+                id: "b".to_string(),
+                prop: "text".to_string(),
+                value: CommandValue::Text("middle".to_string()),
+            })
+            .unwrap();
+        queue
+            .push(Command::SetProp {
+                id: "a".to_string(),
+                prop: "text".to_string(),
+                value: CommandValue::Text("final".to_string()),
+            })
+            .unwrap();
+
+        let drained = queue.drain();
+        assert!(matches!(
+            drained[0],
+            Command::DebugSnapshot { request_id: 17 }
+        ));
+        assert!(matches!(&drained[1], Command::SetProp { id, .. } if id == "b"));
+        assert!(matches!(
+            &drained[2],
+            Command::SetProp { id, value: CommandValue::Text(value), .. }
+                if id == "a" && value == "final"
+        ));
+    }
+
+    #[test]
+    fn linked_queue_reuses_physical_slots_under_a_large_backlog() {
+        let queue = CommandQueue::default();
+        for index in 0..10_000 {
+            queue
+                .push(Command::SetProp {
+                    id: format!("widget-{index}"),
+                    prop: "text".to_string(),
+                    value: CommandValue::Float(index as f32),
+                })
+                .unwrap();
+        }
+        for value in 0..10_000 {
+            queue
+                .push(Command::SetProp {
+                    id: "widget-0".to_string(),
+                    prop: "text".to_string(),
+                    value: CommandValue::Float(value as f32),
+                })
+                .unwrap();
+        }
+
+        let snapshot = queue.debug_snapshot();
+        assert_eq!(snapshot["depth"], 10_000);
+        assert_eq!(snapshot["physical_slots"], 10_000);
+        assert_eq!(snapshot["free_slots"], 0);
+        assert_eq!(snapshot["replacements_by_family"]["set_prop"], 10_000);
+
+        let mut first_half = Vec::new();
+        queue.drain_limited_into(&mut first_half, 5_000);
+        assert_eq!(first_half.len(), 5_000);
+        let half_snapshot = queue.debug_snapshot();
+        assert_eq!(half_snapshot["depth"], 5_000);
+        assert_eq!(half_snapshot["physical_slots"], 10_000);
+        assert_eq!(half_snapshot["free_slots"], 5_000);
+
+        for _ in 0..5_000 {
+            queue.push(Command::DrainPythonTasks).unwrap();
+        }
+        let reused_snapshot = queue.debug_snapshot();
+        assert_eq!(reused_snapshot["depth"], 10_000);
+        assert_eq!(reused_snapshot["physical_slots"], 10_000);
+        assert_eq!(reused_snapshot["free_slots"], 0);
     }
 
     #[test]
@@ -3134,5 +3503,33 @@ mod tests {
             .unwrap();
         handle.join().unwrap();
         assert_eq!(snapshot, r#"{"status":"ok"}"#);
+    }
+
+    #[test]
+    fn latency_probe_request_completes_without_snapshot_payload() {
+        let bridge = Arc::new(CommandBridge::new());
+        let worker = Arc::clone(&bridge);
+        let handle = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_millis(500);
+            let commands = loop {
+                let commands = worker.drain();
+                if !commands.is_empty() {
+                    break commands;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "latency probe command was not enqueued"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            };
+            assert_eq!(commands, vec![Command::LatencyProbe { request_id: 0 }]);
+            worker.complete_response(0, "{}".to_string());
+        });
+
+        let response = bridge
+            .request_latency_probe(Duration::from_millis(500))
+            .unwrap();
+        handle.join().unwrap();
+        assert_eq!(response, "{}");
     }
 }
