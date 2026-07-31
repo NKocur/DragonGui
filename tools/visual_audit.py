@@ -35,6 +35,8 @@ LAYOUT_TORTURE_TARGETS = {
     "overflow-scrollbar",
     "responsive-layout",
     "theme-forge-extreme-layout",
+    "theme-forge-active-theme-layout",
+    "theme-forge-panel-parts-layout",
 }
 
 
@@ -1234,6 +1236,85 @@ def validate_layout_target_relationships(snapshot_path: Path, target_id: str) ->
                 violations.append(
                     f"{snapshot_path.name}: {target_id} label is not vertically centered"
                 )
+    elif target_id == "theme-forge-active-theme-layout":
+        panel = _snapshot_rect(rects.get("theme-swatch-panel"))
+        row = _snapshot_rect(rects.get("theme-swatch-row"))
+        nodes_by_id = {
+            node_id: node
+            for node in nodes
+            if isinstance(node_id := node.get("id"), str)
+        }
+        chip_ids = (
+            "theme-swatch-accent",
+            "theme-swatch-success",
+            "theme-swatch-warning",
+            "theme-swatch-danger",
+            "theme-swatch-surface",
+        )
+        chips = [(chip_id, _snapshot_rect(rects.get(chip_id))) for chip_id in chip_ids]
+        if panel is None or row is None or any(rect is None for _chip_id, rect in chips):
+            violations.append(f"{snapshot_path.name}: active-theme swatch geometry is incomplete")
+        else:
+            assert panel is not None and row is not None
+            resolved_chips = [(chip_id, rect) for chip_id, rect in chips if rect is not None]
+            if not _rect_contains(panel, row, 0.75):
+                violations.append(f"{snapshot_path.name}: swatch row escapes its panel")
+            widths = [rect[2] for _chip_id, rect in resolved_chips]
+            if max(widths) - min(widths) > 1.0:
+                violations.append(f"{snapshot_path.name}: semantic swatches have unequal widths")
+            for index, (chip_id, rect) in enumerate(resolved_chips):
+                if not _rect_contains(row, rect, 0.75):
+                    violations.append(f"{snapshot_path.name}: {chip_id} escapes the swatch row")
+                chip_node = nodes_by_id.get(chip_id)
+                children = chip_node.get("children") if isinstance(chip_node, dict) else None
+                label = children[0] if isinstance(children, list) and children else None
+                label_rect = node_rect(label) if isinstance(label, dict) else None
+                if label_rect is None or not _rect_contains(rect, label_rect, 0.75):
+                    violations.append(
+                        f"{snapshot_path.name}: {chip_id} label escapes its color surface"
+                    )
+                elif abs(
+                    (rect[1] + rect[3] * 0.5)
+                    - (label_rect[1] + label_rect[3] * 0.5)
+                ) > 1.0:
+                    violations.append(
+                        f"{snapshot_path.name}: {chip_id} label is not vertically centered"
+                    )
+                if index:
+                    previous_id, previous = resolved_chips[index - 1]
+                    overlap = previous[0] + previous[2] - rect[0]
+                    if overlap > 0.75:
+                        violations.append(
+                            f"{snapshot_path.name}: {previous_id} overlaps {chip_id}"
+                        )
+    elif target_id == "theme-forge-panel-parts-layout":
+        card = _snapshot_rect(rects.get("parts-panel-card"))
+        probe = _snapshot_rect(rects.get("parts-panel-probe"))
+        scroll = _snapshot_rect(rects.get("parts-panel-scroll"))
+        if card is None or probe is None or scroll is None:
+            violations.append(f"{snapshot_path.name}: panel-parts geometry is incomplete")
+        else:
+            if not _rect_contains(card, probe, 0.75):
+                violations.append(f"{snapshot_path.name}: panel-parts probe escapes its card")
+            if not _rect_contains(probe, scroll, 0.75):
+                violations.append(f"{snapshot_path.name}: panel-parts scroll body escapes its probe")
+            left_inset = probe[0] - card[0]
+            right_inset = card[0] + card[2] - (probe[0] + probe[2])
+            bottom_inset = card[1] + card[3] - (probe[1] + probe[3])
+            if min(left_inset, right_inset, bottom_inset) < 8.0:
+                violations.append(
+                    f"{snapshot_path.name}: panel-parts probe lacks a consistent card inset"
+                )
+        splitter_card = _snapshot_rect(rects.get("parts-splitter-card"))
+        unsupported_card = _snapshot_rect(rects.get("parts-unsupported-card"))
+        if splitter_card is None or unsupported_card is None:
+            violations.append(
+                f"{snapshot_path.name}: splitter/unsupported card geometry is incomplete"
+            )
+        elif unsupported_card[1] < splitter_card[1] + splitter_card[3] + 8.0:
+            violations.append(
+                f"{snapshot_path.name}: unsupported diagnostics overlaps the splitter card"
+            )
     return violations
 
 

@@ -350,6 +350,13 @@ font-dependent text glyphs to semantic vector IconButtons:
 The controls preserve their stable semantic CSS types, part forwarding,
 accessible names, tooltips, focus order, and fixed-width geometry.
 
+The retained restore mark now has its own titlebar-specific geometry instead
+of reusing the general-purpose Copy icon unchanged. Its two overlapping window
+outlines are approximately 18% smaller, use rounded corners, and remain
+centered in the unchanged 46 by 34 logical-pixel hit target. The public Copy
+icon is intentionally unchanged. A primitive regression checks specialization,
+rounded radii, reduced bounds, and centering.
+
 ### Plain tooltip wrapping and clipping
 
 Classification: **library overlay sizing defect**.
@@ -477,6 +484,63 @@ The focused THEME FORGE snapshot now reports:
 - [x] Increased the visual-audit debug-snapshot allowance for very large stress
       documents so serializing thousands of computed-style records is not
       mistaken for a deadlocked UI.
+
+### Active-theme semantic swatch row
+
+Classification: **demo-authored flex sizing defect**.
+
+- [x] Removed `width: 100%` from the five sibling semantic-color labels. That
+      declaration asked every item in one horizontal row to consume the whole
+      row and produced the large accent block followed by clipped label text.
+- [x] Made every chip an equal `flex-grow: 1`, `flex-shrink: 1`, zero-basis
+      item with `min-width: 0` and automatic width.
+- [x] Changed the semantic color surfaces from Labels to lightweight Panels
+      with centered child labels. The previous Label backgrounds were present
+      in computed style but were not painted, making the palette preview look
+      like unexplained text floating in an empty subpanel.
+- [x] Let each nested label use the full swatch content width, avoiding the
+      small-bold-text intrinsic-width edge case that clipped final letters.
+- [x] Added stable IDs for the swatch panel, row, and five labels.
+- [x] Registered multi-viewport, multi-scale visual checks that require equal
+      chip widths, row containment, and no adjacent overlap.
+
+### Panel-parts fixture containment
+
+Classification: **demo-authored host spacing and paint-clash defect**.
+
+- [x] Removed the outer `card flush` opt-out so the nested Panel-parts probe
+      retains the same card inset as every neighboring fixture.
+- [x] Removed the unrelated bright host border beneath `Panel::accent`; the
+      six-pixel pink accent now owns and follows the rounded left edge without
+      green corner slivers.
+- [x] Reduced the inner radius and shortened the probe title while preserving
+      the deliberately clashing purple `::header`, green `::title`, navy
+      `::body`, and pink `::accent` coverage.
+- [x] Completed multi-viewport visual and geometry validation at 1x and 1.5x.
+      The nested probe retains 15 px left/right card insets, its ScrollArea is
+      fully contained, and both snapshots report zero layout diagnostics.
+
+### High-DPI final grid-row containment
+
+Classification: **library grid reconciliation defect**.
+
+- [x] Reproduced the Parts-page overlap at 1.5x: the final splitter card ended
+      at physical y=3324 while the following unsupported-parts card began at
+      y=3094, a 230 px overlap. At 1x the authored 10 px gap was correct.
+- [x] Confirmed the row children were correctly scaled and positioned, but the
+      grid rectangle ended 245 px before its final row. No fixed or negative
+      demo offsets contributed to the defect.
+- [x] Extended ordinary auto-row reconciliation to run when intact rows exceed
+      stale grid bounds, not only when content first overflows an individual
+      auto-height child.
+- [x] Added a native 1.5x regression that deliberately gives a grid stale
+      bounds and verifies reconciliation repacks and contains the final row.
+- [x] Added stable splitter/unsupported-card IDs and a permanent visual-audit
+      assertion requiring at least 8 px separation.
+- [x] Rebuilt the release extension and verified the real Parts page at 1x and
+      1.5x. The splitter/unsupported gap is 10 physical px at 1x and 15
+      physical px at 1.5x, the grid ends exactly with its last card, and both
+      snapshots report zero layout diagnostics.
 
 ### DropZone label alignment and flex CSS
 

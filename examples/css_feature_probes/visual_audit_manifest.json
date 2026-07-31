@@ -1061,5 +1061,35 @@
     ],
     "manual": false,
     "notes": "Regression: final hostile-grid row fully contains the rapid-replacement card and the following malformed-sheets panel starts below it."
+  },
+  {
+    "id": "theme-forge-active-theme-layout",
+    "name": "THEME FORGE Active Theme Swatches",
+    "script": "examples/theme_forge_stress_demo.py",
+    "args": ["--no-live", "--rows", "24"],
+    "category": "layout",
+    "features": ["flex-basis", "flex-grow", "flex-shrink", "min-width", "equal-width labels"],
+    "sizes": [[1024, 768], [640, 720]],
+    "scales": [1.0, 1.5],
+    "states": [
+      {"name": "active-theme", "route": "theme"}
+    ],
+    "manual": false,
+    "notes": "Regression: all five Active theme semantic-color chips share the row equally and keep their labels inside the swatch panel."
+  },
+  {
+    "id": "theme-forge-panel-parts-layout",
+    "name": "THEME FORGE Panel Parts Geometry",
+    "script": "examples/theme_forge_stress_demo.py",
+    "args": ["--no-live", "--rows", "24"],
+    "category": "layout",
+    "features": ["Panel::header", "Panel::title", "Panel::body", "Panel::accent", "nested panel inset", "rounded clipping"],
+    "sizes": [[1024, 768], [640, 720]],
+    "scales": [1.0, 1.5],
+    "states": [
+      {"name": "panel-parts", "route": "parts"}
+    ],
+    "manual": false,
+    "notes": "Regression: the panel-parts probe stays inset within its card and its accent/header/body paints remain clipped to the rounded probe surface."
   }
 ]

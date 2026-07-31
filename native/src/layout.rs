@@ -2163,10 +2163,6 @@ fn grow_and_repack_ordinary_grid_rows(
             grew_child = true;
         }
     }
-    if !grew_child {
-        return false;
-    }
-
     let Some(grid_rect) = result.rects.get(&grid.id).copied() else {
         return false;
     };
@@ -2198,6 +2194,16 @@ fn grow_and_repack_ordinary_grid_rows(
     let Some(first) = entries.first().copied() else {
         return false;
     };
+    let bottom_inset = resolved_bottom_outer_inset(result, &grid.id);
+    let grid_content_bottom = entries
+        .iter()
+        .map(|(_, rect)| rect.y + rect.h)
+        .fold(grid_rect.y, f32::max);
+    let grid_bounds_are_stale =
+        grid_content_bottom + bottom_inset > grid_rect.y + grid_rect.h + 0.5;
+    if !grew_child && !grid_bounds_are_stale {
+        return false;
+    }
 
     let mut rows: Vec<Vec<(usize, Rect)>> = Vec::new();
     for entry in entries {
@@ -2212,7 +2218,6 @@ fn grow_and_repack_ordinary_grid_rows(
     }
 
     let row_gap = grid_row_gap_px(grid, sf, Some(grid_rect.h));
-    let bottom_inset = resolved_bottom_outer_inset(result, &grid.id);
     let mut cursor_y = first.1.y;
     let mut changed = false;
     for row in rows {
@@ -12404,6 +12409,63 @@ mod tests {
         assert!(
             bottom_gap >= 23.5,
             "auto-height grid panel must include its authored bottom padding and border: panel={panel:?} code={code:?} gap={bottom_gap}"
+        );
+    }
+
+    #[test]
+    fn high_dpi_grid_reconciliation_grows_stale_bounds_to_last_row() {
+        fn fixed_panel(id: &str) -> WidgetNode {
+            let mut panel = node(id, WidgetKind::Panel, NodeProps::default(), vec![]);
+            panel.style.layout.height_value = Some(LayoutLength::LogicalPx(100.0));
+            panel
+        }
+
+        let mut grid = node(
+            "grid",
+            WidgetKind::GridLayout,
+            NodeProps {
+                grid_columns: Some(2),
+                grid_min_column_width: Some(120.0),
+                ..NodeProps::default()
+            },
+            vec![
+                fixed_panel("one"),
+                fixed_panel("two"),
+                fixed_panel("three"),
+                fixed_panel("four"),
+                fixed_panel("five"),
+            ],
+        );
+        grid.style.layout.gap = Some(12.0);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![grid],
+        );
+
+        let mut layout = compute_layout(&root, 520.0, 700.0, 1.5, &Theme::dark(), None);
+        let last_bottom = {
+            let last = layout.rects.get("five").unwrap();
+            last.y + last.h
+        };
+        let grid_y = layout.rects.get("grid").unwrap().y;
+        layout.rects.get_mut("grid").unwrap().h = last_bottom - grid_y - 30.0;
+
+        assert!(grow_and_repack_ordinary_grid_rows(
+            &root.children[0],
+            &mut layout,
+            1.5,
+            &HashMap::new(),
+        ));
+        let grid = layout.rects.get("grid").unwrap();
+        let final_last_bottom = {
+            let last = layout.rects.get("five").unwrap();
+            last.y + last.h
+        };
+        assert!(
+            grid.y + grid.h >= final_last_bottom - 0.5,
+            "reconciled high-DPI grid must contain its final row: grid={grid:?} final_last_bottom={final_last_bottom}"
         );
     }
 

@@ -550,6 +550,19 @@ def test_theme_forge_visual_audits_cover_all_routes_and_long_title_matrix() -> N
         }
     ]
 
+    active_theme = targets["theme-forge-active-theme-layout"]
+    assert active_theme["category"] == "layout"
+    assert active_theme["sizes"] == [[1024, 768], [640, 720]]
+    assert visual_audit.target_states(active_theme) == [
+        {"name": "active-theme", "route": "theme", "actions": []}
+    ]
+
+    panel_parts = targets["theme-forge-panel-parts-layout"]
+    assert panel_parts["category"] == "layout"
+    assert visual_audit.target_states(panel_parts) == [
+        {"name": "panel-parts", "route": "parts", "actions": []}
+    ]
+
 
 def test_client_window_chrome_maximized_interaction_is_registered() -> None:
     visual_audit = load_visual_audit()

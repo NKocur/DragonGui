@@ -102,3 +102,22 @@ def test_theme_forge_builds_all_pages_and_named_stylesheets_headlessly() -> None
     assert all(node["children"][0]["props"]["wrap"] is False for node in thrash_targets)
     assert any(node["id"] == "extreme-hostile-grid" for node in nodes)
     assert any(node["id"] == "extreme-malformed-panel" for node in nodes)
+
+    swatch_ids = {
+        "theme-swatch-accent",
+        "theme-swatch-success",
+        "theme-swatch-warning",
+        "theme-swatch-danger",
+        "theme-swatch-surface",
+    }
+    swatches = [node for node in nodes if node["id"] in swatch_ids]
+    assert {node["id"] for node in swatches} == swatch_ids
+    assert all(node["children"][0]["props"]["wrap"] is False for node in swatches)
+    assert any(node["id"] == "theme-swatch-panel" for node in nodes)
+    assert any(node["id"] == "theme-swatch-row" for node in nodes)
+    assert any(node["id"] == "parts-panel-card" for node in nodes)
+    assert any(node["id"] == "parts-panel-probe" for node in nodes)
+    assert any(node["id"] == "parts-panel-scroll" for node in nodes)
+    assert any(node["id"] == "parts-splitter-card" for node in nodes)
+    assert any(node["id"] == "parts-splitter" for node in nodes)
+    assert any(node["id"] == "parts-unsupported-card" for node in nodes)

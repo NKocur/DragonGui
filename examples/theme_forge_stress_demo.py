@@ -1052,20 +1052,29 @@ Panel.swatch {
     width: 100%;
 }
 
-Label.swatch-chip {
+Panel.swatch-chip {
+    align-items: center;
+    border: 0;
     border-radius: var(--tf-radius-sm);
+    box-shadow: none;
+    flex-basis: 0;
+    flex-grow: 1;
+    flex-shrink: 1;
     font-size: 10px;
     font-weight: 800;
+    justify-content: center;
+    min-width: 0;
     padding: 5px 7px;
     text-align: center;
-    width: 100%;
+    width: auto;
 }
 
-Label.chip-accent { background: var(--tf-accent); color: var(--tf-accent-ink); }
-Label.chip-ok { background: var(--tf-ok); color: var(--tf-ink-invert); }
-Label.chip-warn { background: var(--tf-warn); color: var(--tf-ink-invert); }
-Label.chip-bad { background: var(--tf-bad); color: var(--tf-ink-invert); }
-Label.chip-surface { background: var(--tf-surface-3); color: var(--tf-ink); }
+Panel.chip-accent { background: var(--tf-accent); color: var(--tf-accent-ink); }
+Panel.chip-ok { background: var(--tf-ok); color: var(--tf-ink-invert); }
+Panel.chip-warn { background: var(--tf-warn); color: var(--tf-ink-invert); }
+Panel.chip-bad { background: var(--tf-bad); color: var(--tf-ink-invert); }
+Panel.chip-surface { background: var(--tf-surface-3); color: var(--tf-ink); }
+Panel.swatch-chip > Label { text-align: center; width: 100%; }
 
 Panel.var-editor { background: var(--tf-surface-2); }
 Label.var-name { color: var(--tf-accent); font-family: var(--tf-mono); font-size: 11px; }
@@ -1147,14 +1156,14 @@ SearchBox.part-probe::clear { background: #ff2f6d; color: #ffffff; border-radius
 
 Panel.part-probe {
     background: #131a2b;
-    border: 2px solid #7cff00;
-    border-radius: 14px;
+    border: 0;
+    border-radius: 10px;
     padding: 0;
 }
 Panel.part-probe::header { background: #4a007a; }
 Panel.part-probe::title { color: #7cff00; font-weight: 900; text-transform: uppercase; }
 Panel.part-probe::body { background: #001d33; }
-Panel.part-probe::accent { background: #ff2f6d; width: 8px; }
+Panel.part-probe::accent { background: #ff2f6d; width: 6px; }
 Panel.part-probe::scrollbar-track { width: 12px; background: #4a007a; border-radius: 0; }
 Panel.part-probe::scrollbar-thumb { width: 8px; background: #7cff00; border-radius: 0; }
 
@@ -2974,13 +2983,18 @@ def build_theme_page() -> None:
             dg.Label("cascade:", class_="faint", wrap=False)
             state.sheet_label = dg.Label(active_sheet_summary(), class_="mono", wrap=False)
 
-        with dg.Panel(class_="swatch"):
-            with dg.HLayout(style={"gap": 0}):
-                dg.Label("accent", class_="swatch-chip chip-accent", wrap=False)
-                dg.Label("success", class_="swatch-chip chip-ok", wrap=False)
-                dg.Label("warning", class_="swatch-chip chip-warn", wrap=False)
-                dg.Label("danger", class_="swatch-chip chip-bad", wrap=False)
-                dg.Label("surface", class_="swatch-chip chip-surface", wrap=False)
+        with dg.Panel(class_="swatch", id="theme-swatch-panel"):
+            with dg.HLayout(id="theme-swatch-row", style={"gap": 0}):
+                with dg.Panel(class_="swatch-chip chip-accent", id="theme-swatch-accent"):
+                    dg.Label("accent", wrap=False)
+                with dg.Panel(class_="swatch-chip chip-ok", id="theme-swatch-success"):
+                    dg.Label("success", wrap=False)
+                with dg.Panel(class_="swatch-chip chip-warn", id="theme-swatch-warning"):
+                    dg.Label("warning", wrap=False)
+                with dg.Panel(class_="swatch-chip chip-bad", id="theme-swatch-danger"):
+                    dg.Label("danger", wrap=False)
+                with dg.Panel(class_="swatch-chip chip-surface", id="theme-swatch-surface"):
+                    dg.Label("surface", wrap=False)
 
     with dg.GridLayout(columns={"default": 2, 900: 1}, min_column_width=380, gap=12):
         with dg.Panel("Named stylesheet control", class_="card"):
@@ -3461,9 +3475,19 @@ def build_parts_page() -> None:
             )
             dg.SearchBox("", placeholder="empty (no clear button)", class_="part-probe", style={"width": "100%"})
 
-        with dg.Panel("Panel parts", class_="card flush"):
-            with dg.Panel("Panel::header purple / ::title green", class_="part-probe"):
-                with dg.ScrollArea(axis="y", height=124, gap=4, style={"padding": 8}):
+        with dg.Panel("Panel parts", class_="card", id="parts-panel-card"):
+            with dg.Panel(
+                "Header purple / title green",
+                class_="part-probe",
+                id="parts-panel-probe",
+            ):
+                with dg.ScrollArea(
+                    axis="y",
+                    height=124,
+                    gap=4,
+                    id="parts-panel-scroll",
+                    style={"padding": 8},
+                ):
                     for index in range(14):
                         dg.Label(
                             f"body row {index:02d} -- ::body navy, ::accent pink, "
@@ -3543,12 +3567,17 @@ def build_parts_page() -> None:
                 dg.Selectable("Selectable::row + ::indicator", selected=True, class_="part-probe")
                 dg.Selectable("unselected", class_="part-probe")
 
-        with dg.Panel("Splitter and scrollbar parts", class_="card"):
+        with dg.Panel(
+            "Splitter and scrollbar parts",
+            class_="card",
+            id="parts-splitter-card",
+        ):
             dg.Label("Splitter::gutter amber; scrollbar parts on the panes", class_="mono")
             with dg.Splitter(
                 orientation="horizontal",
                 gutter_size=10,
                 class_="part-probe",
+                id="parts-splitter",
                 style={"height": 170},
             ):
                 with dg.Pane(flex=50, min_size=110):
@@ -3562,7 +3591,11 @@ def build_parts_page() -> None:
                             for index in range(18):
                                 dg.Label(f"right {index:02d}", class_="mono")
 
-    with dg.Panel("Unsupported part diagnostics", class_="card"):
+    with dg.Panel(
+        "Unsupported part diagnostics",
+        class_="card",
+        id="parts-unsupported-card",
+    ):
         dg.Label(
             "The structure sheet also declares Button::stepper, which does not exist. It "
             "must appear as a stylesheet warning and paint nothing -- Button below is "

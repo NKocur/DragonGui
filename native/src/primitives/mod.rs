@@ -8021,6 +8021,14 @@ fn emit_tool_icon_button_mark(
         "close" => emit_tool_x_icon(out, rect, color, sf),
         "check" => emit_tool_check_icon(out, rect, color, sf),
         "edit" => emit_tool_edit_icon(out, rect, color, sf),
+        "copy"
+            if node
+                .css_types
+                .iter()
+                .any(|css_type| css_type == "WindowMaximize") =>
+        {
+            emit_window_restore_icon(out, rect, color, sf)
+        }
         "copy" => emit_tool_copy_icon(out, rect, color, sf),
         "file" => emit_tool_file_icon(out, rect, color, sf),
         "folder" => emit_tool_folder_icon(out, rect, color, sf),
@@ -8384,6 +8392,29 @@ fn emit_tool_copy_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color
         stroke,
     );
     emit_tool_line_rect(out, [left, top, doc_w, doc_h], color, stroke);
+}
+
+fn emit_window_restore_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, sf: f32) {
+    let [x, y, w, h] = rect;
+    let stroke = (1.15 * sf).max(1.0);
+    let window_w = (w.min(h) * 0.34).max(8.0 * sf);
+    let window_h = (window_w * 0.78).max(6.0 * sf);
+    let shift = (2.8 * sf).max(stroke * 1.8);
+    let left = x + (w - window_w - shift) * 0.5;
+    let top = y + (h - window_h - shift) * 0.5;
+    let radius = (1.5 * sf).max(stroke);
+    for window_rect in [
+        [left + shift, top, window_w, window_h],
+        [left, top + shift, window_w, window_h],
+    ] {
+        out.push(inst_outline_ring_clipped(
+            window_rect,
+            color,
+            [radius; 4],
+            stroke,
+            default_local_clip(window_rect),
+        ));
+    }
 }
 
 fn emit_tool_folder_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, sf: f32) {
@@ -17602,6 +17633,65 @@ mod tests {
         emit_custom_icon_geometry(&mut instances, &geometry, [10.0, 20.0, 40.0, 32.0], color);
         assert_eq!(instances.len(), 2);
         assert!(instances.iter().all(|instance| instance.color == color));
+    }
+
+    #[test]
+    fn client_restore_icon_is_smaller_and_rounded_without_changing_copy_icon() {
+        fn bounds(instances: &[RectInstance]) -> [f32; 4] {
+            let left = instances
+                .iter()
+                .map(|instance| instance.rect[0])
+                .fold(f32::INFINITY, f32::min);
+            let top = instances
+                .iter()
+                .map(|instance| instance.rect[1])
+                .fold(f32::INFINITY, f32::min);
+            let right = instances
+                .iter()
+                .map(|instance| instance.rect[0] + instance.rect[2])
+                .fold(f32::NEG_INFINITY, f32::max);
+            let bottom = instances
+                .iter()
+                .map(|instance| instance.rect[1] + instance.rect[3])
+                .fold(f32::NEG_INFINITY, f32::max);
+            [left, top, right - left, bottom - top]
+        }
+
+        let rect = [0.0, 0.0, 46.0, 34.0];
+        let color = [0.9, 0.9, 0.9, 1.0];
+        let mut generic = Vec::new();
+        emit_tool_copy_icon(&mut generic, rect, color, 1.0);
+
+        let mut restore = node("restore", WidgetKind::IconButton);
+        restore.css_types.push("WindowMaximize".to_string());
+        restore
+            .props
+            .raw_props
+            .insert("icon".to_string(), serde_json::json!("copy"));
+        let mut restored = Vec::new();
+        emit_tool_icon_button_mark(
+            &mut restored,
+            &restore,
+            rect,
+            color,
+            1.0,
+            &mut IconGeometryCache::default(),
+        );
+
+        assert_eq!(
+            restored.len(),
+            2,
+            "restore should use two rounded window rings"
+        );
+        assert!(restored.iter().all(|instance| {
+            instance.radii.iter().all(|radius| *radius > 0.0) && instance.paint[3] > 0.0
+        }));
+        let generic_bounds = bounds(&generic);
+        let restore_bounds = bounds(&restored);
+        assert!(restore_bounds[2] < generic_bounds[2]);
+        assert!(restore_bounds[3] < generic_bounds[3]);
+        assert!((restore_bounds[0] + restore_bounds[2] * 0.5 - rect[2] * 0.5).abs() <= 0.5);
+        assert!((restore_bounds[1] + restore_bounds[3] * 0.5 - rect[3] * 0.5).abs() <= 0.5);
     }
 
     #[test]
