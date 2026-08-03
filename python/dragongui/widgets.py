@@ -4306,19 +4306,26 @@ class LED(Widget):
         state_name = _led_state_name(state)
         if color is not None:
             self.states[state_name] = _led_color_value(color)
+        next_color = self._color_for_state(state_name)
+        state_changed = state_name != self.state
+        color_changed = next_color != self.color
         self.state = state_name
-        self.color = self._color_for_state(state_name)
+        self.color = next_color
         if (handle := self._live()) is not None:
-            handle.enqueue_set_prop("state", self.state)
-            handle.enqueue_set_prop("color", self.color)
+            if state_changed:
+                handle.enqueue_set_prop("state", self.state)
+            if color_changed:
+                handle.enqueue_set_prop("color", self.color)
 
     def set_on(self, on: bool = True) -> None:
         self.set_state(bool(on))
 
     def set_color(self, color: LedColorValue) -> None:
-        self.states[self.state] = _led_color_value(color)
-        self.color = self.states[self.state]
-        if (handle := self._live()) is not None:
+        next_color = _led_color_value(color)
+        color_changed = next_color != self.color
+        self.states[self.state] = next_color
+        self.color = next_color
+        if color_changed and (handle := self._live()) is not None:
             handle.enqueue_set_prop("color", self.color)
 
     def set_size(self, size: int | float) -> None:
@@ -9360,6 +9367,11 @@ class LinePlot(Widget):
         line_styles: Sequence[object] | None = None,
         fit: bool = True,
     ) -> None:
+        previous_series = tuple(
+            self._series_label(index) for index in range(len(self.y_columns))
+        )
+        previous_x_label = self.x_label
+        previous_y_label = self.y_label
         self.frame = frame
         self.x = x
         if y is not None:
@@ -9394,9 +9406,16 @@ class LinePlot(Widget):
         self.frame_summary = summarize_frame(frame)
         self._refresh_cached_payload_b64()
         if (handle := self._live()) is not None:
-            handle.enqueue_clear_line_plot_series()
-            handle.enqueue_set_prop("x_label", self.x_label)
-            handle.enqueue_set_prop("y_label", self.y_label)
+            current_series = {
+                self._series_label(index) for index in range(len(self.y_columns))
+            }
+            for removed_series in previous_series:
+                if removed_series not in current_series:
+                    handle.enqueue_clear_line_plot_series(removed_series)
+            if self.x_label != previous_x_label:
+                handle.enqueue_set_prop("x_label", self.x_label)
+            if self.y_label != previous_y_label:
+                handle.enqueue_set_prop("y_label", self.y_label)
             for index, y_column in enumerate(self.y_columns):
                 payload = self._cached_payloads.get(y_column)
                 if payload is None:

@@ -2492,6 +2492,11 @@ impl NativeCommandSender {
             .map_err(|e| PyRuntimeError::new_err(format!("window screenshot failed: {e:?}")))?;
         let v: serde_json::Value = serde_json::from_str(&json_str)
             .map_err(|e| PyRuntimeError::new_err(format!("window screenshot JSON invalid: {e}")))?;
+        if let Some(error) = v["error"].as_str().filter(|error| !error.is_empty()) {
+            return Err(PyRuntimeError::new_err(format!(
+                "window screenshot failed: {error}"
+            )));
+        }
         let w = v["w"].as_u64().unwrap_or(0) as u32;
         let h = v["h"].as_u64().unwrap_or(0) as u32;
         let b64 = v["rgba_b64"].as_str().unwrap_or("");

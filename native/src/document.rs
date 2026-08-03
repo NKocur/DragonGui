@@ -1621,9 +1621,12 @@ pub struct WidgetNode {
     pub style_json: Map<String, Value>,
     /// Parsed widget defaults. These sit above framework rules but below
     /// theme/application stylesheets in the cascade.
-    pub default_style: NodeStyle,
+    /// Parsed widget-default layer. Boxed only when declarations exist so the
+    /// large NodeStyle value does not inflate every retained widget.
+    pub default_style: Option<Box<NodeStyle>>,
     /// Parsed inline style, kept separate from the computed stylesheet result.
-    pub inline_style: NodeStyle,
+    /// Parsed authored inline layer, absent for unstyled widgets.
+    pub inline_style: Option<Box<NodeStyle>>,
     pub style: NodeStyle,
     pub children: Vec<WidgetNode>,
 }
@@ -1663,23 +1666,37 @@ pub fn parse_widget_node(v: &serde_json::Value) -> Option<WidgetNode> {
     let props = parse_props(&kind, props_val);
     let default_style_json = style_map_from_value(v.get("default_style"));
     let default_style_sources = style_map_from_value(v.get("default_style_sources"));
-    let mut default_style = NodeStyle::from_json(Some(&Value::Object(default_style_json.clone())));
-    crate::css_style::record_serialized_style_provenance(
-        &mut default_style,
-        &default_style_json,
-        crate::css_style::StylesheetOrigin::WidgetDefault,
-        Some(&default_style_sources),
-    );
+    let mut default_style = (!default_style_json.is_empty()).then(|| {
+        Box::new(NodeStyle::from_json(Some(&Value::Object(
+            default_style_json.clone(),
+        ))))
+    });
+    if let Some(style) = default_style.as_deref_mut() {
+        crate::css_style::record_serialized_style_provenance(
+            style,
+            &default_style_json,
+            crate::css_style::StylesheetOrigin::WidgetDefault,
+            Some(&default_style_sources),
+        );
+    }
     let style_json = style_map_from_value(v.get("style"));
-    let mut inline_style = NodeStyle::from_json(Some(&Value::Object(style_json.clone())));
-    crate::css_style::record_serialized_style_provenance(
-        &mut inline_style,
-        &style_json,
-        crate::css_style::StylesheetOrigin::Inline,
-        None,
-    );
-    let mut style = default_style.clone();
-    crate::css_style::merge_node_style(&mut style, &inline_style);
+    let mut inline_style = (!style_json.is_empty()).then(|| {
+        Box::new(NodeStyle::from_json(Some(&Value::Object(
+            style_json.clone(),
+        ))))
+    });
+    if let Some(style) = inline_style.as_deref_mut() {
+        crate::css_style::record_serialized_style_provenance(
+            style,
+            &style_json,
+            crate::css_style::StylesheetOrigin::Inline,
+            None,
+        );
+    }
+    let mut style = default_style.as_deref().cloned().unwrap_or_default();
+    if let Some(inline_style) = inline_style.as_deref() {
+        crate::css_style::merge_node_style(&mut style, inline_style);
+    }
     let children = v
         .get("children")
         .and_then(|c| c.as_array())
@@ -3102,4 +3119,15 @@ mod tests {
             ))
         );
     }
+}
+#[test]
+fn retained_widget_storage_does_not_inline_optional_style_layers() {
+    assert!(
+        std::mem::size_of::<WidgetNode>() <= 10_000,
+        "optional authored style layers must not inflate every WidgetNode"
+    );
+    assert_eq!(
+        std::mem::size_of::<Option<Box<NodeStyle>>>(),
+        std::mem::size_of::<usize>()
+    );
 }

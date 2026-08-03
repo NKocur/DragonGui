@@ -5071,7 +5071,7 @@ def test_line_plot_live_methods_enqueue_native_commands() -> None:
     plot.set_axis_labels(x="Elapsed", y="Reading")
     plot.clear("Other")
 
-    assert sender.cleared[0] == ("line", None)
+    assert sender.cleared[0] == ("line", "Sensor")
     assert len(sender.set_data) == 1
     widget_id, series, payload, label, color, width, line_style, grid, auto_fit, max_points, fit, coalesce = (
         sender.set_data[0]
@@ -5092,7 +5092,6 @@ def test_line_plot_live_methods_enqueue_native_commands() -> None:
     assert len(sender.appended[0][2]) == 2 * 8
     assert sender.appended[0][3] == 5
     assert sender.props == [
-        ("line", "x_label", "t"),
         ("line", "y_label", "Other"),
         ("line", "line_width", 3.25),
         ("line", "show_grid", False),
@@ -5893,7 +5892,6 @@ def test_m5_theme_and_mutable_control_props_serialize() -> None:
         "disabled": False,
     }
     assert button.to_dict()["props"]["badge"] == "3"
-
     with pytest.raises(ValueError, match="rows"):
         dg.TextArea(rows=0, parent=None)
     with pytest.raises(ValueError, match="rows"):
@@ -5910,6 +5908,32 @@ def test_m5_theme_and_mutable_control_props_serialize() -> None:
         dg.LED("missing", states={"ready": "success"}, parent=None)
     with pytest.raises(ValueError, match="size"):
         dg.LED(size=0, parent=None)
+
+
+def test_led_live_updates_skip_unchanged_state_and_color() -> None:
+    class RecordingHandle:
+        closed = False
+
+        def __init__(self) -> None:
+            self.updates: list[tuple[str, object]] = []
+
+        def enqueue_set_prop(self, prop: str, value: object) -> None:
+            self.updates.append((prop, value))
+
+    led = dg.LED(False, parent=None)
+    handle = RecordingHandle()
+    led._bind_live(handle)
+
+    led.set_on(False)
+    led.set_color("disabled")
+    assert handle.updates == []
+
+    led.set_on(True)
+    assert handle.updates == [("state", "on"), ("color", "success")]
+
+    handle.updates.clear()
+    led.set_state("on", color="#22cc88")
+    assert handle.updates == [("color", "#22cc88")]
 
 
 def test_tool_buttons_serialize_and_validate() -> None:

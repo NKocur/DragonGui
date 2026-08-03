@@ -1489,38 +1489,49 @@ fn parse_layout(map: &serde_json::Map<String, Value>, out: &mut LayoutStyle) {
     out.min_height = number(map.get("min_height"));
     out.max_width = number(map.get("max_width"));
     out.max_height = number(map.get("max_height"));
-    out.width_value = out.width.map(LayoutLength::LogicalPx);
-    out.height_value = out.height.map(LayoutLength::LogicalPx);
-    out.min_width_value = out.min_width.map(LayoutLength::LogicalPx);
-    out.min_height_value = out.min_height.map(LayoutLength::LogicalPx);
-    out.max_width_value = out.max_width.map(LayoutLength::LogicalPx);
-    out.max_height_value = out.max_height.map(LayoutLength::LogicalPx);
+    out.width_value = serialized_layout_length(map.get("width"));
+    out.height_value = serialized_layout_length(map.get("height"));
+    out.min_width_value = serialized_layout_length(value_for_keys(map, "min_width", "min-width"));
+    out.min_height_value =
+        serialized_layout_length(value_for_keys(map, "min_height", "min-height"));
+    out.max_width_value = serialized_layout_length(value_for_keys(map, "max_width", "max-width"));
+    out.max_height_value =
+        serialized_layout_length(value_for_keys(map, "max_height", "max-height"));
     out.padding = number(map.get("padding"));
     out.padding_left = number(map.get("padding_left"));
     out.padding_right = number(map.get("padding_right"));
     out.padding_top = number(map.get("padding_top"));
     out.padding_bottom = number(map.get("padding_bottom"));
-    out.padding_value = out.padding.map(LayoutLength::LogicalPx);
-    out.padding_left_value = out.padding_left.map(LayoutLength::LogicalPx);
-    out.padding_right_value = out.padding_right.map(LayoutLength::LogicalPx);
-    out.padding_top_value = out.padding_top.map(LayoutLength::LogicalPx);
-    out.padding_bottom_value = out.padding_bottom.map(LayoutLength::LogicalPx);
+    out.padding_value = serialized_layout_length(map.get("padding"));
+    out.padding_left_value =
+        serialized_layout_length(value_for_keys(map, "padding_left", "padding-left"));
+    out.padding_right_value =
+        serialized_layout_length(value_for_keys(map, "padding_right", "padding-right"));
+    out.padding_top_value =
+        serialized_layout_length(value_for_keys(map, "padding_top", "padding-top"));
+    out.padding_bottom_value =
+        serialized_layout_length(value_for_keys(map, "padding_bottom", "padding-bottom"));
     out.margin = number(map.get("margin"));
     out.margin_left = number(value_for_keys(map, "margin_left", "margin-left"));
     out.margin_right = number(value_for_keys(map, "margin_right", "margin-right"));
     out.margin_top = number(value_for_keys(map, "margin_top", "margin-top"));
     out.margin_bottom = number(value_for_keys(map, "margin_bottom", "margin-bottom"));
-    out.margin_value = out.margin.map(LayoutLength::LogicalPx);
-    out.margin_left_value = out.margin_left.map(LayoutLength::LogicalPx);
-    out.margin_right_value = out.margin_right.map(LayoutLength::LogicalPx);
-    out.margin_top_value = out.margin_top.map(LayoutLength::LogicalPx);
-    out.margin_bottom_value = out.margin_bottom.map(LayoutLength::LogicalPx);
+    out.margin_value = serialized_layout_length(map.get("margin"));
+    out.margin_left_value =
+        serialized_layout_length(value_for_keys(map, "margin_left", "margin-left"));
+    out.margin_right_value =
+        serialized_layout_length(value_for_keys(map, "margin_right", "margin-right"));
+    out.margin_top_value =
+        serialized_layout_length(value_for_keys(map, "margin_top", "margin-top"));
+    out.margin_bottom_value =
+        serialized_layout_length(value_for_keys(map, "margin_bottom", "margin-bottom"));
     out.gap = number(map.get("gap"));
     out.row_gap = number(map.get("row_gap")).or_else(|| number(map.get("row-gap")));
     out.column_gap = number(map.get("column_gap")).or_else(|| number(map.get("column-gap")));
-    out.gap_value = out.gap.map(LayoutLength::LogicalPx);
-    out.row_gap_value = out.row_gap.map(LayoutLength::LogicalPx);
-    out.column_gap_value = out.column_gap.map(LayoutLength::LogicalPx);
+    out.gap_value = serialized_layout_length(map.get("gap"));
+    out.row_gap_value = serialized_layout_length(value_for_keys(map, "row_gap", "row-gap"));
+    out.column_gap_value =
+        serialized_layout_length(value_for_keys(map, "column_gap", "column-gap"));
     out.overflow = text_value(map, "overflow", "overflow").and_then(parse_overflow);
     out.overflow_x = text_value(map, "overflow_x", "overflow-x").and_then(parse_overflow);
     out.overflow_y = text_value(map, "overflow_y", "overflow-y").and_then(parse_overflow);
@@ -1555,10 +1566,21 @@ fn parse_layout(map: &serde_json::Map<String, Value>, out: &mut LayoutStyle) {
     }
     out.flex_grow = number(value_for_keys(map, "flex_grow", "flex-grow")).or(out.flex_grow);
     out.flex_shrink = number(value_for_keys(map, "flex_shrink", "flex-shrink")).or(out.flex_shrink);
-    out.flex_basis = number(value_for_keys(map, "flex_basis", "flex-basis")).or(out.flex_basis);
-    if out.flex_basis.is_some() {
-        out.flex_basis_value = out.flex_basis.map(LayoutLength::LogicalPx);
+    let flex_basis = value_for_keys(map, "flex_basis", "flex-basis");
+    out.flex_basis = number(flex_basis).or(out.flex_basis);
+    if flex_basis.is_some() {
+        out.flex_basis_value = serialized_layout_length(flex_basis);
     }
+}
+
+fn serialized_layout_length(value: Option<&Value>) -> Option<LayoutLength> {
+    let value = value?;
+    if let Some(number) = value.as_f64() {
+        return number
+            .is_finite()
+            .then_some(LayoutLength::LogicalPx(number as f32));
+    }
+    crate::css_style::parse_serialized_layout_length(value.as_str()?)
 }
 
 fn parse_container_names(value: &str) -> Vec<String> {

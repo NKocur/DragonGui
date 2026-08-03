@@ -567,9 +567,15 @@ fn fs_main(in: VertOut) -> @location(0) vec4<f32> {
     var color = in.color;
     if (in.paint.x > 0.5 && in.paint.x < 1.5 && in.params.z < 0.5) {
         let size = max(in.half_size * 2.0, vec2<f32>(1.0, 1.0));
-        let uv = in.local_px / size;
         let dir = normalize(in.paint.yz);
-        let t = clamp(dot(uv - vec2<f32>(0.5, 0.5), dir) + 0.5, 0.0, 1.0);
+        // Stops measured in pixels are normalized on the CPU against this
+        // exact projected line length. Project in physical pixels here too.
+        // Normalizing x/y independently makes a diagonal gradient's period
+        // and phase depend on the rectangle width, which causes the trailing
+        // stripes to shimmer while a surface is resized.
+        let line_length = max(size.x * abs(dir.x) + size.y * abs(dir.y), 1.0);
+        let centered_px = in.local_px - size * 0.5;
+        let t = clamp(dot(centered_px, dir) / line_length + 0.5, 0.0, 1.0);
         color = gradient_color_at(in, t);
     } else if (in.paint.x > 1.5 && in.paint.x < 2.5 && in.params.z < 0.5) {
         let size = max(in.half_size * 2.0, vec2<f32>(1.0, 1.0));
@@ -646,7 +652,17 @@ fn fs_main(in: VertOut) -> @location(0) vec4<f32> {
         a = smoothstep(-softness, 0.0, inner_sdf) * shape_mask * color.a;
     } else if (in.params.z > 0.5) {
         let softness = max(in.params.x, 1.0);
-        a = (1.0 - smoothstep(0.0, softness, sdf)) * color.a;
+        // Outset-shadow quads include the blur margin so fragments can fade
+        // all the way to transparent. Measure distance from the original
+        // spread shape, not from that enlarged cover quad; otherwise the
+        // whole blur margin becomes a solid translucent rectangle.
+        let blur_margin = max(in.params.y, 0.0);
+        let shadow_half_size = max(
+            shape_half_size - vec2<f32>(blur_margin, blur_margin),
+            vec2<f32>(0.5, 0.5),
+        );
+        let shadow_sdf = rounded_rect_sdf(p, shadow_half_size, in.radii);
+        a = (1.0 - smoothstep(0.0, softness, shadow_sdf)) * color.a;
     } else {
         a = clamp(1.0 - sdf, 0.0, 1.0) * color.a;
     }

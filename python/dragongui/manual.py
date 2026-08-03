@@ -2581,7 +2581,9 @@ Live methods such as `set_value`, `set_style`, `set_frame`, `set_points`,
         "Framed titled containers for grouped controls and dashboard cards.",
         """
 Use `Panel(title=None, width=None)` for grouped controls. Panels lay out their
-children vertically. For a bounded body that can overflow, set
+children vertically. A titled panel has separate `::header`, `::title`, and
+`::body` parts. Its body is a protected paint/scroll viewport, so descendants
+cannot draw across the title. For a bounded body that can overflow, set
 `style={"overflow_y": "auto"}` or place a `ScrollArea` inside the panel.
 
 ```python
@@ -2592,7 +2594,12 @@ with dg.Panel("Hyperparameters", width=300, style={"gap": 10, "padding": 14}):
 
 Guidelines:
 - Use `width` or CSS width for side panels; let main content flex.
-- Use `gap` and `padding` on the panel, not spacer widgets between every row.
+- Use `gap` on the panel instead of spacer widgets between every row.
+- On an untitled panel, ordinary `padding` insets its content normally. On a
+  titled panel, shell padding also participates in header geometry; use
+  `Panel::body { padding: ...; }` when descendants need paint clearance from
+  the header or edges. This is especially important for outset shadows/glows,
+  because their blur does not reserve layout space.
 - Use `Panel::accent` in CSS for the left accent strip.
 - For variable card grids, use `GridLayout(masonry=True)` when available.
 """,
@@ -2774,8 +2781,9 @@ Important:
 - Use `GridLayout` for dashboards.
 - Give scroll owners a bound (`height`, `flex_grow`, or window body space).
 - Do not use overlays as normal children when you expect them to float.
-- Titled panels reserve their header and clip children in the body below; add
-  `overflow_y: "auto"` or a nested `ScrollArea` when that body must scroll.
+- Titled panels reserve their header and clip children in the body below. Use
+  `Panel::body` padding to keep focus rings, shadows, and glows away from that
+  clip; add `overflow_y: "auto"` or a nested `ScrollArea` when the body scrolls.
 - Paint and text from scrolled plots remain clipped to the plot/widget body;
   fixed tab, toolbar, and titlebar siblings should stay outside that scroll
   owner.
@@ -3327,6 +3335,12 @@ per-corner radius, `outline`, `outline-color`, `outline-width`,
 Border and outline styles accept `solid`, `dotted`, `dashed`, `double`, `none`,
 and `hidden`. Side-specific border widths participate in layout; outlines are
 paint-only and do not change layout.
+
+Outset `box-shadow` is also paint-only: its offset, spread, and blur do not
+reserve layout space. Give glowing or elevated neighbours enough `gap`,
+`row-gap`, and container padding for the desired halo. As with browser CSS,
+overlapping sibling shadows follow sibling paint order; use spacing to keep a
+large glow from washing over an adjacent control face.
 
 Linear and radial gradient stops accept percentages, logical pixels, and mixed
 `calc()` length-percentage positions. Repeating gradients preserve fixed
@@ -4699,6 +4713,20 @@ Useful tools:
 - `python -m py_compile path/to/demo.py` catches Python syntax errors.
 - Set `DRAGONGUI_SMOKE_FRAMES=3` to run short GUI smoke checks.
 - Feature probes in `examples/css_feature_probes` isolate widgets and layout cases.
+
+Renderer tuning:
+- On Windows, DragonGUI defaults to the DirectX 12 WGPU backend. Other
+  platforms use WGPU's automatic backend selection.
+- `DRAGONGUI_WGPU_BACKEND=auto|dx12|vulkan|gl` overrides backend selection.
+  `dx12` is Windows-only. `gl` can use substantially less memory on some
+  systems, but may reduce live-update throughput and may not support window
+  screenshots; treat it as an opt-in compatibility/low-memory mode.
+- DragonGUI defaults to WGPU's memory-oriented allocator. Set
+  `DRAGONGUI_WGPU_MEMORY_HINT=performance` only after measuring that its larger
+  allocation blocks benefit the target workload.
+- `app.debug_snapshot()` exposes `renderer.backend_policy`,
+  `renderer.adapter_backend`, and `renderer.memory_hint` so tests can verify
+  the effective configuration rather than assuming it.
 
 When layout looks wrong, inspect the scroll owner, fixed sizes, `flex_grow`,
 wrapping containers, and whether an overlay is being inserted as normal content.

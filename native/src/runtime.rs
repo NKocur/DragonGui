@@ -1916,7 +1916,8 @@ impl DirtyRebuildStats {
     }
 }
 
-const MAX_TARGETED_TEXT_ROOTS_PER_BATCH: usize = 64;
+const MAX_TARGETED_TEXT_ROOTS_PER_BATCH: usize = 512;
+const BULK_TEXT_REBUILD_CROSSOVER: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DeferredWidgetTargetClass {
@@ -1941,6 +1942,9 @@ struct DeferredRebuildTargets {
 
 impl DeferredRebuildTargets {
     fn insert_widget(&mut self, class: DeferredWidgetTargetClass, widget_id: &str) {
+        if self.retained_visual_requires_full || self.primitive_paint_requires_full {
+            return;
+        }
         match class {
             DeferredWidgetTargetClass::RetainedVisual => {
                 self.retained_visual_roots.insert(widget_id.to_string());
@@ -1951,6 +1955,13 @@ impl DeferredRebuildTargets {
             DeferredWidgetTargetClass::TableText => {
                 self.table_text_roots.insert(widget_id.to_string());
             }
+        }
+        if self.raw_widget_count() >= MAX_TARGETED_TEXT_ROOTS_PER_BATCH {
+            self.retained_visual_roots.clear();
+            self.primitive_paint_roots.clear();
+            self.table_text_roots.clear();
+            self.retained_visual_requires_full = true;
+            self.primitive_paint_requires_full = true;
         }
     }
 
@@ -2163,6 +2174,7 @@ impl TargetedRebuildVerificationStats {
 enum LiveTextInvalidationReason {
     FixedSingleLineLabel,
     FixedWrappedLabel,
+    StableWrappedLabelHeight,
     FixedComposite,
     TargetLocalState,
     TargetLocalPlot,
@@ -2240,6 +2252,7 @@ struct LiveTextInvalidationStats {
     layout: u64,
     fixed_single_line_label: u64,
     fixed_wrapped_label: u64,
+    stable_wrapped_label_height: u64,
     fixed_composite: u64,
     target_local_state: u64,
     target_local_plot: u64,
@@ -2263,6 +2276,9 @@ impl LiveTextInvalidationStats {
         let reason = match decision.reason {
             LiveTextInvalidationReason::FixedSingleLineLabel => &mut self.fixed_single_line_label,
             LiveTextInvalidationReason::FixedWrappedLabel => &mut self.fixed_wrapped_label,
+            LiveTextInvalidationReason::StableWrappedLabelHeight => {
+                &mut self.stable_wrapped_label_height
+            }
             LiveTextInvalidationReason::FixedComposite => &mut self.fixed_composite,
             LiveTextInvalidationReason::TargetLocalState => &mut self.target_local_state,
             LiveTextInvalidationReason::TargetLocalPlot => &mut self.target_local_plot,
@@ -2288,6 +2304,7 @@ impl LiveTextInvalidationStats {
             "reasons": {
                 "fixed_single_line_label": self.fixed_single_line_label,
                 "fixed_wrapped_label": self.fixed_wrapped_label,
+                "stable_wrapped_label_height": self.stable_wrapped_label_height,
                 "fixed_composite": self.fixed_composite,
                 "target_local_state": self.target_local_state,
                 "target_local_plot": self.target_local_plot,
@@ -2407,6 +2424,42 @@ fn choose_surface_present_mode(
     }
 }
 
+fn choose_wgpu_memory_hints(requested: Option<&str>) -> (wgpu::MemoryHints, &'static str) {
+    match requested
+        .map(str::trim)
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("performance") | Some("speed") => (wgpu::MemoryHints::Performance, "performance"),
+        _ => (wgpu::MemoryHints::MemoryUsage, "memory-usage"),
+    }
+}
+
+fn platform_default_wgpu_backends() -> (wgpu::Backends, &'static str) {
+    #[cfg(target_os = "windows")]
+    {
+        (wgpu::Backends::DX12, "dx12")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        (wgpu::Backends::default(), "auto")
+    }
+}
+
+fn choose_wgpu_backends(requested: Option<&str>) -> (wgpu::Backends, &'static str) {
+    match requested
+        .map(str::trim)
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("auto") | Some("default") => (wgpu::Backends::default(), "auto"),
+        Some("dx12") | Some("directx12") => (wgpu::Backends::DX12, "dx12"),
+        Some("vulkan") => (wgpu::Backends::VULKAN, "vulkan"),
+        Some("gl") | Some("opengl") | Some("gles") => (wgpu::Backends::GL, "gl"),
+        _ => platform_default_wgpu_backends(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Walk helpers
 // ---------------------------------------------------------------------------
@@ -2490,6 +2543,19 @@ fn collect_widget_kinds(node: &WidgetNode, out: &mut HashMap<String, WidgetKind>
     out.insert(node.id.clone(), node.kind.clone());
     for child in &node.children {
         collect_widget_kinds(child, out);
+    }
+}
+
+fn collect_widget_paths(
+    node: &WidgetNode,
+    path: &mut Vec<usize>,
+    out: &mut HashMap<String, Box<[usize]>>,
+) {
+    out.insert(node.id.clone(), path.clone().into_boxed_slice());
+    for (index, child) in node.children.iter().enumerate() {
+        path.push(index);
+        collect_widget_paths(child, path, out);
+        path.pop();
     }
 }
 
@@ -2935,6 +3001,23 @@ fn find_widget_mut<'a>(node: &'a mut WidgetNode, id: &str) -> Option<&'a mut Wid
         }
     }
     None
+}
+
+fn widget_at_path<'a>(mut node: &'a WidgetNode, path: &[usize]) -> Option<&'a WidgetNode> {
+    for &index in path {
+        node = node.children.get(index)?;
+    }
+    Some(node)
+}
+
+fn widget_at_path_mut<'a>(
+    mut node: &'a mut WidgetNode,
+    path: &[usize],
+) -> Option<&'a mut WidgetNode> {
+    for &index in path {
+        node = node.children.get_mut(index)?;
+    }
+    Some(node)
 }
 
 fn set_scatter_scalar_bar_props(
@@ -4605,7 +4688,7 @@ fn node_snapshot(node: &WidgetNode) -> Value {
         "key": node.key.as_deref(),
         "class": node.class_name.as_deref(),
         "props": props_snapshot(node),
-        "default_style": node_style_snapshot(&node.default_style, None),
+        "default_style": node.default_style.as_deref().map(|style| node_style_snapshot(style, None)).unwrap_or_else(|| json!({})),
         "inline_style": &node.style_json,
         "style": &node.style_json,
         "children": node.children.iter().map(node_snapshot).collect::<Vec<_>>(),
@@ -5746,10 +5829,7 @@ fn node_has_active_loading_spinner(
         .any(|child| node_has_active_loading_spinner(child, layout, state))
 }
 
-fn set_widget_text_prop(node: &mut WidgetNode, id: &str, prop: &str, value: String) -> bool {
-    let Some(target) = find_widget_mut(node, id) else {
-        return false;
-    };
+fn set_widget_text_prop_on(target: &mut WidgetNode, prop: &str, value: String) -> bool {
     match (target.kind.clone(), prop) {
         (
             WidgetKind::Label
@@ -5865,6 +5945,40 @@ fn live_text_prop_decision(node: &WidgetNode, prop: &str) -> LiveTextInvalidatio
     }
 }
 
+/// A fixed-width wrapped label only needs layout when the replacement changes
+/// its measured line box height. This preserves the safe intrinsic-height
+/// fallback while keeping common telemetry/status updates on the retained-text
+/// path when both strings occupy the same number of lines.
+fn stable_wrapped_label_text_decision(
+    node: &WidgetNode,
+    prop: &str,
+    replacement: &str,
+    layout: Option<&crate::layout::LayoutResult>,
+    theme: &Theme,
+) -> Option<LiveTextInvalidationDecision> {
+    let baseline = live_text_prop_decision(node, prop);
+    if baseline.reason != LiveTextInvalidationReason::IntrinsicHeight
+        || node.kind != WidgetKind::Label
+        || !label_wraps(node)
+    {
+        return None;
+    }
+    let layout = layout?;
+    let rect = layout.rects.get(&node.id)?;
+    let available_width =
+        (rect.w / layout.scale_factor.max(f32::EPSILON)).max(theme.font_size.max(1.0));
+    let current = node.props.text.as_deref().unwrap_or("");
+    let current_height =
+        measure_wrapped_text_for_layout(current, &node.style.text, theme, available_width).height;
+    let replacement_height =
+        measure_wrapped_text_for_layout(replacement, &node.style.text, theme, available_width)
+            .height;
+    ((current_height - replacement_height).abs() <= 0.01).then_some(LiveTextInvalidationDecision {
+        dirty: Dirty::Text,
+        reason: LiveTextInvalidationReason::StableWrappedLabelHeight,
+    })
+}
+
 #[cfg(test)]
 fn live_text_prop_dirty(node: &WidgetNode, prop: &str) -> Dirty {
     live_text_prop_decision(node, prop).dirty
@@ -5963,10 +6077,7 @@ fn set_widget_level_prop(node: &mut WidgetNode, id: &str, level: String) -> bool
     true
 }
 
-fn set_widget_led_state_prop(node: &mut WidgetNode, id: &str, state: String) -> bool {
-    let Some(target) = find_widget_mut(node, id) else {
-        return false;
-    };
+fn set_widget_led_state_prop_on(target: &mut WidgetNode, state: String) -> bool {
     if target.kind != WidgetKind::Led {
         return false;
     }
@@ -5974,10 +6085,7 @@ fn set_widget_led_state_prop(node: &mut WidgetNode, id: &str, state: String) -> 
     true
 }
 
-fn set_widget_led_color_prop(node: &mut WidgetNode, id: &str, color: String) -> bool {
-    let Some(target) = find_widget_mut(node, id) else {
-        return false;
-    };
+fn set_widget_led_color_prop_on(target: &mut WidgetNode, color: String) -> bool {
     if target.kind != WidgetKind::Led {
         return false;
     }
@@ -6273,13 +6381,19 @@ fn merge_style_patch(target: &mut Map<String, Value>, patch: &Map<String, Value>
 }
 
 fn reparse_inline_style(node: &mut WidgetNode) {
-    node.inline_style = NodeStyle::from_json(Some(&Value::Object(node.style_json.clone())));
-    crate::css_style::record_serialized_style_provenance(
-        &mut node.inline_style,
-        &node.style_json,
-        StylesheetOrigin::Inline,
-        None,
-    );
+    node.inline_style = (!node.style_json.is_empty()).then(|| {
+        Box::new(NodeStyle::from_json(Some(&Value::Object(
+            node.style_json.clone(),
+        ))))
+    });
+    if let Some(style) = node.inline_style.as_deref_mut() {
+        crate::css_style::record_serialized_style_provenance(
+            style,
+            &node.style_json,
+            StylesheetOrigin::Inline,
+            None,
+        );
+    }
 }
 
 fn style_patch_can_merge_directly(patch: &Map<String, Value>) -> bool {
@@ -7930,6 +8044,36 @@ mod style_patch_tests {
     }
 
     #[test]
+    fn wgpu_memory_hint_env_recognizes_compact_mode() {
+        assert!(matches!(
+            choose_wgpu_memory_hints(Some("memory-usage")).0,
+            wgpu::MemoryHints::MemoryUsage
+        ));
+        assert_eq!(choose_wgpu_memory_hints(Some("compact")).1, "memory-usage");
+        assert!(matches!(
+            choose_wgpu_memory_hints(Some("performance")).0,
+            wgpu::MemoryHints::Performance
+        ));
+        assert_eq!(choose_wgpu_memory_hints(None).1, "memory-usage");
+        assert_eq!(choose_wgpu_memory_hints(Some("unknown")).1, "memory-usage");
+    }
+
+    #[test]
+    fn wgpu_backend_policy_supports_platform_default_and_explicit_overrides() {
+        assert_eq!(choose_wgpu_backends(Some("auto")).1, "auto");
+        assert_eq!(choose_wgpu_backends(Some("dx12")).1, "dx12");
+        assert_eq!(choose_wgpu_backends(Some("vulkan")).1, "vulkan");
+        assert_eq!(choose_wgpu_backends(Some("opengl")).1, "gl");
+        assert!(choose_wgpu_backends(Some("gl"))
+            .0
+            .contains(wgpu::Backends::GL));
+        #[cfg(target_os = "windows")]
+        assert_eq!(choose_wgpu_backends(None).1, "dx12");
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(choose_wgpu_backends(None).1, "auto");
+    }
+
+    #[test]
     fn startup_window_size_clamps_to_monitor_logical_area() {
         assert_eq!(
             clamp_startup_window_size_to_monitor(1280, 820, PhysicalSize::new(1366, 768), 1.0),
@@ -8619,13 +8763,11 @@ mod style_patch_tests {
         merge_style_patch(&mut node.style_json, patch.as_object().unwrap());
         reparse_inline_style(&mut node);
 
-        assert_eq!(node.inline_style.provenance["width"].len(), 1);
+        let inline_style = node.inline_style.as_deref().unwrap();
+        assert_eq!(inline_style.provenance["width"].len(), 1);
+        assert_eq!(inline_style.provenance["width"][0].value, Some(json!(240)));
         assert_eq!(
-            node.inline_style.provenance["width"][0].value,
-            Some(json!(240))
-        );
-        assert_eq!(
-            node.inline_style.provenance["gap"][0].origin,
+            inline_style.provenance["gap"][0].origin,
             "inline".to_string()
         );
     }
@@ -8976,6 +9118,26 @@ mod style_patch_tests {
             HashSet::from(["shared".to_string()])
         );
         assert!(targets.overlay_text);
+    }
+
+    #[test]
+    fn deferred_target_cap_promotes_to_one_bounded_full_rebuild() {
+        let mut targets = DeferredRebuildTargets::default();
+        for index in 0..MAX_TARGETED_TEXT_ROOTS_PER_BATCH {
+            targets.insert_widget(
+                DeferredWidgetTargetClass::RetainedVisual,
+                &format!("widget-{index}"),
+            );
+        }
+
+        assert_eq!(targets.raw_widget_count(), 0);
+        assert!(targets.retained_visual_requires_full);
+        assert!(targets.primitive_paint_requires_full);
+        targets.insert_widget(
+            DeferredWidgetTargetClass::PrimitivePaint,
+            "ignored-after-cap",
+        );
+        assert_eq!(targets.raw_widget_count(), 0);
     }
 
     #[test]
@@ -10715,14 +10877,46 @@ mod style_patch_tests {
         }))
         .unwrap();
 
-        assert!(set_widget_text_prop(
-            &mut root,
-            "status",
-            "text",
-            "new".to_string()
-        ));
+        let target = find_widget_mut(&mut root, "status").unwrap();
+        assert!(set_widget_text_prop_on(target, "text", "new".to_string()));
         let label = find_widget_mut(&mut root, "status").unwrap();
         assert_eq!(label.props.text.as_deref(), Some("new"));
+    }
+
+    #[test]
+    fn retained_widget_paths_resolve_and_mutate_nested_nodes() {
+        let mut root = document::parse_widget_node(&json!({
+            "id": "window",
+            "type": "window",
+            "props": {},
+            "children": [{
+                "id": "panel",
+                "type": "panel",
+                "props": {},
+                "children": [{
+                    "id": "status",
+                    "type": "label",
+                    "props": {"text": "old"}
+                }]
+            }]
+        }))
+        .unwrap();
+        let mut paths = HashMap::new();
+        collect_widget_paths(&root, &mut Vec::new(), &mut paths);
+
+        assert!(paths["window"].is_empty());
+        assert_eq!(paths["panel"].as_ref(), &[0]);
+        assert_eq!(paths["status"].as_ref(), &[0, 0]);
+        let status = widget_at_path_mut(&mut root, &paths["status"]).unwrap();
+        assert!(set_widget_text_prop_on(status, "text", "new".to_string()));
+        assert_eq!(
+            widget_at_path(&root, &paths["status"])
+                .unwrap()
+                .props
+                .text
+                .as_deref(),
+            Some("new")
+        );
     }
 
     #[test]
@@ -10885,6 +11079,47 @@ mod style_patch_tests {
                 "intrinsic {kind}.{prop} must relayout"
             );
         }
+    }
+
+    #[test]
+    fn wrapped_label_update_stays_text_only_when_measured_height_is_stable() {
+        let node = document::parse_widget_node(&json!({
+            "id": "status",
+            "type": "label",
+            "props": {"text": "tick 0", "wrap": true},
+            "style": {"width": 110, "height": "auto"}
+        }))
+        .unwrap();
+        let mut layout = crate::layout::LayoutResult::default();
+        layout.scale_factor = 1.0;
+        layout.rects.insert(
+            "status".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 110.0,
+                h: 25.0,
+            },
+        );
+        let theme = Theme::dark();
+
+        let stable =
+            stable_wrapped_label_text_decision(&node, "text", "tick 299", Some(&layout), &theme)
+                .expect("same-line replacement should be classified");
+        assert_eq!(stable.dirty, Dirty::Text);
+        assert_eq!(
+            stable.reason,
+            LiveTextInvalidationReason::StableWrappedLabelHeight
+        );
+
+        assert!(stable_wrapped_label_text_decision(
+            &node,
+            "text",
+            "a deliberately long status value that wraps across several lines",
+            Some(&layout),
+            &theme,
+        )
+        .is_none());
     }
 
     #[test]
@@ -11198,6 +11433,9 @@ struct WgpuState {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    memory_hint: &'static str,
+    backend_policy: &'static str,
+    adapter_backend: String,
     present_mode_env: Option<String>,
     supported_present_modes: Vec<String>,
     _depth_texture: wgpu::Texture,
@@ -11226,6 +11464,7 @@ struct WgpuState {
     widget_tree: Option<WidgetNode>,
     structure_generation: u64,
     widget_kinds: HashMap<String, WidgetKind>,
+    widget_paths: HashMap<String, Box<[usize]>>,
     tooltip_overlay_targets: HashSet<String>,
     caret_positions: HashMap<String, [f32; 2]>,
     diagnostic_text_geometry_ids: HashSet<String>,
@@ -12598,7 +12837,11 @@ impl WgpuState {
         let scale_factor =
             visual_audit_scale_factor_override().unwrap_or_else(|| window.scale_factor()) as f32;
 
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let backend_env = std::env::var("DRAGONGUI_WGPU_BACKEND").ok();
+        let (backends, backend_policy) = choose_wgpu_backends(backend_env.as_deref());
+        let mut instance_descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+        instance_descriptor.backends = backends;
+        let instance = wgpu::Instance::new(instance_descriptor);
 
         let surface = instance
             .create_surface(Arc::clone(&window))
@@ -12612,14 +12855,17 @@ impl WgpuState {
             })
             .await
             .map_err(|e| DragonError::GpuInit(format!("adapter: {e}")))?;
+        let adapter_backend = adapter.get_info().backend.to_string();
 
+        let memory_hint_env = std::env::var("DRAGONGUI_WGPU_MEMORY_HINT").ok();
+        let (memory_hints, memory_hint) = choose_wgpu_memory_hints(memory_hint_env.as_deref());
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("dragongui"),
                 required_features: wgpu::Features::empty(),
                 required_limits: wgpu::Limits::default(),
                 experimental_features: wgpu::ExperimentalFeatures::default(),
-                memory_hints: wgpu::MemoryHints::default(),
+                memory_hints,
                 trace: Default::default(),
             })
             .await
@@ -12643,7 +12889,12 @@ impl WgpuState {
             config.present_mode,
             &surface_capabilities.present_modes,
         );
-        config.usage |= wgpu::TextureUsages::COPY_SRC;
+        if surface_capabilities
+            .usages
+            .contains(wgpu::TextureUsages::COPY_SRC)
+        {
+            config.usage |= wgpu::TextureUsages::COPY_SRC;
+        }
         if let Ok(value) = std::env::var("DRAGONGUI_SURFACE_FRAME_LATENCY") {
             if let Ok(latency) = value.trim().parse::<u32>() {
                 if latency > 0 {
@@ -12868,17 +13119,23 @@ impl WgpuState {
             collect_expanded_widget_ids(tree, widget_state.as_ref(), &mut expanded_state_snapshot);
         }
         let mut widget_kinds = HashMap::new();
+        let mut widget_paths = HashMap::new();
         let mut tooltip_overlay_targets = HashSet::new();
         if let Some(tree) = &spec.widget_tree {
             collect_widget_kinds(tree, &mut widget_kinds);
+            collect_widget_paths(tree, &mut Vec::new(), &mut widget_paths);
             collect_tooltip_overlay_targets(tree, &mut tooltip_overlay_targets);
         }
+        debug_assert_eq!(widget_kinds.len(), widget_paths.len());
 
         let mut state = Self {
             surface,
             device,
             queue,
             config,
+            memory_hint,
+            backend_policy,
+            adapter_backend,
             present_mode_env,
             supported_present_modes,
             _depth_texture: depth_texture,
@@ -12903,6 +13160,7 @@ impl WgpuState {
             widget_tree: spec.widget_tree,
             structure_generation: 0,
             widget_kinds,
+            widget_paths,
             tooltip_overlay_targets,
             caret_positions: HashMap::new(),
             diagnostic_text_geometry_ids: std::env::var(DIAGNOSTIC_TEXT_GEOMETRY_IDS_ENV)
@@ -13598,6 +13856,13 @@ impl WgpuState {
 
     fn rebuild_text_subtrees(&mut self, widget_ids: &HashSet<String>, table_only: bool) -> bool {
         if widget_ids.is_empty() {
+            return true;
+        }
+        // Each single-subtree patch scans the retained text list to preserve
+        // unrelated buffers. Above this crossover, one linear full-text pass
+        // is cheaper than N repeated scans and produces identical output.
+        if !table_only && widget_ids.len() >= BULK_TEXT_REBUILD_CROSSOVER {
+            self.rebuild_text();
             return true;
         }
         let total_t0 = Instant::now();
@@ -15288,6 +15553,16 @@ impl WgpuState {
         self.widget_kinds.contains_key(id)
     }
 
+    fn indexed_widget(&self, id: &str) -> Option<&WidgetNode> {
+        let path = self.widget_paths.get(id)?;
+        widget_at_path(self.widget_tree.as_ref()?, path)
+    }
+
+    fn indexed_widget_mut(&mut self, id: &str) -> Option<&mut WidgetNode> {
+        let path = self.widget_paths.get(id)?;
+        widget_at_path_mut(self.widget_tree.as_mut()?, path)
+    }
+
     fn log_view_follow(&self, id: &str) -> bool {
         self.widget_tree
             .as_ref()
@@ -15478,16 +15753,24 @@ impl WgpuState {
             ) {
                 let invalidation_mode = self.live_text_invalidation_mode;
                 let decision = self
-                    .widget_tree
-                    .as_ref()
-                    .and_then(|tree| find_widget(tree, id))
-                    .map(|node| invalidation_mode.apply(live_text_prop_decision(node, prop)))
+                    .indexed_widget(id)
+                    .map(|node| {
+                        let decision = stable_wrapped_label_text_decision(
+                            node,
+                            prop,
+                            text,
+                            self.current_layout.as_ref(),
+                            &self.theme,
+                        )
+                        .unwrap_or_else(|| live_text_prop_decision(node, prop));
+                        invalidation_mode.apply(decision)
+                    })
                     .unwrap_or(LiveTextInvalidationDecision {
                         dirty: Dirty::Layout,
                         reason: LiveTextInvalidationReason::UnsupportedProperty,
                     });
-                if let Some(tree) = self.widget_tree.as_mut() {
-                    if set_widget_text_prop(tree, id, prop, text.clone()) {
+                if let Some(node) = self.indexed_widget_mut(id) {
+                    if set_widget_text_prop_on(node, prop, text.clone()) {
                         self.live_text_invalidation_stats.record(decision);
                         return Some(decision.dirty);
                     }
@@ -15515,8 +15798,8 @@ impl WgpuState {
                     let state_affects_styles = self
                         .stylesheets
                         .references_attribute_for_kind("state", WidgetKind::Led);
-                    if let Some(tree) = self.widget_tree.as_mut() {
-                        if set_widget_led_state_prop(tree, id, state_name) {
+                    if let Some(node) = self.indexed_widget_mut(id) {
+                        if set_widget_led_state_prop_on(node, state_name) {
                             if state_affects_styles {
                                 self.mark_styles_dirty();
                                 return Some(Dirty::Full);
@@ -15527,8 +15810,8 @@ impl WgpuState {
                     return None;
                 }
                 ("color", CommandValue::Text(color)) => {
-                    if let Some(tree) = self.widget_tree.as_mut() {
-                        if set_widget_led_color_prop(tree, id, color) {
+                    if let Some(node) = self.indexed_widget_mut(id) {
+                        if set_widget_led_color_prop_on(node, color) {
                             return Some(Dirty::Visual);
                         }
                     }
@@ -16338,12 +16621,14 @@ impl WgpuState {
     fn rebuild_retained_maps(&mut self) {
         let total_t0 = Instant::now();
         let mut widget_kinds = HashMap::new();
+        let mut widget_paths = HashMap::new();
         let mut tooltip_overlay_targets = HashSet::new();
         let previous_state = self.widget_state.as_ref();
         let mut widget_state = None;
         if let Some(tree) = self.widget_tree.as_ref() {
             let kinds_t0 = Instant::now();
             collect_widget_kinds(tree, &mut widget_kinds);
+            collect_widget_paths(tree, &mut Vec::new(), &mut widget_paths);
             collect_tooltip_overlay_targets(tree, &mut tooltip_overlay_targets);
             self.retained_widget_kinds_timing
                 .record(kinds_t0.elapsed().as_secs_f64() * 1000.0);
@@ -16522,7 +16807,9 @@ impl WgpuState {
             .retain(|id, _| widget_kinds.get(id) == Some(&WidgetKind::LinePlot));
         self.retained_line_plot_sync_timing
             .record(line_plot_t0.elapsed().as_secs_f64() * 1000.0);
+        debug_assert_eq!(widget_kinds.len(), widget_paths.len());
         self.widget_kinds = widget_kinds;
+        self.widget_paths = widget_paths;
         self.tooltip_overlay_targets = tooltip_overlay_targets;
         self.widget_state = widget_state;
         self.retained_maps_timing
@@ -19273,6 +19560,9 @@ impl WgpuState {
             "toasts": self.toast_snapshot(),
             "renderer": {
                 "surface_format": format!("{:?}", self.config.format),
+                "memory_hint": self.memory_hint,
+                "backend_policy": self.backend_policy,
+                "adapter_backend": &self.adapter_backend,
                 "present_mode": surface_present_mode_name(self.config.present_mode),
                 "present_mode_env": self.present_mode_env.as_deref(),
                 "supported_present_modes": &self.supported_present_modes,
@@ -20568,7 +20858,8 @@ impl WgpuState {
         } else {
             std::mem::take(screenshot_requests)
         };
-        let screenshot_readback = if request_ids.is_empty() {
+        let screenshot_copy_supported = self.config.usage.contains(wgpu::TextureUsages::COPY_SRC);
+        let screenshot_readback = if request_ids.is_empty() || !screenshot_copy_supported {
             None
         } else {
             Some(copy_window_screenshot_to_buffer(
@@ -20605,8 +20896,19 @@ impl WgpuState {
                         .collect()
                 }
             }
-        } else {
+        } else if request_ids.is_empty() {
             Vec::new()
+        } else {
+            request_ids
+                .into_iter()
+                .map(|request_id| {
+                    (
+                        request_id,
+                        r#"{"w":0,"h":0,"rgba_b64":"","error":"window screenshots are unsupported by the active WGPU backend"}"#
+                            .to_string(),
+                    )
+                })
+                .collect()
         };
         let present_t0 = Instant::now();
         texture.present();
@@ -22974,8 +23276,7 @@ impl DragonApp {
                     let mut applied = 0usize;
                     let mut stale = 0usize;
                     let mut noops = 0usize;
-                    let mut packet_redraw = false;
-                    for (index, update) in updates.into_iter().enumerate() {
+                    for update in updates {
                         match gpu.apply_set_prop(&update.id, &update.prop, update.value) {
                             Some(update_dirty) => {
                                 gpu.rebuild_for_widget_dirty(update_dirty, Some(&update.id));
@@ -22984,14 +23285,6 @@ impl DragonApp {
                             }
                             None if !gpu.has_widget(&update.id) => stale += 1,
                             None => noops += 1,
-                        }
-                        let deferred_target_count =
-                            gpu.deferred_rebuild_batch.targets.raw_widget_count();
-                        if index + 1 < update_count
-                            && deferred_target_count >= MAX_TARGETED_TEXT_ROOTS_PER_BATCH
-                        {
-                            packet_redraw |= gpu.flush_deferred_rebuilds();
-                            gpu.begin_deferred_rebuilds();
                         }
                     }
                     let outcome = if applied == update_count {
@@ -23009,7 +23302,7 @@ impl DragonApp {
                             "updates={update_count}; applied={applied}; stale={stale}; noops={noops}"
                         )),
                         outcome.to_string(),
-                        packet_redraw || applied > 0,
+                        applied > 0,
                     )
                 };
                 self.record_runtime_command("SetProps", None, detail, dirty, &outcome, redraw)

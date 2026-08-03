@@ -1596,7 +1596,10 @@ FlowLayout.ly-flow { gap: 6px; row-gap: 6px; }
 _LAB_EFFECTS = """
 /* ----- lab 8: effects --------------------------------------------------- */
 
-Panel.fx-stage { border: var(--tf-border-w) solid var(--tf-line); border-radius: var(--tf-radius); padding: 12px; gap: 10px; }
+Panel.fx-stage { border: var(--tf-border-w) solid var(--tf-line); border-radius: var(--tf-radius); padding: 12px; gap: 24px; }
+/* Titled panels protect their header from body paint. Reserve the largest
+   30px halo inside the body clip instead of padding only the panel shell. */
+Panel.fx-stage::body { padding: 36px; }
 Panel.fx-dark { background: #05070c; }
 Panel.fx-light { background: #f2f5fa; }
 Panel.fx-light Label { color: #10141c; }
@@ -2594,6 +2597,11 @@ class ForgeState:
         self.metrics: list[dg.Label] = []
         self.live_badges: list[dg.Badge] = []
         self.flex_panels: list[dg.Panel] = []
+        # This phase advances when a snapshot is actually displayed, rather
+        # than when the producer emits one.  The live snapshot queue is
+        # intentionally coalesced, so tying this animation to ``tick`` would
+        # turn skipped snapshots into visible width jumps under load.
+        self.flex_phase = SAMPLE_COUNT * 0.09
 
         # background resources
         self.texture_warm = False
@@ -2625,6 +2633,15 @@ def set_status(message: str, level: str = "info") -> None:
         state.status_badge.set_level(
             {"ok": "success", "warn": "warning", "bad": "danger"}.get(level, "info")
         )
+
+
+def resized_surface_widths(phase: float) -> tuple[float, ...]:
+    """Return bounded widths for the paint lab's live resize surfaces."""
+
+    return tuple(
+        42.0 + (math.sin(phase * 0.7 + index) * 0.5 + 0.5) * 55.0
+        for index in range(4)
+    )
 
 
 def active_sheet_summary() -> str:
@@ -3751,8 +3768,13 @@ def build_paint_page() -> None:
             "pattern periods must stay constant while the surface changes size.",
             class_="muted",
         )
-        for index in range(4):
-            panel = dg.Panel(class_="bg-flex", id=f"paint-flex-{index}")
+        initial_widths = resized_surface_widths(state.flex_phase)
+        for index, width in enumerate(initial_widths):
+            panel = dg.Panel(
+                class_="bg-flex",
+                id=f"paint-flex-{index}",
+                style={"width": f"{width:.1f}%"},
+            )
             state.flex_panels.append(panel)
         with dg.FlowLayout(gap=10, row_gap=10, style={"align_items": "center"}):
             dg.Panel(class_="bg bg-pip")
@@ -4049,13 +4071,23 @@ def build_layout_page() -> None:
 
 def effect_stage(stage_class: str, title: str) -> None:
     with dg.Panel(title, class_=f"fx-stage {stage_class}"):
-        with dg.FlowLayout(gap=10, row_gap=10, style={"align_items": "center"}):
+        with dg.FlowLayout(
+            gap=34,
+            row_gap=34,
+            id=f"{stage_class}-button-glows",
+            style={"align_items": "center"},
+        ):
             dg.Button("no glow", class_="fx-glow-0")
             dg.Button("glow 1", class_="fx-glow-1")
             dg.Button("glow 2", class_="fx-glow-2")
             dg.Button("glow 3", class_="fx-glow-3")
             dg.Button("disabled", class_="fx-glow-3 fx-disabled", disabled=True)
-        with dg.FlowLayout(gap=10, row_gap=10, style={"align_items": "center"}):
+        with dg.FlowLayout(
+            gap=28,
+            row_gap=28,
+            id=f"{stage_class}-indicator-glows",
+            style={"align_items": "center"},
+        ):
             dg.Badge("badge", level="info")
             dg.Badge("glow 1", level="info", class_="fx-glow-1")
             dg.Badge("glow 2", level="info", class_="fx-glow-2")
@@ -4064,7 +4096,12 @@ def effect_stage(stage_class: str, title: str) -> None:
             dg.LED(True, class_="fx-glow-2")
             dg.LED(True, class_="fx-glow-3")
             led("busy", class_="fx-glow-3")
-        with dg.FlowLayout(gap=10, row_gap=10, style={"align_items": "center"}):
+        with dg.FlowLayout(
+            gap=24,
+            row_gap=24,
+            id=f"{stage_class}-interaction-effects",
+            style={"align_items": "center"},
+        ):
             dg.Button("hover shadow", class_="fx-hover-shadow")
             dg.Button("focus ring", class_="fx-ring")
             dg.Button("tight ring", class_="fx-ring-tight")
@@ -4080,8 +4117,9 @@ def build_effects_page() -> None:
     )
 
     note(
-        "PASS: no shadow shows a hard rectangular edge outside a rounded corner, and no "
-        "glow produces a visible grey halo over the light stage."
+        "PASS: shadows fade continuously without hard rectangular edges, rounded shadows "
+        "follow their surface arcs, and glow rows leave enough paint space that halos do "
+        "not wash over adjacent widget faces."
     )
 
     with dg.GridLayout(columns={"default": 2, 900: 1}, min_column_width=400, gap=12):
@@ -4973,8 +5011,13 @@ def live_worker(app: dg.App) -> None:
                 led.set_on((tick + index) % 7 < 4)
             for index, badge in enumerate(state.live_badges):
                 badge.set_value(str((tick * (index + 1)) % 1000))
-            for index, panel in enumerate(state.flex_panels):
-                width = 42 + (math.sin(phase * 0.7 + index) * 0.5 + 0.5) * 55
+            # This callback is latest-state coalesced. Advance this cosmetic
+            # layout stress phase only for frames that reach the UI so skipped
+            # producer snapshots cannot produce a sudden width jump.
+            state.flex_phase += 0.09
+            for panel, width in zip(
+                state.flex_panels, resized_surface_widths(state.flex_phase)
+            ):
                 panel.set_style({"width": f"{width:.1f}%"})
             if state.clock is not None:
                 state.clock.set_value(time.strftime("%H:%M:%S"))
@@ -5467,6 +5510,7 @@ def build_app(
     state.theme_key = theme_key
     state.rows = make_rows(rows)
     state.tick = SAMPLE_COUNT
+    state.flex_phase = SAMPLE_COUNT * 0.09
     state.leds.clear()
     state.bars.clear()
     state.metrics.clear()

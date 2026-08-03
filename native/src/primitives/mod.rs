@@ -16899,6 +16899,19 @@ mod tests {
     }
 
     #[test]
+    fn outset_shadow_falloff_reaches_zero_at_cover_edge() {
+        fn shadow_alpha(distance: f32, blur: f32) -> f32 {
+            let t = (distance / blur.max(1.0)).clamp(0.0, 1.0);
+            1.0 - t * t * (3.0 - 2.0 * t)
+        }
+
+        assert_eq!(shadow_alpha(0.0, 16.0), 1.0);
+        assert!((shadow_alpha(8.0, 16.0) - 0.5).abs() < 0.0001);
+        assert_eq!(shadow_alpha(16.0, 16.0), 0.0);
+        assert_eq!(shadow_alpha(24.0, 16.0), 0.0);
+    }
+
+    #[test]
     fn narrow_button_badge_pill_rect_stays_inside_parent() {
         let mut button = node("narrow", WidgetKind::Button);
         button.props.badge = Some("owner: platform-design".to_string());
@@ -18591,6 +18604,23 @@ mod tests {
     }
 
     #[test]
+    fn diagonal_pixel_gradient_origin_is_stable_across_width_changes() {
+        fn distance_from_gradient_start(local_px: [f32; 2], size: [f32; 2], dir: [f32; 2]) -> f32 {
+            let line_length = size[0] * dir[0].abs() + size[1] * dir[1].abs();
+            let centered = [local_px[0] - size[0] * 0.5, local_px[1] - size[1] * 0.5];
+            centered[0] * dir[0] + centered[1] * dir[1] + line_length * 0.5
+        }
+
+        let angle = 45.0_f32.to_radians();
+        let dir = [angle.sin(), -angle.cos()];
+        let local_px = [120.0, 34.0];
+        let narrow = distance_from_gradient_start(local_px, [320.0, 68.0], dir);
+        let wide = distance_from_gradient_start(local_px, [760.0, 68.0], dir);
+
+        assert!((narrow - wide).abs() < 0.0001);
+    }
+
+    #[test]
     fn mixed_gradient_positions_resolve_then_apply_css_fixup() {
         let stops = vec![
             ResolvedGradientStop {
@@ -20019,7 +20049,11 @@ mod tests {
         button.style.active.background = Some(active.clone());
         button.style.focus.background = Some(focus.clone());
         button.style.disabled.background = Some(disabled.clone());
-        button.inline_style.visual.background = Some(base.clone());
+        button
+            .inline_style
+            .get_or_insert_with(Default::default)
+            .visual
+            .background = Some(base.clone());
         button.style_json.insert(
             "background".to_string(),
             serde_json::json!([0.1, 0.2, 0.3, 1.0]),
@@ -20057,7 +20091,16 @@ mod tests {
             assert_eq!(button.style.active.background.as_ref(), Some(&active));
             assert_eq!(button.style.focus.background.as_ref(), Some(&focus));
             assert_eq!(button.style.disabled.background.as_ref(), Some(&disabled));
-            assert_eq!(button.inline_style.visual.background.as_ref(), Some(&base));
+            assert_eq!(
+                button
+                    .inline_style
+                    .as_deref()
+                    .unwrap()
+                    .visual
+                    .background
+                    .as_ref(),
+                Some(&base)
+            );
             assert_eq!(button.style_json, authored_json);
         }
     }

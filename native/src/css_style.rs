@@ -4902,7 +4902,9 @@ fn compute_stylesheet_node_style<'a>(
         .property_apply_ns
         .saturating_add(property_t0.elapsed().as_nanos().min(u64::MAX as u128) as u64);
     let merge_t0 = Instant::now();
-    merge_node_style(&mut computed, &node.default_style);
+    if let Some(default_style) = node.default_style.as_deref() {
+        merge_node_style(&mut computed, default_style);
+    }
     metrics.style_merge_ns = metrics
         .style_merge_ns
         .saturating_add(merge_t0.elapsed().as_nanos().min(u64::MAX as u128) as u64);
@@ -4936,8 +4938,8 @@ fn compute_stylesheet_node_style<'a>(
     // live style patches update before reparsing. Most retained widgets have
     // no inline declarations; avoid walking every NodeStyle substructure for
     // that common case.
-    if !node.style_json.is_empty() {
-        merge_node_style(&mut computed, &node.inline_style);
+    if let Some(inline_style) = node.inline_style.as_deref() {
+        merge_node_style(&mut computed, inline_style);
     }
     metrics.style_merge_ns = metrics
         .style_merge_ns
@@ -7699,6 +7701,14 @@ fn layout_length(value: &DgCssLength) -> Option<LayoutLength> {
         DgCssLength::Auto => Some(LayoutLength::Auto),
         DgCssLength::Em(_) => None,
     }
+}
+
+/// Parse a serialized inline layout length through the same grammar used by
+/// CSS declarations. Widget style dictionaries arrive as JSON, but string
+/// lengths such as `"50%"` and `"calc(100% - 12px)"` must retain their units
+/// when the cached inline style is rebuilt for a later cascade pass.
+pub(crate) fn parse_serialized_layout_length(value: &str) -> Option<LayoutLength> {
+    layout_length(&parse_length(value)?)
 }
 
 #[derive(Debug, Clone, Default)]
@@ -17800,7 +17810,10 @@ mod tests {
         let mut row = css_bench_node("row", WidgetKind::HLayout, None);
         row.style_json
             .insert("align-items".to_string(), serde_json::json!("center"));
-        row.inline_style.layout.align_items = Some(AlignItemsStyle::Center);
+        row.inline_style
+            .get_or_insert_with(Default::default)
+            .layout
+            .align_items = Some(AlignItemsStyle::Center);
         row.style.layout.align_items = Some(AlignItemsStyle::Center);
         tree.children.push(row);
         let mut store = StylesheetStore::default();
@@ -25331,7 +25344,7 @@ mod tests {
                 "id": "run",
                 "type": "button",
                 "props": {"text": "Run"},
-                "style": {"border_radius": 3}
+                "style": {"border_radius": 3, "width": "68.5%"}
             }]
         }))
         .unwrap();
@@ -25345,6 +25358,10 @@ mod tests {
 
         apply_stylesheets_to_tree(&mut tree, &mut store);
         assert_eq!(tree.children[0].style.visual.border_radius, Some(3.0));
+        assert_eq!(
+            tree.children[0].style.layout.width_value,
+            Some(LayoutLength::Percent(68.5))
+        );
 
         store
             .set_stylesheet(
@@ -25355,8 +25372,19 @@ mod tests {
         apply_stylesheets_to_tree(&mut tree, &mut store);
         let button = &tree.children[0];
 
-        assert_eq!(button.inline_style.visual.border_radius, Some(3.0));
+        assert_eq!(
+            button.inline_style.as_deref().unwrap().visual.border_radius,
+            Some(3.0)
+        );
         assert_eq!(button.style.visual.border_radius, Some(3.0));
+        assert_eq!(
+            button.inline_style.as_deref().unwrap().layout.width_value,
+            Some(LayoutLength::Percent(68.5))
+        );
+        assert_eq!(
+            button.style.layout.width_value,
+            Some(LayoutLength::Percent(68.5))
+        );
         assert_eq!(
             button.style.visual.background,
             Some(ColorRef::Token("danger".to_string()))
@@ -25398,8 +25426,14 @@ mod tests {
         store.clear(StylesheetOrigin::Theme);
         apply_stylesheets_to_tree(&mut tree, &mut store);
         assert_eq!(tree.style.layout.width, Some(150.0));
-        assert_eq!(tree.default_style.layout.width, Some(150.0));
-        assert_eq!(tree.inline_style.layout.height, Some(42.0));
+        assert_eq!(
+            tree.default_style.as_deref().unwrap().layout.width,
+            Some(150.0)
+        );
+        assert_eq!(
+            tree.inline_style.as_deref().unwrap().layout.height,
+            Some(42.0)
+        );
     }
 
     #[test]
@@ -26309,8 +26343,14 @@ mod tests {
             let css_button = &tree.children[2];
 
             assert_eq!(search.style.layout.width, Some(expected_width));
-            assert_eq!(search.default_style.layout.width, Some(150.0));
-            assert_eq!(search.inline_style.layout.height, Some(42.0));
+            assert_eq!(
+                search.default_style.as_deref().unwrap().layout.width,
+                Some(150.0)
+            );
+            assert_eq!(
+                search.inline_style.as_deref().unwrap().layout.height,
+                Some(42.0)
+            );
             assert_eq!(search.style_json, authored_search);
             let width_winner = search.style.provenance["width"].last().unwrap();
             assert_eq!(width_winner.origin, "user");
@@ -26321,11 +26361,21 @@ mod tests {
                 Some(ColorRef::Token("danger".to_string()))
             );
             assert_eq!(
-                inline_button.default_style.hover.background,
+                inline_button
+                    .default_style
+                    .as_deref()
+                    .unwrap()
+                    .hover
+                    .background,
                 Some(ColorRef::Token("surface_alt".to_string()))
             );
             assert_eq!(
-                inline_button.inline_style.hover.background,
+                inline_button
+                    .inline_style
+                    .as_deref()
+                    .unwrap()
+                    .hover
+                    .background,
                 Some(ColorRef::Token("danger".to_string()))
             );
             assert_eq!(inline_button.style_json, authored_button);

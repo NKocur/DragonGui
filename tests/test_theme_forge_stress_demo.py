@@ -30,6 +30,8 @@ def _walk(node: dict[str, Any]) -> Iterator[dict[str, Any]]:
 def test_theme_forge_builds_all_pages_and_named_stylesheets_headlessly() -> None:
     module = _load_demo("theme_forge_stress_demo_build_test")
 
+    assert "Panel.fx-stage::body { padding: 36px; }" in module._LAB_EFFECTS
+
     app, window = module.build_app(
         "modern-dark",
         rows=12,
@@ -121,3 +123,35 @@ def test_theme_forge_builds_all_pages_and_named_stylesheets_headlessly() -> None
     assert any(node["id"] == "parts-splitter-card" for node in nodes)
     assert any(node["id"] == "parts-splitter" for node in nodes)
     assert any(node["id"] == "parts-unsupported-card" for node in nodes)
+
+    for stage in ("fx-dark", "fx-light"):
+        expected_spacing = {
+            f"{stage}-button-glows": 34,
+            f"{stage}-indicator-glows": 28,
+            f"{stage}-interaction-effects": 24,
+        }
+        for row_id, spacing in expected_spacing.items():
+            row = next(node for node in nodes if node["id"] == row_id)
+            assert row["default_style"]["gap"] == spacing
+            assert row["default_style"]["row_gap"] == spacing
+
+    flex_surfaces = [
+        next(node for node in nodes if node["id"] == f"paint-flex-{index}")
+        for index in range(4)
+    ]
+    initial_widths = [
+        float(node["style"]["width"].removesuffix("%")) for node in flex_surfaces
+    ]
+    assert all(42.0 <= width <= 97.0 for width in initial_widths)
+
+    # A displayed update advances by 0.09 radians regardless of how many
+    # producer snapshots were coalesced. The maximum per-frame change stays
+    # small enough that a busy stress frame cannot look like a full-width flash.
+    phase = module.SAMPLE_COUNT * 0.09
+    previous = module.resized_surface_widths(phase)
+    for _ in range(240):
+        phase += 0.09
+        current = module.resized_surface_widths(phase)
+        assert all(42.0 <= width <= 97.0 for width in current)
+        assert max(abs(after - before) for before, after in zip(previous, current)) < 1.8
+        previous = current

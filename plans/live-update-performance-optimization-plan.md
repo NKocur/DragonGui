@@ -2,7 +2,7 @@
 
 **Project:** DragonGUI
 **Created:** July 31, 2026
-**Status:** In progress; Phases 0–6 complete, Phase 1 release soak remains a separate release task
+**Status:** In progress; Phases 0–6 and the August 3 CPU/memory follow-up are complete, Phase 1 release soak remains a separate release task
 **Primary evidence:** `plans/gui-live-dashboard-performance-report.html`
 **Primary benchmark:** `benchmarks/gui_live_dashboard_case.py`
 
@@ -3246,4 +3246,552 @@ artifacts/gui-live-dashboard-comparison-2026-08-03-v1/full-corrected/summary.jso
 artifacts/gui-live-dashboard-memory-soak-2026-08-03-v1/summary.json
 artifacts/gui-live-dashboard-memory-soak-2026-08-03-5min-v1/summary.json
 plans/gui-live-dashboard-performance-report-2026-08-03.html
+```
+
+## August 3 telemetry-indicator optimization checkpoint
+
+The 16-case telemetry-indicator decomposition identified two concrete
+library-level costs and both have now been corrected:
+
+- A fixed-width wrapped status label with an intrinsic height forced a full
+  window layout on every short `tick N` replacement. Live label replacement
+  now compares the old and new shaped heights at the resolved width. Equal
+  heights use retained text invalidation; a changed line count still takes the
+  safe layout path.
+- Large retained-text batches previously performed many small subtree patches,
+  each scanning the retained entry list. Batches of 64 or more roots now cross
+  over to one linear full-text rebuild, while primitive work remains targeted.
+- `LED.set_state()`, `set_on()`, and `set_color()` now suppress unchanged
+  effective state and color properties. CSS-visible state changes are still
+  submitted even when their resolved color matches.
+
+The exact same 24/72/160/320 × labels/progress/LEDs/combined matrix was rerun
+with fresh processes, a two-second warmup, eight-second measurement, 30 Hz
+target, batched transport, final retained-state checks, clean-layout checks,
+and queue-drain checks. All 16 candidate cases passed. At 320 channels:
+
+| Mode | CPU before → after | Apply p95 before → after | Drain p95 before → after | Text misses before → after |
+|---|---:|---:|---:|---:|
+| Labels | 64.8% → 17.0% | 20.15 → 1.78 ms | 20.93 → 3.61 ms | 96,350 → 623 |
+| Progress | 33.8% → 17.6% | 12.18 → 1.29 ms | 12.39 → 3.49 ms | 348 → 303 |
+| LEDs | 37.9% → 12.9% | 15.23 → 0.66 ms | 15.86 → 1.23 ms | 348 → 303 |
+| Combined | 96.7% → 32.0% | 35.55 → 7.98 ms | 36.04 → 9.80 ms | 84,394 → 623 |
+
+The previously overloaded 320 combined case improved from 26.63 Hz with 27
+missed/coalesced measured generations to 30.00 Hz with zero drops. The 320 LED
+case now sends approximately 36.9 native properties per completed tick from
+641 offered API properties; the combined case sends approximately 676.9 from
+1,281 offered properties.
+
+Measurement-window RSS was higher in this candidate matrix (roughly 294–311
+MiB at 320 channels versus 250–274 MiB in the earlier matrix). None of these
+changes intentionally retains per-tick data, and the short runs do not
+establish a growth leak, but the absolute regression must be kept visible and
+rechecked with the existing snapshot-free memory protocol before release.
+
+Validation:
+
+- native library: **934 passed, 13 intentionally ignored**;
+- focused wrapped-label safety test covers equal-height fast path and
+  line-count-changing fallback;
+- both 320-widget probes and all 16 full-matrix samples passed final state,
+  packet, layout, and queue checks;
+- benchmark scripts pass CPython 3.12 byte compilation.
+
+Artifacts:
+
+```text
+artifacts/gui-telemetry-indicator-decomposition-2026-08-03/summary.json
+artifacts/gui-telemetry-indicator-decomposition-2026-08-03-after/summary.json
+plans/gui-telemetry-indicator-optimization-comparison-2026-08-03.html
+```
+
+The next priority is no longer indicator command application. It is to rerun
+the cross-framework telemetry workload with this candidate, then isolate the
+candidate's higher absolute RSS using repeated snapshot-free samples before
+considering the memory portion closed.
+
+## August 3 telemetry-indicator memory checkpoint
+
+The apparent post-optimization RSS regression was investigated with repeated
+fresh-process, snapshot-free measurement windows. The original 320-combined
+baseline began measurement at 273.62 MiB RSS and 524.80 MiB private commit;
+the first optimized sample began at 310.75 MiB RSS but only 506.26 MiB private
+commit. Both shrank or remained flat during measurement. Higher RSS alongside
+lower private commit means Windows retained more already-committed pages in
+the working set; it does not indicate a new allocation leak.
+
+Three 20-second samples each of 320 labels, LEDs, and combined rows then
+tracked RSS, Windows private commit, text entries/owners, layout-text cache,
+glyph-atlas trims, primitive buffer bytes, and final correctness. Valid
+combined samples varied by less than 0.5 MiB RSS and approximately 0.03 MiB
+private commit during their windows. Text entries stayed at 36, primitive
+geometry stayed fixed, queues drained, and all final states remained correct.
+One label sample missed its real-time deadline during an external scheduling
+hiccup and is retained in the artifact but excluded from memory aggregates by
+the corrected runner.
+
+Footprint scaling then exposed the actionable library cost. On 64-bit builds:
+
+- `NodeStyle`: 6,712 bytes;
+- old `WidgetNode`: 22,776 bytes because it embedded computed, widget-default,
+  and inline-authored `NodeStyle` values;
+- new `WidgetNode`: 9,368 bytes after representing the two optional authored
+  layers as `Option<Box<NodeStyle>>` and allocating them only when declarations
+  exist;
+- inline retained-node size reduction: **58.9%**.
+
+The hot computed style remains inline, so layout/render access does not gain
+an extra pointer chase. CSS cascade, snapshots, and live style patches unwrap
+the optional layers only when present. A permanent storage-size regression
+test prevents the optional layers from being inlined again.
+
+The exact same three-by-20-second 320-combined workload before and after this
+change produced:
+
+| Metric | Before median | After median | Change |
+|---|---:|---:|---:|
+| Measurement-start RSS | 313.34 MiB | 301.41 MiB | **-11.93 MiB** |
+| Measurement-start private commit | 491.12 MiB | 474.48 MiB | **-16.64 MiB** |
+| Throughput | 30.000 Hz | 30.000 Hz | no regression |
+
+Shorter three-process controls also stayed at 30 Hz. Labels saved 6.68 MiB
+RSS / 2.83 MiB private commit; LEDs saved 9.81 MiB RSS / 4.62 MiB private
+commit. The different reductions are expected because the modes contain
+different proportions of styled and unstyled nodes.
+
+Validation:
+
+- native library: **935 passed, 13 intentionally ignored**;
+- all three post-change combined samples passed every benchmark invariant;
+- all six post-change label/LED controls passed;
+- retained text and primitive resource counts remained fixed;
+- benchmark scripts pass CPython 3.12 byte compilation;
+- Rust formatting and changed-file diff checks pass.
+
+Artifacts:
+
+```text
+artifacts/gui-telemetry-indicator-memory-2026-08-03-v1/summary.json
+artifacts/gui-telemetry-indicator-memory-2026-08-03-compact-styles/summary.json
+artifacts/gui-telemetry-indicator-memory-2026-08-03-compact-styles-controls/summary.json
+plans/gui-telemetry-indicator-optimization-comparison-2026-08-03.html
+```
+
+This closes the suspected indicator memory regression and delivers a measured
+retained-tree footprint reduction. The large fixed process baseline is mostly
+outside per-widget retained storage and should be decomposed separately before
+attempting riskier renderer/backend changes.
+
+## August 3 fixed-baseline GPU memory checkpoint
+
+A new fresh-process probe now separates five initialization boundaries:
+standard-library process, compiled extension, public package, serialized
+document, and live WGPU window. Five rotated repetitions established these
+medians on the current Windows workstation:
+
+| Stage | RSS | Private commit | Increment from prior stage (RSS / private) |
+|---|---:|---:|---:|
+| Standard-library process | 30.07 MiB | 15.16 MiB | baseline |
+| Native extension | 31.28 MiB | 15.67 MiB | +1.21 / +0.51 MiB |
+| Public package | 45.05 MiB | 27.75 MiB | +13.77 / +12.08 MiB |
+| Document construction | 45.12 MiB | 27.82 MiB | +0.07 / +0.06 MiB |
+| Live WGPU window | 259.10 MiB | 431.34 MiB | **+213.98 / +403.52 MiB** |
+
+This localizes the fixed cost to graphics-device/window initialization rather
+than Python import, native-module loading, document serialization, or retained
+widgets. Source inspection then found that WGPU's default performance memory
+hint reserves 128–256 MiB device blocks and 64–128 MiB host blocks. Its
+memory-oriented hint starts at 8 MiB device and 4 MiB host blocks.
+
+Three-process minimal-window A/B measurements were decisive:
+
+| WGPU allocator hint | Median RSS | Median private commit |
+|---|---:|---:|
+| Performance | 259.04 MiB | 431.66 MiB |
+| Memory usage | 259.39 MiB | **250.95 MiB** |
+
+The memory-oriented allocator reduced fixed private commit by **180.71 MiB**.
+Working-set RSS remained flat because Windows and the display driver still
+mapped/touched a similar page set; private commit is the metric affected by the
+allocator reservation policy.
+
+Two validated workload A/Bs checked the performance tradeoff:
+
+- 320 combined telemetry channels, three 25-second processes per hint: both
+  sustained 30.00 Hz with zero drops and all 78 checks passing. Memory mode
+  reduced median peak private commit from 475.52 to 294.15 MiB and CPU from
+  34.69% to 33.98%. Submit p95 changed from 2.81 to 3.06 ms, still far inside
+  the 33.3 ms frame budget.
+- High live-visualization dashboard, two 25-second processes per hint: all
+  validation passed. Memory mode reduced average peak private commit from
+  1009.78 to 880.15 MiB, kept CPU effectively identical (88.94% vs 88.98%),
+  improved submit p95 from 11.94 to 11.78 ms, and changed already-overloaded
+  throughput from 28.95 to 28.77 Hz (0.6%).
+
+DragonGUI now defaults to `wgpu::MemoryHints::MemoryUsage`. Advanced users can
+restore the former allocator with `DRAGONGUI_WGPU_MEMORY_HINT=performance`.
+The effective mode is exposed in the native renderer diagnostic snapshot, and
+the baseline probe asserts live-window readiness while recording RSS and
+private commit independently.
+
+Final validation after changing the default:
+
+- native library: **936 passed, 13 intentionally ignored**;
+- Rust formatting and changed-file whitespace checks pass;
+- both benchmark scripts pass CPython 3.12 byte compilation;
+- a fresh default-mode live-window smoke reported `memory-usage`, reached the
+  event loop, exited cleanly, and measured 262.80 MiB RSS / 250.84 MiB private
+  commit on that sample.
+
+Artifacts:
+
+```text
+artifacts/fixed-baseline-memory-2026-08-03-v2/summary.json
+artifacts/fixed-baseline-memory-performance-2026-08-03/summary.json
+artifacts/fixed-baseline-memory-compact-2026-08-03/summary.json
+artifacts/wgpu-memory-hint-ab-2026-08-03/
+artifacts/wgpu-memory-hint-dashboard-ab-2026-08-03/
+artifacts/fixed-baseline-default-final-2026-08-03.json
+```
+
+## August 3 post-memory-optimization framework rerun
+
+The validated four-stage telemetry-viewer comparison was rerun with the exact
+prior protocol: one fresh process per framework/stage, three-second warmup,
+15-second measurement, 30 Hz target, 1,024 retained samples per trace, and all
+plots/indicators updated every tick. The matrix now aggregates Windows private
+commit separately from RSS, and the HTML report includes a direct DragonGUI
+before/after table.
+
+All **124 validation checks passed**. DragonGUI sustained 30.00 Hz with zero
+dropped generations at all four stages. At stage 4 (16 plots and 320 indicator
+rows), its prior and current results were:
+
+| Metric | Previous | Current | Change |
+|---|---:|---:|---:|
+| Throughput | 30.00 Hz | 30.00 Hz | maintained |
+| Dropped generations | 0 | 0 | maintained |
+| CPU | 90.9% | 45.4% | **-45.5 points / ~50%** |
+| Update p95 | 4.23 ms | 4.91 ms | +0.68 ms |
+| Native frame-work p95 | 0.72 ms | 0.82 ms | +0.10 ms |
+| Peak RSS | 296.6 MiB | 322.1 MiB | +25.5 MiB |
+| Peak private commit | 1009.6 MiB | 845.3 MiB | **-164.3 MiB** |
+
+The small p95 increases are well inside the 33.3 ms cadence budget and come
+from single samples, so they should not be overinterpreted. The CPU reduction
+reflects the accumulated update-pipeline work since the prior report, while
+the private-commit reduction directly agrees with the WGPU allocator A/B. The
+higher RSS again shows that Windows working-set residency is not a substitute
+for committed-allocation accounting.
+
+Current stage-4 framework results:
+
+| Framework | Throughput | Drops | CPU | Update p95 | RSS | Private commit |
+|---|---:|---:|---:|---:|---:|---:|
+| DragonGUI | 30.00 Hz | 0 | 45.4% | 4.91 ms | 322.1 MiB | 845.3 MiB |
+| Dear PyGui | 30.00 Hz | 0 | 21.2% | 7.52 ms | 150.4 MiB | 600.6 MiB |
+| PyQtGraph | 13.96 Hz | 240 | 103.2% | 10.72 ms | 119.3 MiB | 556.8 MiB |
+
+DragonGUI now beats both comparison adapters on stage-4 application update
+p95 and substantially out-delivers PyQtGraph under overload. Dear PyGui still
+has the strongest CPU and memory footprint, which remains the next comparative
+optimization target. This rerun installed Dear PyGui 2.1.1 because it was
+missing from the workstation's Python 3.12 environment; framework-to-framework
+numbers are current standings, while only the same-version DragonGUI row is
+used for the before/after claim.
+
+Artifacts:
+
+```text
+artifacts/gui-telemetry-viewer-comparison-2026-08-03-memory-optimized/summary.json
+plans/gui-telemetry-viewer-memory-optimized-report-2026-08-03.html
+```
+
+## August 3 repeated-baseline, memory-attribution, and dense-update checkpoint
+
+The next investigation repeated the lightest and heaviest DragonGUI and Dear
+PyGui telemetry stages three times each. This removed single-run noise from the
+comparison and confirmed that the remaining gap was stable rather than a
+transient startup or allocator effect.
+
+| Stage | Framework | Throughput | CPU | Update p95 | RSS | Private commit |
+|---|---|---:|---:|---:|---:|---:|
+| 1 | DragonGUI | 30.00 Hz | 14.2% | 1.29 ms | 298.1 MiB | 815.1 MiB |
+| 1 | Dear PyGui | 30.00 Hz | 4.5% | 1.03 ms | 129.9 MiB | 579.9 MiB |
+| 4 | DragonGUI | 30.00 Hz | 46.5% | 4.58 ms | 322.2 MiB | 845.4 MiB |
+| 4 | Dear PyGui | 29.99 Hz | 18.4% | 7.40 ms | 150.5 MiB | 600.8 MiB |
+
+All samples passed validation with zero dropped telemetry generations. The
+DragonGUI private-commit ranges were tight: 813.6–815.1 MiB at stage 1 and
+844.7–845.6 MiB at stage 4.
+
+### Fixed-memory attribution
+
+A new fresh-process profile runner separated a minimal window, a large window,
+NumPy import, indicator scaling, line plots, and the complete stage-1 tree.
+Three-process medians were:
+
+| Profile | RSS | Private commit |
+|---|---:|---:|
+| Minimal window | 265.4 MiB | 251.6 MiB |
+| Large window | 274.0 MiB | 329.2 MiB |
+| NumPy + large window | 286.1 MiB | 821.2 MiB |
+| 24 indicators | 282.7 MiB | 332.1 MiB |
+| 320 indicators | 304.2 MiB | 359.6 MiB |
+| Four line plots | 293.9 MiB | 822.5 MiB |
+| Telemetry stage 1 | 298.7 MiB | 823.8 MiB |
+
+The approximately 492 MiB jump comes from importing this workstation's NumPy
+2.5 build on Windows, not from DragonGUI's retained widget or plot storage.
+Every framework adapter imports NumPy, so that cost inflates the absolute
+private-commit values but does not explain the cross-framework difference.
+The large GPU surface adds approximately 78 MiB private commit; 24 indicators
+add only about 3 MiB and 320 add about 30 MiB; four line plots add roughly
+1–3 MiB beyond the NumPy baseline.
+
+Two renderer-memory candidates were measured and deliberately rejected:
+
+- Lazily constructing the line, image, and scatter compositors changed the
+  fixed baseline from 259.39 MiB RSS / 250.95 MiB private commit to 260.81 /
+  253.79 MiB. It provided no saving and was reverted.
+- Experimental 16 MiB and 32 MiB manual WGPU allocation blocks saved at most
+  approximately 4.2 MiB versus `MemoryUsage`. That was too small to justify
+  replacing the supported, safer allocator hint and was reverted.
+
+### Line-series replacement optimization
+
+`LinePlot.set_data()` previously cleared every native series and resent both
+axis labels before replacing data under the same keyed series. The method now:
+
+- clears only series that were actually removed;
+- sends axis-label properties only when their values change;
+- retains the existing keyed packed-data replacement path.
+
+At stage 4 this removed 8,640 clear commands and reduced direct property sends
+from 17,280 to 16. Three repeated samples improved CPU from 46.5% to 40.2%,
+update p95 from 4.58 to 4.01 ms, and native drain p95 from 14.41 to 12.77 ms,
+while retaining 30 Hz, zero drops, and passing validation.
+
+### Bounded dense-batch rebuild optimization
+
+Profiling then showed approximately 1,081 visual rebuilds for 540 telemetry
+ticks. A dense property packet crossed the 512-target safety limit, flushed a
+full rebuild in the middle of the packet, and performed another rebuild at its
+end. The deferred target collector now promotes itself to one bounded full
+visual/text rebuild when it reaches the limit, clears the no-longer-useful
+target sets, and ignores later target insertions until that logical batch is
+flushed. The `SetProps` handler no longer performs a mid-packet flush.
+
+The expected one-rebuild-per-tick behavior was observed: stage 4 recorded 541
+visual rebuilds rather than approximately 1,081. Compared with the repeated
+pre-change baseline:
+
+| Metric | Baseline | Final | Change |
+|---|---:|---:|---:|
+| Stage-4 CPU | 46.5% | **31.4%** | -15.1 points / about 33% |
+| Stage-4 native drain p95 | 14.41 ms | **8.77 ms** | -39% |
+| Stage-4 update p95 | 4.58 ms | 4.42 ms | -3% |
+| Stage-4 throughput | 30.00 Hz | 30.00 Hz | maintained |
+| Stage-4 dropped generations | 0 | 0 | maintained |
+
+The light stage remained targeted and also improved: CPU fell from 14.2% to
+12.7% and update p95 from 1.29 to 1.04 ms. All six final samples sustained
+30 Hz with zero drops, and all 90 benchmark checks passed.
+
+Validation:
+
+- native library: **937 passed, 13 intentionally ignored**;
+- dedicated native test verifies target storage is cleared and bounded when
+  the dense-batch limit is reached;
+- Python 3.12 direct live-update checks verify removed-series cleanup,
+  unchanged-axis suppression, packed replacement, and unchanged-LED no-ops;
+- touched Python and benchmark modules pass CPython 3.12 byte compilation;
+- Rust formatting passes.
+
+Artifacts:
+
+```text
+artifacts/gui-telemetry-viewer-focused-repeat-2026-08-03/summary.json
+artifacts/fixed-baseline-profiles-2026-08-03/summary.json
+artifacts/fixed-baseline-memory-lazy-renderers-2026-08-03/
+artifacts/fixed-baseline-block-memory-usage-2026-08-03/
+artifacts/fixed-baseline-block-compact-16-2026-08-03/
+artifacts/fixed-baseline-block-compact-32-2026-08-03/
+artifacts/gui-telemetry-viewer-stage4-line-replace-2026-08-03/summary.json
+artifacts/gui-telemetry-viewer-stage4-bounded-full-2026-08-03/summary.json
+artifacts/gui-telemetry-viewer-stage1-bounded-full-2026-08-03/summary.json
+```
+
+### Post-optimization full framework rerun
+
+The complete one-process-per-cell framework matrix was rerun after both CPU
+changes, using the same three-second warmup, 15-second measurement, 30 Hz
+target, and four workload stages as the prior HTML report. All **124 validation
+checks passed**.
+
+At stage 4, DragonGUI sustained 30.00 Hz with zero drops at 33.2% CPU and a
+4.64 ms update p95. Dear PyGui sustained 30.01 Hz at 22.9% CPU and 7.39 ms;
+PyQtGraph delivered 14.02 Hz with 239 dropped generations at 102.0% CPU and
+10.06 ms. Relative to the prior same-machine DragonGUI report, stage-4 CPU
+fell from 45.4% to 33.2% while update latency and correctness remained stable.
+
+The repeated DragonGUI-only median (31.4%) remains the stronger estimate of
+the final CPU level; the full matrix uses one sample per framework/stage and is
+intended for current comparative placement. Dear PyGui still leads CPU and
+memory footprint, while DragonGUI now has the lowest stage-4 application
+update p95 and remains the only comparison adapter besides Dear PyGui to hold
+the requested cadence at every stage.
+
+Artifacts:
+
+```text
+artifacts/gui-telemetry-viewer-comparison-2026-08-03-dense-update/summary.json
+plans/gui-telemetry-viewer-dense-update-report-2026-08-03.html
+```
+
+## August 3 indexed live-property lookup checkpoint
+
+After the dense-batch rebuild fix, timing attribution showed that native
+property application had become the largest remaining update-pipeline bucket:
+approximately 2.84 seconds across one stage-4 run, versus approximately 1.38
+seconds spent flushing visual rebuilds. The retained tree was the cause. A
+high-frequency text property found its widget once to classify invalidation
+and then walked the complete tree again to mutate the node.
+
+DragonGUI now builds a safe retained `widget_id -> child-index path` map beside
+the existing widget-kind map. Lookup follows the short child path from the
+owned root rather than performing a depth-first scan. The index contains no
+raw pointers or borrowed references, is reconstructed by every existing
+structural replacement path, and has a debug invariant requiring its widget
+count to match the kind index. High-frequency text and LED mutations now use
+the indexed route; unrelated property behavior is unchanged.
+
+An earlier candidate in this checkpoint was rejected. It bounded text and
+primitive target sets independently in an attempt to avoid double-counting
+overlapping widgets. Runtime evidence showed that the normalized sets were
+largely disjoint and still exceeded the 512-root safety cap. All 540 stage-4
+batches therefore paid normalization cost and then fell back to a full
+rebuild. CPU increased from 31.4% to 32.6% and drain p95 from 8.77 to 9.31 ms,
+so the change was reverted.
+
+The retained path index produced the intended timing signature. Stage-4
+rebuild time remained essentially unchanged while command-application total
+fell from approximately 2.84 seconds to 1.84–1.96 seconds per run. Three-run
+medians were:
+
+| Metric | Previous dense-batch result | Indexed lookup | Change |
+|---|---:|---:|---:|
+| CPU | 31.4% | **25.6%** | -5.8 points / about 18% |
+| Native drain p95 | 8.77 ms | **6.45 ms** | -26% |
+| Application update p95 | 4.42 ms | **3.84 ms** | -13% |
+| Throughput | 30.00 Hz | 30.00 Hz | maintained |
+| Dropped generations | 0 | 0 | maintained |
+
+The light stage also remained healthy at 12.3% CPU, 1.05 ms update p95, and
+2.15 ms native drain p95. It sustained 30 Hz with zero drops. Peak RSS and
+private commit were effectively unchanged at 318.1 MiB and 815.0 MiB,
+respectively.
+
+Validation:
+
+- native library: **938 passed, 13 intentionally ignored**;
+- a dedicated nested-tree test verifies root, child, and grandchild paths and
+  mutation through the indexed target;
+- all six repeated telemetry samples passed every validation check at 30 Hz
+  with zero dropped generations;
+- the final release extension was rebuilt and installed into the source
+  package;
+- Rust formatting passes.
+
+Artifacts:
+
+```text
+artifacts/gui-telemetry-viewer-stage4-overlap-targets-2026-08-03/summary.json
+artifacts/gui-telemetry-viewer-stage4-indexed-props-2026-08-03/summary.json
+artifacts/gui-telemetry-viewer-stage1-indexed-props-2026-08-03/summary.json
+```
+
+## August 3 GPU-backend memory attribution and Windows policy checkpoint
+
+The retained-tree reductions were real, but repeated framework results showed
+that they could not materially change DragonGUI's large fixed graphics cost.
+The next pass therefore measured surface size, presentation buffering,
+retained renderer construction, screenshot texture usage, and WGPU backend
+selection in separate fresh processes before changing production behavior.
+
+### What the attribution found
+
+A new surface sweep added explicit requested window dimensions and the complete
+renderer diagnostic snapshot to the fixed-baseline probe. Under the previous
+automatic Windows backend, median memory scaled from 259.6 MiB RSS / 250.7 MiB
+private commit at 320x240 to 274.1 / 329.5 MiB at 1500x960. The 1920x1080
+request plateaued because the runtime correctly clamped the window to the
+monitor work area. This showed both a large fixed device/driver component and
+a separate size-dependent surface allocation.
+
+The following candidates did not produce a worthwhile reduction and were
+reverted:
+
+- reducing desired maximum frame latency from two to one;
+- disabling the retained text and primitive renderers, individually and
+  together (only about 7 MiB RSS at best, with an unfavorable allocator
+  pattern in private commit);
+- removing `COPY_SRC` from screenshot-capable surfaces.
+
+The last experiment did expose a correctness issue: OpenGL surfaces on this
+machine do not advertise `COPY_SRC`. Surface configuration now requests that
+usage only when capabilities support it, and unsupported window screenshots
+return a clear runtime error instead of triggering a WGPU validation failure.
+
+Backend selection was the material lever. Three fresh 320x240 processes per
+backend measured:
+
+| Backend | Median RSS | Median private commit |
+|---|---:|---:|
+| Vulkan | 254.3 MiB | 243.8 MiB |
+| DirectX 12 | **193.5 MiB** | **226.2 MiB** |
+| OpenGL | 117.1 MiB | 71.9 MiB |
+
+OpenGL's small baseline did not survive the performance gate. At telemetry
+stage 4 it reached only 21.80 Hz and dropped 122 generations, so it remains an
+explicit low-memory/compatibility option rather than the default. DirectX 12
+held 30 Hz with zero drops and matched or improved the update timings.
+
+### Production change
+
+DragonGUI now prefers DirectX 12 on Windows and preserves WGPU automatic
+backend selection on other platforms. Advanced users can override the policy
+with `DRAGONGUI_WGPU_BACKEND=auto|dx12|vulkan|gl`. The renderer snapshot
+reports both `backend_policy` and the actual `adapter_backend`, and `dg.help`
+documents the policy, override, memory-hint interaction, and OpenGL tradeoffs.
+
+The final three-process stage-4 run used the real default with the override
+environment variable removed:
+
+| Metric | Previous automatic Windows backend | DX12 default | Change |
+|---|---:|---:|---:|
+| CPU | 25.6% | **24.8%** | -0.8 points |
+| Update p95 | 3.84 ms | **3.76 ms** | -2% |
+| Throughput | 30.00 Hz | 30.00 Hz | maintained |
+| Dropped generations | 0 | 0 | maintained |
+| Peak RSS | 322.3 MiB | **274.9 MiB** | **-47.4 MiB** |
+| Peak private commit | 845.4 MiB | **805.5 MiB** | **-39.8 MiB** |
+
+All 45 workload checks passed. A final minimal live-window smoke confirmed the
+effective `dx12` policy/adapter and measured 198.7 MiB RSS / 225.7 MiB private
+commit. The complete native suite passes with **939 passed and 13 intentionally
+ignored**; Rust formatting and Python 3.12 byte compilation also pass.
+
+Artifacts:
+
+```text
+artifacts/gui-surface-memory-sweep-2026-08-03/summary.json
+artifacts/gui-memory-backend-vulkan-repeat-2026-08-03/summary.json
+artifacts/gui-memory-backend-dx12-repeat-2026-08-03/summary.json
+artifacts/gui-memory-backend-gl-repeat-2026-08-03/summary.json
+artifacts/gui-telemetry-viewer-stage4-gl-backend-2026-08-03/summary.json
+artifacts/gui-telemetry-viewer-stage4-dx12-backend-2026-08-03/summary.json
+artifacts/gui-memory-dx12-default-final-smoke-2026-08-03.json
+artifacts/gui-telemetry-viewer-stage4-dx12-default-final-2026-08-03/summary.json
 ```

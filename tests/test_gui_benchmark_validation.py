@@ -16,6 +16,10 @@ from gui_benchmark_validation import (  # noqa: E402
 )
 from gui_update_pipeline_case import _locality_indices  # noqa: E402
 import gui_live_dashboard_case as live_dashboard_case  # noqa: E402
+import gui_telemetry_viewer_case as telemetry_case  # noqa: E402
+import gui_telemetry_indicator_case as indicator_case  # noqa: E402
+from run_gui_telemetry_indicator_memory import _aggregate as aggregate_indicator_memory  # noqa: E402
+from run_gui_telemetry_viewer_matrix import _aggregate as aggregate_telemetry  # noqa: E402
 from examples.cathode_ops_stress_demo import (  # noqa: E402
     _expected_first_lane_text,
     _find_node as find_cathode_node,
@@ -197,3 +201,127 @@ def test_live_dashboard_memory_metrics_exclude_warmup_and_post_validation(
         "measurement",
         "post_measurement",
     ]
+
+
+def test_telemetry_stages_scale_widgets_without_changing_trace_size() -> None:
+    configs = list(telemetry_case.STAGES.values())
+
+    assert [config.line_plots for config in configs] == [4, 8, 12, 16]
+    assert [config.indicators for config in configs] == [24, 72, 160, 320]
+    assert {config.line_points for config in configs} == {1_024}
+    assert telemetry_case.TARGET_HZ == 30.0
+
+
+def test_telemetry_data_and_final_indicator_values_are_deterministic() -> None:
+    config = telemetry_case.STAGES["stage4"]
+    data = telemetry_case.TelemetryData(config)
+    x, y = data.line(15, 73)
+
+    assert x.shape == y.shape == (1_024,)
+    assert str(x.dtype) == str(y.dtype) == "float32"
+    assert telemetry_case.TelemetryData.indicator(319, 73) == (
+        72.8,
+        "TM-319  072.8",
+        True,
+    )
+
+
+def test_telemetry_aggregate_uses_native_dragon_frame_work() -> None:
+    report = {
+        "framework": "DragonGUI",
+        "framework_version": "0.1.0",
+        "stage": "stage1",
+        "config": {"line_plots": 4, "indicators": 24, "line_points": 1_024},
+        "build_ms": 1.0,
+        "drain_recovery_ms": 0.2,
+        "validation": {"passed": True, "check_count": 15, "failure_count": 0},
+        "metrics": {
+            "tick_throughput_hz": 30.0,
+            "measurement_completed_ticks": 450,
+            "measurement_dropped_ticks": 0,
+            "submit_ms": {"median_ms": 1.0, "p95_ms": 2.0, "p99_ms": 3.0},
+            "frame_ms": {"median_ms": 99.0, "p95_ms": 99.0, "p99_ms": 99.0},
+            "frame_deadline_misses": 0,
+            "process_cpu_percent_one_core": 20.0,
+            "rss_peak_bytes": 100,
+            "measurement_memory": {
+                "rss_peak_bytes": 90,
+                "rss_growth_bytes": 2,
+                "private_start_bytes": 180,
+                "private_peak_bytes": 200,
+                "private_growth_bytes": 20,
+            },
+            "line_updates": 1_800,
+            "control_updates": 32_400,
+        },
+        "native": {
+            "layout_diagnostic_count": 0,
+            "runtime": {
+                "wall_fps": 30.0,
+                "frame_timings": {
+                    "work": {"p50_ms": 0.4, "p95_ms": 0.7, "p99_ms": 0.9}
+                },
+                "command_drain": {"timing": {"p95_ms": 2.5}},
+                "command_queue": {"push_timing": {"p95_ms": 0.02}},
+                "python": {
+                    "task_drain_timing": {"max_ms": 3.0},
+                    "task_queue_high_water": 1,
+                    "tasks_coalesced": 0,
+                },
+            },
+            "renderer": {
+                "line_plot_renderer": {"source_point_count": 4_096, "point_count": 1_000}
+            },
+        },
+    }
+
+    aggregated = aggregate_telemetry([report])
+
+    assert aggregated["frame_p50_ms"] == 0.4
+    assert aggregated["frame_p95_ms"] == 0.7
+    assert aggregated["frame_p99_ms"] == 0.9
+    assert aggregated["measurement_private_start_bytes"] == 180
+    assert aggregated["measurement_private_peak_bytes"] == 200
+    assert aggregated["measurement_private_growth_bytes"] == 20
+    assert aggregated["validation"]["passed"] is True
+
+
+def test_indicator_decomposition_counts_actual_property_fanout() -> None:
+    expected = {
+        "labels": 321,
+        "progress": 321,
+        "leds": 641,
+        "combined": 1_281,
+    }
+
+    assert indicator_case.COUNTS == (24, 72, 160, 320)
+    for mode, properties in expected.items():
+        config = indicator_case.IndicatorConfig(320, mode)
+        assert config.properties_per_tick == properties
+
+
+def test_indicator_memory_aggregate_excludes_invalid_capacity_samples() -> None:
+    valid = {
+        "validation_passed": True,
+        "rss_start_bytes": 100,
+        "rss_growth_bytes": 5,
+        "private_start_bytes": 200,
+        "private_growth_bytes": 3,
+        "throughput_hz": 30.0,
+    }
+    invalid = {
+        "validation_passed": False,
+        "rss_start_bytes": 10_000,
+        "rss_growth_bytes": 9_000,
+        "private_start_bytes": 20_000,
+        "private_growth_bytes": 18_000,
+        "throughput_hz": 12.0,
+    }
+
+    aggregate = aggregate_indicator_memory([valid, invalid])
+
+    assert aggregate["sample_count"] == 2
+    assert aggregate["valid_sample_count"] == 1
+    assert aggregate["all_valid"] is False
+    assert aggregate["medians"]["rss_start_bytes"] == 100
+    assert aggregate["medians"]["private_growth_bytes"] == 3

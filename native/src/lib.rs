@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 mod app;
 #[cfg(test)]
 mod command_queue_model;
