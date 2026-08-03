@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -1099,8 +1100,65 @@ impl TextRendererDg {
         font_size_override: Option<f32>,
         anchor: &str,
     ) {
+        self.push_scatter_label_impl(
+            None,
+            text,
+            screen_x,
+            screen_y,
+            is_title,
+            clip,
+            scale,
+            color_override,
+            font_size_override,
+            anchor,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn push_owned_scatter_label(
+        &mut self,
+        owner: &str,
+        text: &str,
+        screen_x: f32,
+        screen_y: f32,
+        is_title: bool,
+        clip: TextBounds,
+        scale: f32,
+        color_override: Option<[f32; 3]>,
+        font_size_override: Option<f32>,
+        anchor: &str,
+    ) {
+        self.push_scatter_label_impl(
+            Some(owner),
+            text,
+            screen_x,
+            screen_y,
+            is_title,
+            clip,
+            scale,
+            color_override,
+            font_size_override,
+            anchor,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn push_scatter_label_impl(
+        &mut self,
+        owner: Option<&str>,
+        text: &str,
+        screen_x: f32,
+        screen_y: f32,
+        is_title: bool,
+        clip: TextBounds,
+        scale: f32,
+        color_override: Option<[f32; 3]>,
+        font_size_override: Option<f32>,
+        anchor: &str,
+    ) {
         if matches!(anchor, "plot-x-label" | "plot-y-label") {
             self.push_axis_label_glyph(
+                owner,
                 text,
                 screen_x,
                 screen_y,
@@ -1218,6 +1276,7 @@ impl TextRendererDg {
         };
         let mut caret_positions = HashMap::new();
         let options = scatter_label_options(anchor);
+        let entry_start = self.entries.len();
         push_text_entry(
             &mut self.font_system,
             &self.font_aliases,
@@ -1237,6 +1296,9 @@ impl TextRendererDg {
             &mut caret_positions,
             options,
         );
+        if let Some(owner) = owner {
+            assign_unowned_text_entries(&mut self.entries[entry_start..], owner);
+        }
     }
 
     pub fn push_overlay_panel_rect(
@@ -1327,6 +1389,7 @@ impl TextRendererDg {
     #[allow(clippy::too_many_arguments)]
     fn push_axis_label_glyph(
         &mut self,
+        owner: Option<&str>,
         text: &str,
         screen_x: f32,
         screen_y: f32,
@@ -1398,7 +1461,7 @@ impl TextRendererDg {
             max_lines: None,
         };
         self.entries.push(TextEntry {
-            owner: None,
+            owner: owner.map(str::to_string),
             key,
             buffer,
             left,
@@ -1576,6 +1639,116 @@ impl TextRendererDg {
             "overlay_prepare_errors": self.overlay_prepare_errors,
             "atlas_trims": self.atlas_trims,
         })
+    }
+
+    /// Stable, process-local signature of retained text in paint order. It
+    /// includes authored identity, submitted geometry, clips, colors, custom
+    /// glyphs, and shaped glyph positions so diagnostics can compare a
+    /// targeted rebuild with an immediate full reconstruction.
+    pub(crate) fn diagnostic_signature(&self) -> u64 {
+        fn hash_f32(value: f32, hasher: &mut impl Hasher) {
+            value.to_bits().hash(hasher);
+        }
+
+        let mut hasher = DefaultHasher::new();
+        self.table_entry_start.hash(&mut hasher);
+        self.overlay_entry_start.hash(&mut hasher);
+        self.scatter_label_start.hash(&mut hasher);
+        let permanent_end = self.scatter_label_start.min(self.entries.len());
+        permanent_end.hash(&mut hasher);
+        for entry in &self.entries[..permanent_end] {
+            entry.owner.hash(&mut hasher);
+            entry.key.hash(&mut hasher);
+            hash_f32(entry.left, &mut hasher);
+            hash_f32(entry.top, &mut hasher);
+            hash_f32(entry.scale, &mut hasher);
+            entry.clip.left.hash(&mut hasher);
+            entry.clip.top.hash(&mut hasher);
+            entry.clip.right.hash(&mut hasher);
+            entry.clip.bottom.hash(&mut hasher);
+            entry.untransformed_clip.left.hash(&mut hasher);
+            entry.untransformed_clip.top.hash(&mut hasher);
+            entry.untransformed_clip.right.hash(&mut hasher);
+            entry.untransformed_clip.bottom.hash(&mut hasher);
+            entry.color.hash(&mut hasher);
+            entry.custom_glyphs.len().hash(&mut hasher);
+            for glyph in &entry.custom_glyphs {
+                glyph.id.hash(&mut hasher);
+                hash_f32(glyph.left, &mut hasher);
+                hash_f32(glyph.top, &mut hasher);
+                hash_f32(glyph.width, &mut hasher);
+                hash_f32(glyph.height, &mut hasher);
+                glyph.color.hash(&mut hasher);
+                glyph.snap_to_physical_pixel.hash(&mut hasher);
+                glyph.metadata.hash(&mut hasher);
+            }
+            for run in entry.buffer.layout_runs() {
+                run.line_i.hash(&mut hasher);
+                run.rtl.hash(&mut hasher);
+                hash_f32(run.line_y, &mut hasher);
+                hash_f32(run.line_top, &mut hasher);
+                hash_f32(run.line_height, &mut hasher);
+                hash_f32(run.line_w, &mut hasher);
+                run.glyphs.len().hash(&mut hasher);
+                for glyph in run.glyphs {
+                    glyph.start.hash(&mut hasher);
+                    glyph.end.hash(&mut hasher);
+                    glyph.glyph_id.hash(&mut hasher);
+                    glyph.font_weight.0.hash(&mut hasher);
+                    hash_f32(glyph.font_size, &mut hasher);
+                    glyph.line_height_opt.map(f32::to_bits).hash(&mut hasher);
+                    hash_f32(glyph.x, &mut hasher);
+                    hash_f32(glyph.y, &mut hasher);
+                    hash_f32(glyph.w, &mut hasher);
+                    hash_f32(glyph.x_offset, &mut hasher);
+                    hash_f32(glyph.y_offset, &mut hasher);
+                    glyph.color_opt.hash(&mut hasher);
+                    glyph.metadata.hash(&mut hasher);
+                }
+            }
+        }
+        hasher.finish()
+    }
+
+    pub(crate) fn debug_owner_geometry(&self, requested_owners: &HashSet<String>) -> Value {
+        let mut owners = serde_json::Map::new();
+        let mut requested = requested_owners.iter().collect::<Vec<_>>();
+        requested.sort_unstable();
+        for owner in requested {
+            let entries = self
+                .entries
+                .iter()
+                .filter(|entry| entry.owner.as_deref() == Some(owner.as_str()))
+                .map(|entry| {
+                    let mut line_count = 0usize;
+                    let mut text_width = 0.0f32;
+                    let mut text_height = 0.0f32;
+                    for run in entry.buffer.layout_runs() {
+                        line_count = line_count.saturating_add(1);
+                        text_width = text_width.max(run.line_w);
+                        text_height = text_height.max(run.line_top + run.line_height);
+                    }
+                    serde_json::json!({
+                        "left": entry.left,
+                        "top": entry.top,
+                        "scale": entry.scale,
+                        "text_width": text_width * entry.scale,
+                        "text_height": text_height * entry.scale,
+                        "line_count": line_count,
+                        "clip": {
+                            "left": entry.clip.left,
+                            "top": entry.clip.top,
+                            "right": entry.clip.right,
+                            "bottom": entry.clip.bottom,
+                        },
+                    })
+                })
+                .collect::<Vec<_>>();
+            if !entries.is_empty() {
+                owners.insert(owner.clone(), Value::Array(entries));
+            }
+        }
+        Value::Object(owners)
     }
 
     pub fn render_base<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>) {

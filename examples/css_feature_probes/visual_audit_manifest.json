@@ -178,7 +178,17 @@
     "category": "widgets",
     "features": ["DragSource", "DropTarget", "DropZone"],
     "sizes": [[980, 600], [390, 720]],
-    "manual": true
+    "states": [
+      {
+        "name": "asset-to-asset-lane",
+        "actions": [
+          "drag:#sensor-a-source->#asset-drop-zone",
+          "assert-text:#asset-drop-result=Asset lane: Sensor A (asset)"
+        ]
+      }
+    ],
+    "manual": false,
+    "notes": "Native pointer drag verifies compatible-target hover/drop dispatch and retained callback output. Disabled-source and incompatible-target rejection remain contract-covered."
   },
   {
     "id": "code-editor",

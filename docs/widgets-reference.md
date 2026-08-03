@@ -286,7 +286,7 @@ Methods:
 | `set_theme(theme)` | Atomically replaces the active design-token theme. |
 | `run(window)` | Starts the native event loop. Accepts `Window` or component instance. |
 | `run_with_loading(build_window, title=None, width=1024, height=768)` | Starts the native event loop with a placeholder window, shows the startup loading frame, then calls `build_window()` and swaps in the returned `Window` or component root before the first real redraw. |
-| `call_soon_threadsafe(fn)` | Schedules a callable on the live DragonGUI runtime. |
+| `call_soon_threadsafe(fn, coalesce_key=None)` | Schedules a callable on the live runtime. Reusing a stable key retains only the newest pending snapshot; omit it for FIFO/lossless events. |
 | `toast(...)` | Shows a native toast while the app is running. |
 | `debug_snapshot(timeout_ms=1000)` | Returns live runtime diagnostics. |
 | `set_buffer_resource(resource_id, data, kind="bytes", owner=None)` | Uploads a retained native buffer. |
@@ -1713,7 +1713,10 @@ and then enqueues the native upload:
 
 ```python
 payload = dg.Scatter3D.prepare_points(frame, x="x", y="y", z="z")
-app.call_soon_threadsafe(lambda: live.replace_prepared(payload, fit=False))
+app.call_soon_threadsafe(
+    lambda: live.replace_prepared(payload, fit=False),
+    coalesce_key="scatter.latest-prepared-frame",
+)
 ```
 
 Use `live.enqueue_prepared(payload, update_metadata=False, coalesce=True)` for

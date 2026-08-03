@@ -58,6 +58,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import random
 import struct
 import sys
@@ -68,7 +69,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 if __name__ == "__main__" and __package__ is None:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
+    runtime_path = os.environ.get("DRAGONGUI_BENCH_PYTHON_PATH")
+    sys.path.insert(
+        0,
+        runtime_path or str(Path(__file__).resolve().parents[1] / "python"),
+    )
 
 import dragongui as dg
 
@@ -5436,6 +5441,7 @@ def autopilot(app: dg.App, *, cycles: int, settle: float, report_path: Path | No
             "origin_theme": origin_theme,
             "results": results,
         }
+        report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         print(f"[autopilot] report written to {report_path}", flush=True)
 
@@ -5643,6 +5649,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"run summary: {summary}")
     finally:
         state.stop.set()
+        for worker in workers:
+            worker.join(timeout=2.0)
 
     if args.autopilot and state.autopilot_report:
         failed = [entry for entry in state.autopilot_report if not entry.get("passed")]

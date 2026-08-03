@@ -50,9 +50,10 @@ def build_demo() -> tuple[dg.App, dg.Window]:
                     time.sleep(0.01)
             time.sleep(1.0 / 60.0)
 
+        # Completion is a lossless event. Keeping it unkeyed preserves the
+        # latest keyed telemetry frame immediately before this callback.
         app.call_soon_threadsafe(
-            lambda: explanation.set_value("Stream complete; the final retained state is visible."),
-            coalesce_key="telemetry-frame",
+            lambda: explanation.set_value("Stream complete; the final retained state is visible.")
         )
 
     threading.Thread(target=producer, name="batched-telemetry", daemon=True).start()

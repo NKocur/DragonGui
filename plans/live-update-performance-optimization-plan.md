@@ -2,7 +2,7 @@
 
 **Project:** DragonGUI
 **Created:** July 31, 2026
-**Status:** In progress; Phases 0–2 complete, Phase 3 started, Phase 1 release soak remains a separate release task
+**Status:** In progress; Phases 0–6 complete, Phase 1 release soak remains a separate release task
 **Primary evidence:** `plans/gui-live-dashboard-performance-report.html`
 **Primary benchmark:** `benchmarks/gui_live_dashboard_case.py`
 
@@ -738,9 +738,9 @@ Initial mutation-path matrix:
 | Tab/navigation/menu | `label`, `badge` | Item width and badge chrome are content-dependent | Text-only only with definite width and height |
 | Loading spinner | `label`, `text` | Label changes composite width/height | Text-only only with definite width and height |
 | Stateful controls | displayed values/labels | Internal chrome, editing bounds, and state may be text-dependent | Not yet eligible; audit separately |
-| Plot widgets | axis labels, tick/legend options | Plot chrome changes the drawable viewport even when outer size is fixed | Not yet eligible; retain current plot-specific path pending differential tests |
-| HTML report | fallback `text` | Document layout and backend behavior differ from ordinary retained text | Not yet eligible; audit separately |
-| Icon button | `icon` | Theme reconciliation and icon metrics may affect internal geometry | Not yet eligible; audit separately |
+| Plot widgets | axis labels, tick/legend options | Plot chrome changes the drawable viewport even when outer size is fixed | Dedicated target-local plot path validated by the three-pair forced-layout differential; keep it separate from ordinary retained text |
+| HTML report | fallback `text` | Document layout and backend behavior differ from ordinary retained text | Dedicated target-local fallback path validated against forced layout; source/security mutations remain full sync |
+| Icon button | `icon` | Theme reconciliation and icon metrics may affect internal geometry | Dedicated target-local semantic-icon path validated against forced layout after theme reconciliation |
 
 Focused Rust verification passes all five existing label assertions and all ten
 new composite cases. This is only the safe first subset of the matrix. The next
@@ -977,8 +977,8 @@ Audit conclusions:
 This closes the static dependency matrix. It does **not** expand the
 content-sized fast path beyond the families that passed rendered fixed versus
 intrinsic equivalence. Stateful editor/dropdown, plot-chrome, HTML-fallback and
-icon cases remain on their existing target-local routes until dedicated
-rendered differential samples prove each route independently.
+icon cases remain explicit target-local routes; each now has dedicated rendered
+optimized-versus-forced-layout evidence.
 
 The matrix audit also corrected the classifier's advertised property set.
 `Badge.value`, `Badge.badge`, `Tag.value`, menu/menu-item badges, and panel
@@ -990,7 +990,1349 @@ unsupported pairs. The post-audit regression run passes **917 native tests**
 with **13 intentional ignores**; the focused benchmark-validation suite passes
 **6 tests**. `git diff --check` is clean for the implementation and plan.
 
-## Baseline We Must Preserve
+#### Forced-safe text-invalidation differential
+
+Added the independent safe control that the initial Phase 3 comparisons were
+missing. The runtime now reads
+`DRAGONGUI_DIAGNOSTIC_TEXT_INVALIDATION_MODE` once while constructing GPU state.
+The default `optimized` mode preserves the classifier. Diagnostic
+`forced-layout` mode promotes only otherwise eligible `Dirty::Text` decisions
+to `Dirty::Layout`; already intrinsic and unsupported decisions retain their
+original safe reason.
+
+The configured mode is captured under `framework.live_text_invalidation.mode`,
+and promoted decisions are counted separately as `forced_safe_layout`. A native
+regression proves the diagnostic mode promotes the fixed fast path without
+rewriting an intrinsic layout decision.
+
+The update-pipeline case and matrix now accept a separate text-invalidation
+dimension. `--text-invalidation-mode both` runs optimized and forced-layout
+samples in fresh processes while holding the scenario, widget tree, CSS,
+viewport, scale, update mode, update sequence, and settled generation fixed.
+Raw samples fail unless their requested and native-reported modes agree. The
+matrix independently compares retained state, resolved/available geometry,
+clips, scroll state and settled screenshots across invalidation modes; its
+existing individual/batch comparison remains available as a separate axis.
+
+Built a fresh ABI3 release wheel and isolated runtime:
+
+```text
+artifacts/live-update-phase3d-forced-layout-wheel/dragongui-0.1.0-cp312-abi3-win_amd64.whl
+artifacts/live-update-phase3d-wheel-runtime
+```
+
+The three-repetition, 200-fixed-label differential used batched setters, a
+0.5-second warmup, two measured seconds, fresh processes, and settled
+screenshots. All three optimized/forced pairs passed:
+
+- Both modes sustained approximately 60 Hz.
+- Each sample recorded 30,150 candidates: 30,000 fixed labels plus 150
+  intrinsic-width status-label decisions.
+- Optimized samples recorded 30,000 `fixed_single_line_label` text-only
+  decisions; controls recorded zero text-only decisions and 30,000
+  `forced_safe_layout` decisions.
+- Targeted fallback remained zero in every sample.
+- Every pair had the same retained geometry/clip/scroll/state hash
+  `c669df93a758366f32570c18eb91e0773e7f769a5a8125caef5e34bee868f4aa` and
+  byte-identical screenshot hash
+  `b66f5b90570785bb5312f8656566c30c164dc2bf80d06fd6119bc30f2d177a80`.
+
+Median rebuild-flush p95 was **9.9311 ms optimized** versus **11.3819 ms
+forced-layout**, a **12.75% reduction**. This is directional short-run evidence,
+not closure of the 20% Phase 3 performance target; the longer repeated release
+gate remains open. Authoritative local evidence:
+
+```text
+artifacts/gui-update-pipeline-phase3-forced-layout-wheel-final-v1/summary.json
+```
+
+Post-change validation:
+
+```text
+cargo test --manifest-path native/Cargo.toml --target x86_64-pc-windows-gnu --lib
+918 passed, 13 ignored, 0 failed
+
+python -m pytest tests/test_gui_benchmark_validation.py -q
+6 passed
+
+python -m pytest -q
+567 passed
+```
+
+#### State-backed control differential and focused-caret correction
+
+Extended the forced-safe control across the existing target-local state-backed
+text routes. Optimized mutations now report `target_local_state`; the diagnostic
+control promotes those same decisions to `forced_safe_layout`. This covers:
+
+- `TextInput.value`.
+- `TextArea.value`.
+- `CodeEditor.value`.
+- `LogView.value` with both `follow=True` and `follow=False`.
+- `Dropdown.value`.
+- `NumberInput.value`.
+- `DragNumber.value`.
+
+The rendered `state-controls` scenario uses empty strings, precomposed and
+combining Unicode, emoji, Japanese, RTL Arabic, long values and multiline
+values. It validates Python and native buffer values, numeric/dropdown state,
+outer geometry, available and paint clips, native hit targets, focus retention,
+relative caret position, internal text scroll, wrapped visual lines, per-owner
+shaped text bounds and screenshots.
+
+New diagnostic infrastructure supports that proof:
+
+- `DRAGONGUI_SYNTHETIC_FOCUS_ID` applies one verified diagnostic focus target
+  after the first application frame and records requested, resolved and applied
+  state in the runtime snapshot.
+- Opt-in `renderer.text_owner_geometry` reports requested retained owners'
+  shaped entry origin, scale, visual line count, measured text extent and final
+  clip. `DRAGONGUI_DIAGNOSTIC_TEXT_GEOMETRY_IDS` is read once per runtime so
+  ordinary large-tree snapshots do not acquire this payload.
+- The equivalence hash now includes native text/numeric/dropdown buffers,
+  cursors, internal scroll, focused id, caret positions and owner text geometry.
+
+The first state-control smoke found a real correctness defect. Replacing the
+value of a focused multiline editor moved its cursor to the end but reset
+internal scroll to zero; the shaped caret ended below the visible control. The
+live mutation path now computes focused multiline cursor visibility before the
+rebuild. In the corrected case, the focused text area retains focus, records a
+16-pixel internal scroll and places its caret at relative y=74 inside its
+84-pixel outer rectangle in both optimized and forced-layout modes.
+
+Built a fresh ABI3 wheel and isolated runtime:
+
+```text
+artifacts/live-update-phase3e-state-controls-wheel/dragongui-0.1.0-cp312-abi3-win_amd64.whl
+artifacts/live-update-phase3e-state-controls-runtime
+```
+
+The final three-repetition differential used batched updates, a 0.5-second
+warmup, two measured seconds, fresh processes and settled screenshots. All
+three pairs passed 57 optimized or 58 control checks per sample:
+
+- Both modes sustained approximately 60 Hz.
+- Each sample recorded 1,350 candidates: 1,200 state-control decisions plus 150
+  intrinsic-width status-label decisions.
+- Optimized samples recorded 1,200 `target_local_state` text-only decisions;
+  controls recorded zero text-only decisions and 1,200 `forced_safe_layout`
+  decisions.
+- Targeted fallback remained zero in every sample.
+- Every pair retained the same focus, caret `[47.0615234375, 74.0]`, 16-pixel
+  text-area scroll, following/non-following log scroll behavior, geometry,
+  clips, buffers and text-owner bounds.
+- Every pair had equivalence hash
+  `91c9ffa8904064dd48a27dc98c171bf2640e1f740f37fb6f146755aa50cee901` and
+  byte-identical screenshot hash
+  `37c006aef5267a0d0e18327f0872e3e506fdcbf0c16dae88143fa58fa46beb3a`.
+
+Authoritative local evidence:
+
+```text
+artifacts/gui-update-pipeline-phase3-state-controls-final-v1/summary.json
+```
+
+#### Plot-chrome differential and resource-rebuild proof
+
+Added the rendered `plot-chrome` case for fixed-size `LinePlot`, `Histogram`,
+and `BarChart` widgets. Each generation mutates Unicode and long axis labels,
+grid/axes/ticks/toolbar visibility, and tick count. The line plot additionally
+cycles legend visibility/position, moving-window size, and explicit x/y bounds
+overrides so the test proves bounds precedence as well as chrome rendering.
+
+Plot text mutations now participate in the existing forced-safe diagnostic:
+optimized decisions report `target_local_plot` and retain targeted
+`Dirty::Text`; forced-layout promotes the same candidates to layout. This does
+not merge plots into the general label classifier. The plot-specific path
+remains explicit because its chrome changes the internal drawable viewport and
+line-plot GPU resource mapping while the authored outer rectangle stays fixed.
+
+New opt-in proof data includes:
+
+- `renderer.plot_geometry`, keyed by requested plot id, with fixed outer
+  rectangle, visible clip, internal drawable viewport, and resolved bounds.
+- Widget ownership on ephemeral plot overlay text, allowing
+  `renderer.text_owner_geometry` to validate tick, axis, toolbar, and legend
+  clips without adding payload to ordinary snapshots.
+- Line-plot retained rebuild counters and final GPU renderer stats in benchmark
+  reports and matrix summaries.
+- Plot geometry and owned label geometry in the cross-mode equivalence hash.
+
+The first smoke correctly failed because plot overlay labels were anonymous to
+the owner diagnostic even though they rendered. The probe now scans requested
+ephemeral entries as well as permanent retained entries. The first longer run
+then rejected a benchmark-generated x range beyond the static dataset; the
+bounded replacement still tests window/bounds precedence while guaranteeing
+visible source data for the GPU resource assertion.
+
+Built a fresh ABI3 release wheel and isolated runtime:
+
+```text
+artifacts/live-update-phase3f-plot-chrome-wheel/dragongui-0.1.0-cp312-abi3-win_amd64.whl
+artifacts/live-update-phase3f-plot-chrome-runtime-current
+```
+
+The final three-repetition differential used batched updates, a 0.5-second
+warmup, two measured seconds, fresh processes, and settled screenshots. All
+three optimized/forced pairs passed 59 or 60 checks per sample:
+
+- Both modes sustained approximately 60 Hz.
+- Every sample recorded 3,300 invalidation candidates: 3,150 plot decisions
+  and 150 intrinsic-width status-label decisions.
+- Optimized samples recorded 3,150 `target_local_plot` text-only decisions;
+  controls recorded zero text-only decisions and 3,150 `forced_safe_layout`
+  decisions.
+- All three authored outer rectangles remained exactly 900 by 210 logical
+  pixels. Final internal viewports were 838 by 162 for the line plot and 842 by
+  158 for both histogram and bar chart.
+- Owned final text geometry contained 15 line-plot, 13 histogram, and 20
+  bar-chart entries with clips bounded by their outer plots.
+- The line renderer retained two series, 30 visible points, 28 segments, and
+  672 bytes of GPU source buffers. Targeted retained diagnostics recorded two
+  line-plot resource rebuilds and one non-line target skip with balanced checks.
+- Every pair had equivalence hash
+  `5f6227800ae47e075fee3add61bded7e00d5452e077b5958990481eafe3d7057`
+  and byte-identical screenshot hash
+  `193147f1f4feb0067d67681c79ce962c2492f6c4b9df5e9d473505731a0bb769`.
+
+Authoritative local evidence:
+
+```text
+artifacts/gui-update-pipeline-phase3-plot-chrome-final-v1/summary.json
+```
+
+Full validation remains green: **918 native tests passed**, **13 intentionally
+ignored**, **567 Python tests passed**, and the **6 focused benchmark-validation
+tests passed**.
+
+#### HTML fallback, embedded WebView2, and semantic-icon differential
+
+Added `html-fallback`, `html-webview`, and `semantic-icons` to the rendered
+pipeline case and matrix. The HTML cases distinguish frequently changing
+fallback copy from full-sync source and permission changes. Stable FNV-1a
+fingerprints prove final inline and embedded source identity without copying
+HTML bodies into diagnostics. The icon case rotates built-in aliases, a custom
+stroke resource, and an unknown-name fallback while replacing the live icon
+theme; the equivalence hash includes the computed semantic identity.
+
+The optimized runtime now reports explicit `target_local_html_fallback` and
+`target_local_icon` reasons. Forced-layout promotes those same decisions, while
+HTML `path`, `html`, base-directory, and security mutations continue to use
+full synchronization. Fixed report/button rectangles, clips, semantic state,
+WebView instance bounds and policy, synthetic hover targets, final renderer
+health, and screenshots are all validation gates.
+
+The first combined matrix found a WebView2 transition race rather than an
+invalidation mismatch. After a file-to-inline navigation, an immediate
+inline-to-file request could fail with `ERROR_INVALID_STATE` and retain the old
+source. WebView instances now register `NavigationCompleted`; completion wakes
+the runtime, which re-syncs the current document and retries any desired source
+that was not accepted. A later successful sync clears the current renderer
+error. The benchmark's bounded reload fallback was left unchanged as a failure
+detector; the corrected runtime needed zero reload attempts.
+
+A fresh release-wheel matrix ran three repetitions with batched updates, a
+0.5-second warmup, two measured seconds, fresh processes, and settled
+screenshots. All 18 samples passed at approximately 60 Hz, and all nine
+optimized/forced pairs matched retained geometry and screenshots. Cross-mode
+equivalence hashes were stable across repetitions:
+
+- HTML fallback:
+  `582363c0ccc9c4b23138ceeeb8ee1eb62063077cb2f9ff75f2c8129191971ae6`.
+- Embedded WebView2:
+  `53d0e81f6b58954da8a74f17805295cad9b46535314da86aa2787bdbe4b00b05`.
+- Semantic icons:
+  `7dbf88f456568f28857fd2cef27bb881d64bacfda1b1c0228a4292590e338f4c`.
+
+All six WebView samples ended with a local-file source, matching source
+fingerprints, zero reload attempts, and no final renderer error. Optimized HTML
+fallback/WebView samples each accumulated 456 target-local HTML decisions over
+three repetitions; optimized icon samples accumulated 1,800 target-local icon
+decisions. Forced controls promoted the corresponding totals to layout. The
+semantic-icon screenshot hash was
+`df57426f9ba0912123b458e5440466ae56c71f405bb93bdee8eebdf7e5962d5e`;
+the HTML cases shared settled screenshot hash
+`0acc587ddb1e25eeeaf4330c2ed8b706d583f421225132d4561dcaadcb576a75`.
+
+Authoritative local evidence and runtime:
+
+```text
+artifacts/gui-update-pipeline-phase3-html-icon-final-v2/summary.json
+artifacts/live-update-phase3g-html-icon-wheel/dragongui-0.1.0-cp312-abi3-win_amd64.whl
+artifacts/live-update-phase3g-html-icon-runtime-navretry
+```
+
+#### Five-by-60-second fixed-label release gate
+
+Ran the required phase-decision sample for `labels-fixed:200`: five 60-second
+measured repetitions per mode, five-second warmup, batched updates, alternating
+fresh processes, settled screenshots, and the Phase 3g release wheel. A command
+wrapper timeout interrupted the first invocation after three already-complete
+samples; `--resume` audited and reused only those passing raw samples, then ran
+the remaining seven in fresh processes.
+
+All ten samples validated. All five optimized/forced pairs had identical
+retained geometry and byte-identical screenshots, with equivalence hash
+`7397ef3ee727309c3782a7e4543e75bc2bbdf60cff49fc3266241db7d92b4914`
+and screenshot hash
+`a5b819cda657a87d4446ca68d5ba99e89d4d8b823a83cc40fb3f53074249fd07`.
+Median throughput was 59.9335 Hz optimized and 59.9838 Hz forced-layout.
+
+The correctness and fallback gates pass:
+
+- Optimized samples recorded 3,894,000 fixed-label text-only decisions. Their
+  19,470 layout decisions were the deliberately intrinsic status label, not
+  fixed-label fallback.
+- All 58,410 targeted batches completed with zero targeted fallback, a 0%
+  fallback rate against the below-5% target.
+- Queues drained, layout diagnostics stayed clean, and all cross-mode state,
+  geometry, and screenshot comparisons passed.
+
+This first measurement did **not** pass the performance gate. Rebuild-flush p95
+values were:
+
+| Mode | Five p95 samples (ms) | Median (ms) | Worst (ms) |
+|---|---|---:|---:|
+| Optimized | 10.1567, 10.3872, 12.3512, 10.5711, 14.6792 | 10.5711 | 14.6792 |
+| Forced layout | 12.1743, 12.3149, 12.0998, 11.7736, 12.2937 | 12.1743 | 12.3149 |
+
+The median reduction was **13.17%**, below the required 20%. Stage diagnostics
+then showed that this was not a pure fixed-label measurement: the benchmark's
+intrinsic-width status label was mutated every generation and forced a global
+layout pass averaging about 10.34 ms in every optimized frame. The targeted
+partial-text p95 itself was only 2.07 ms. This contradicted the Phase 3 target
+that the fixed-geometry workload perform zero layout passes.
+
+The eligibility decision is complete: do not broaden the general
+content-sized predicate merely to unify code. Stateful controls, plot chrome,
+HTML fallback, and semantic icons remain on their explicit target-local routes,
+which now have zero-mismatch differential evidence. Any future expansion must
+name a new geometry contract and show a measurable benefit.
+
+Authoritative local evidence:
+
+```text
+artifacts/gui-update-pipeline-phase3-fixed-label-release-v1/summary.json
+```
+
+The benchmark correction gives `pipeline-status` a definite width only in
+`labels-fixed`; `intrinsic-text` retains the intrinsic sentinel and continues
+to prove conservative fallback. Validation is now stricter: optimized
+`labels-fixed` must report exactly zero layout decisions and every candidate
+must use text-only invalidation. Forced-layout must still reject all text-only
+work. A 10-second smoke immediately passed with 0.1212 ms optimized versus
+12.0714 ms forced-layout rebuild-flush p95 and exact geometry/screenshots.
+
+The corrected five-by-60-second gate then ran all ten samples from scratch:
+
+| Mode | Five p95 samples (ms) | Median (ms) | Worst (ms) |
+|---|---|---:|---:|
+| Optimized | 0.0959, 0.0929, 0.1138, 0.1341, 0.1217 | 0.1138 | 0.1341 |
+| Forced layout | 11.6644, 11.5034, 11.9257, 12.3257, 12.8901 | 11.9257 | 12.8901 |
+
+The authoritative median reduction is **99.05%**, and the worst-p95 reduction
+is **98.96%**. Optimized mode recorded 3,919,500 candidates, all 3,919,500 on
+the text-only path, zero layout decisions, 78,000 completed targeted batches,
+and zero fallback. Median throughput was 59.9999 Hz optimized and 59.9668 Hz
+forced-layout. All five cross-mode pairs matched equivalence hash
+`66e69e31c25da886961ee8a4f0a2d7452b663e6a3631e70bf7a9d06e33b9dd12`
+and screenshot hash
+`a5b819cda657a87d4446ca68d5ba99e89d4d8b823a83cc40fb3f53074249fd07`.
+
+This closes all Phase 3 targets: zero layout for eligible fixed geometry, zero
+differential mismatches, 0% targeted fallback, and more than 20% lower
+rebuild-flush p95. Authoritative evidence:
+
+```text
+artifacts/gui-update-pipeline-phase3-fixed-label-release-v2/summary.json
+```
+
+## Baseline policy after the workstation change
+
+The August 1 continuation is running on a substantially faster computer than
+the machine that produced the July 31 baseline below. Those historical absolute
+throughput, latency, CPU, and memory values are context only; they must not be
+used to claim a regression or improvement on the current workstation.
+
+Same-run optimized/control percentages from Phase 3 remain valid because both
+modes ran alternately on this computer with the same wheel, workload, and
+settings. Before Phase 4 behavior changes, capture a new current-machine control
+baseline for every affected workload. Record CPU, GPU, memory, OS, display
+scale, Python/Rust versions, wheel identity, viewport, and present mode in the
+artifact. All Phase 4 performance decisions must compare fresh candidate runs
+against that current-machine baseline under matched conditions.
+
+The first attempted baseline exposed a benchmark contract defect rather than a
+native locality failure. `mixed-state` still gave its badges intrinsic geometry
+and updated an intrinsic-width status label. A representative v1 sample
+therefore recorded 189,543 layout decisions and zero targeted batches. That
+artifact is retained as diagnostic evidence, but is not the fixed-dashboard
+control required by Phase 4.
+
+The corrected scenario gives badges and the status label definite geometry.
+Validation now requires optimized mixed-state runs to report zero layout,
+nonzero targeted completion, and zero fallback. The authoritative pre-change
+baseline on the Ryzen 7 5800X / RTX 3080 Ti / approximately 64 GiB workstation
+used Python 3.12.12, the Phase 3g wheel, monitor-default scale, runtime-default
+present mode, a five-second warmup, and five fresh 60-second measurements:
+
+| Metric | Five samples | Median | Worst |
+|---|---|---:|---:|
+| Throughput (Hz) | 59.8008, 59.3331, 59.7834, 56.6667, 59.2998 | 59.3331 | 56.6667 |
+| Command drain p95 (ms) | 16.0391, 16.1458, 15.8612, 15.8834, 16.3939 | 16.0391 | 16.3939 |
+| Command apply p95 (ms) | 15.1372, 14.5967, 14.8355, 14.8414, 15.3339 | 14.8414 | 15.3339 |
+| Rebuild flush p95 (ms) | 1.1492, 1.1903, 1.1010, 1.0609, 1.2523 | 1.1492 | 1.2523 |
+
+Across all five runs, 249,301 targeted batches completed with zero fallback,
+7,689,977 text candidates used the fast path, and layout remained zero. The
+existing mixed text/visual target merge therefore already clears the Phase 4
+95% fixed-dashboard completion target; the first new native increment should
+address stale-target structure generations and differential verification.
+
+```text
+artifacts/gui-update-pipeline-phase4-current-machine-baseline-v1/summary.json  # invalid intrinsic-geometry diagnostic
+artifacts/gui-update-pipeline-phase4-current-machine-baseline-v2/summary.json  # authoritative fixed-dashboard control
+```
+
+#### August 1, 2026 — Phase 4a structure-generation guard
+
+The deferred rebuild pipeline already maintains separate text, visual,
+table-text, and overlay targets, normalizes ancestor/descendant roots, and
+merges safe visual targets into targeted text execution. The corrected fixed
+dashboard proved this existing path completes 100% of targeted batches. The
+first missing safety primitive was an explicit retained-tree generation.
+
+`WgpuState` now increments `structure_generation` after each successful node or
+children replacement and captures the current generation when a deferred batch
+begins. A targeted candidate whose captured generation differs from the current
+tree is rejected before root normalization and forced through `Dirty::Full`.
+Diagnostics expose both `framework.structure_generation` and
+`command_text_rebuilds.stale_generation_fallback_batches`. Structural commands
+already merge as `Full`; the generation check is a second, explicit safety
+barrier against future target-lifetime changes.
+
+The counter contract and generation-mismatch eligibility regression pass, as
+do the complete native and Python suites. A fresh Phase 4a release-wheel smoke
+used the corrected `mixed-state:200` workload for ten measured seconds per
+mode:
+
+- Optimized: 59.9996 Hz, 1.3540 ms rebuild-flush p95, 8,580 targeted batches,
+  zero layout, zero fallback, zero stale-generation fallback, generation zero.
+- Forced layout: 18.9988 Hz and 6.4872 ms rebuild-flush p95.
+- Both modes had equivalence hash
+  `80652a5c0bb50585dd284931f0f98dbc22182ac69320fb66686342ac8076af9a`
+  and screenshot hash
+  `6c5ec803bb2de9a39f9d0a8b625be71a4480c85441cdfe58e775360202612492`.
+
+Evidence and exact runtime:
+
+```text
+artifacts/gui-update-pipeline-phase4a-structure-generation-smoke-v2/summary.json
+artifacts/live-update-phase4a-structure-generation-wheel/dragongui-0.1.0-cp312-abi3-win_amd64.whl
+artifacts/live-update-phase4a-structure-generation-runtime
+```
+
+#### August 1, 2026 — Phase 4b targeted-versus-full retained-output verifier
+
+Added the startup-selected diagnostic mode
+`DRAGONGUI_DIAGNOSTIC_TARGETED_REBUILD_MODE=verify-full` and corresponding
+benchmark option `--targeted-rebuild-verification verify-full`. After every
+successful deferred targeted rebuild, the runtime now captures process-local,
+deterministic signatures for:
+
+- retained primitive instances in paint order, including the base/overlay
+  boundary;
+- permanent shaped-text entries in paint order, including owner identity,
+  authored text/style key, submitted geometry and clips, colors, custom glyphs,
+  and shaped glyph positions;
+- retained line-plot point and series GPU inputs.
+
+The diagnostic then runs full text and primitive reconstruction without syncing
+state transitions a second time, compares each component, records attempts,
+matches, component mismatch counters, elapsed time, and last signatures, and
+leaves the full reconstruction installed as a safe control result. The default
+mode is `off`, so production and ordinary benchmark runs do no signature or
+double-rebuild work.
+
+A fresh release wheel passed the corrected `mixed-state:200` rendered smoke
+with a 0.5-second warmup and ten measured seconds. It verified all **3,614**
+completed targeted batches with zero fallback and **zero primitive, text, or
+line-plot mismatches**. Throughput was 26.4923 Hz because verification
+deliberately performs targeted and full work; it is diagnostic overhead, not a
+new performance baseline. The final equivalence hash was
+`68ea50c491c0add10cf02e460cdf8b2fb99323ebb00d245750449a7b5fe15de4`
+and screenshot hash was
+`c1823d113c5bc549ace3263400106388bcca6eb3af984065eda2b8c87052dafe`.
+
+Complete regressions passed: Rust **920 passed / 13 ignored**, Python **567
+passed**. Focused mode/counter tests also classify primitive, text, and line-plot
+mismatches independently.
+
+```text
+artifacts/gui-update-pipeline-phase4b-targeted-verifier-smoke-v1/summary.json
+artifacts/live-update-phase4b-targeted-verifier-wheel/dragongui-0.1.0-cp312-abi3-win_amd64.whl
+artifacts/live-update-phase4b-targeted-verifier-runtime
+```
+
+Wheel SHA-256:
+`e0aff8649ab735aa0ff3fc4fc365772cd5d0e1246876366ec37fb19d5c627d8d`.
+Extracted `_dragongui.pyd` SHA-256:
+`4e020b32a3b20e9b6c0ca4a188abf645cbf138f7b3ed28500939f8fdd8ffe0e7`.
+
+This closes the core retained-renderer verifier increment. Scatter/image/WebView
+resource generations and layout/hit-test signatures remain follow-up coverage
+when those target classes are made eligible. The next implementation work is
+typed target classes plus randomized 1-of-1,000 / 20-of-1,000 locality probes.
+
+#### August 1, 2026 — Phase 4c locality scaling controls
+
+Added `--locality-roots N` to the fixed-label case and matrix. Each callback
+selects `N` distinct labels with a deterministic per-tick pseudo-random schedule.
+Validation hashes all 1,000 final Python and native label values and requires:
+
+- rebuilt roots greater than zero and no more than `(N + 1)` per completed
+  callback, where the extra root is the fixed status label;
+- removed and inserted text entries no greater than rebuilt roots;
+- nonzero targeted completion with zero ordinary/stale-generation fallback;
+- zero partial-primitive fallback and zero primitive upload bytes.
+
+No new native counter was required: existing rebuilt-root, partial-text-entry,
+partial-primitive, and upload-byte diagnostics cover this fixed-label locality
+contract. Because only benchmark/test code changed after Phase 4b, the controls
+reuse the exact Phase 4b wheel/runtime rather than producing a misleading new
+binary identity.
+
+The current-machine controls used batched optimized updates, 1,000 retained
+labels, two-second warmups, 15-second measurements, 60 Hz targets, screenshots,
+and three fresh processes per mutation scale:
+
+| Probe | Throughput samples (Hz) | Drain p95 median | Apply p95 median | Flush p95 median |
+|---|---|---:|---:|---:|
+| 1 of 1,000 | 60.0006, 59.8654, 59.9999 | 0.5984 ms | 0.2115 ms | 0.3774 ms |
+| 20 of 1,000 | 59.9999, 60.0014, 60.0016 | 1.0011 ms | 0.5028 ms | 0.5029 ms |
+
+The 1-root samples rebuilt 2,040, 2,036, and 2,040 roots, exactly two per
+completed callback. Every 20-root sample rebuilt 21,420 roots, exactly 21 per
+callback. Text entries inserted were 1,046 / 1,044 / 1,046 and 1,600 / 1,600 /
+1,600 respectively; offscreen fixed labels correctly produced no retained text
+entry churn. Every sample recorded zero targeted fallback, zero stale-generation
+fallback, and zero primitive upload bytes. Increasing the label mutation set by
+20 times increased median rebuild-flush p95 by only **1.33 times**, while both
+cohorts sustained the 60 Hz target.
+
+Within-cohort equivalence and screenshot hashes were stable:
+
+- 1 of 1,000: equivalence
+  `b1f864aa92beadaba6d9cd86fc51898fcabf639fa5a2063fc72b3a487282204c`,
+  screenshot
+  `5cb9de7513f45bceb84fc755bb9ccb08759e1383fd23bb5eb03721d0667f5e03`.
+- 20 of 1,000: equivalence
+  `9e01ea3c23d4f2d3337c6a1b92ae7f22dac58bf7c6c313921adeeb8330e22bd5`,
+  screenshot
+  `e983052eba97ce8109728b5fc1d898f6d207e9cda7a846e68e182461989c928d`.
+
+A separate ten-second 20-of-1,000 `verify-full` run compared **660** randomized
+targeted batches with full reconstruction. It reported zero primitive, text,
+or line-plot mismatches, zero fallback, and 60.0008 Hz. This does not yet close
+the 10,000-randomized-batch Phase 4 gate. Focused locality tests pass and the
+complete Python suite reports **568 passed**. Ruff was not available in the
+active MSYS2 Python environment; syntax compilation and pytest passed.
+
+```text
+artifacts/gui-update-pipeline-phase4c-locality-1of1000-v1/summary.json
+artifacts/gui-update-pipeline-phase4c-locality-20of1000-v1/summary.json
+artifacts/gui-update-pipeline-phase4c-locality-20of1000-verify-v1/summary.json
+```
+
+The next work is the typed-target audit/implementation and then the remaining
+9,340 randomized differential comparisons required to reach 10,000.
+
+#### August 1, 2026 — Phase 4d typed deferred targets and randomized gate
+
+The audit found seven parallel `WgpuState` fields representing one deferred
+batch. They are now consolidated into `DeferredRebuildBatch`, which owns the
+captured structure generation, merged dirty class, and a typed target container:
+
+- `RetainedVisual` widget roots for targeted text plus primitive reconstruction;
+- `PrimitivePaint` roots that can safely piggyback on a retained-visual batch;
+- table-owned text roots and overlay text as distinct classes;
+- explicit retained-visual and primitive-paint global-fallback requirements;
+- scatter-style synchronization state.
+
+The 64-root packet boundary continues to use the sum of raw class-set sizes,
+including a widget present in more than one class. This preserves the previous
+conservative split behavior. Visual roots are unioned only at flush, then use
+the existing ancestor normalization, generation guard, targeted renderer, and
+full fallback. No renderer or fallback policy was broadened.
+
+Added additive request diagnostics under
+`framework.command_text_rebuilds.target_classes` for retained visual, primitive
+paint, table text, and overlay text. Existing aggregate request/completion and
+fallback counters retain their meanings. Focused tests cover class insertion,
+cross-class unioning, table/overlay preservation, raw batch limits, dirty merge
+order, generation capture, mismatch classification, and the existing safe
+fallback predicates.
+
+Fresh Phase 4d release-wheel rendered evidence:
+
+- `labels-fixed:1000`, randomized 20-root `verify-full`: 60.0001 Hz, 13,860
+  retained-visual requests, zero primitive/table/overlay requests, 660 matches,
+  zero mismatch/fallback/stale fallback/primitive upload. Equivalence and
+  screenshot hashes exactly match the Phase 4c verifier smoke.
+- `mixed-state:200`, `verify-full`: 108,671 retained-visual requests, 162,600
+  primitive-paint requests, 3,523 matches, and zero mismatch/fallback/stale
+  fallback. Equivalence
+  `80652a5c0bb50585dd284931f0f98dbc22182ac69320fb66686342ac8076af9a`
+  and screenshot
+  `6c5ec803bb2de9a39f9d0a8b625be71a4480c85441cdfe58e775360202612492`
+  match the authoritative Phase 4a rendered result. Its 24.4014 Hz is expected
+  double-rebuild diagnostic throughput.
+
+The sustained randomized gate used the same 20-of-1,000 schedule for a
+one-second warmup plus 145 measured seconds. It sustained 59.9999 Hz and
+completed **8,760/8,760** targeted/full comparisons with zero primitive, text,
+or line-plot mismatches, zero fallback, zero stale-generation fallback, and zero
+primitive upload bytes. It rebuilt 183,960 roots, exactly 21 per callback, and
+routed all 183,960 requests through `RetainedVisual`.
+
+Combined randomized locality differential coverage is now:
+
+- Phase 4c verifier probe: 660 matches.
+- Phase 4d typed-target locality smoke: 660 matches.
+- Phase 4d sustained gate: 8,760 matches.
+- Total: **10,080 matches, zero mismatches**.
+
+This closes the Phase 4 requirement of zero differential mismatches over 10,000
+randomized mutation batches. Sustained-gate equivalence hash:
+`7592f7cdd6adf56e14ff6a440ced0d9d9fc26ebead5901c1f0c4e3361aa3da85`;
+screenshot hash:
+`927cbe66454678be2a80a704d3d365a53ecd02336752d59479cb0538f7343d68`.
+
+Complete regressions pass: Rust **922 passed / 13 ignored**, Python **568
+passed**.
+
+```text
+artifacts/gui-update-pipeline-phase4d-typed-targets-locality-smoke-v1/summary.json
+artifacts/gui-update-pipeline-phase4d-typed-targets-mixed-smoke-v1/summary.json
+artifacts/gui-update-pipeline-phase4d-randomized-10000-gate-v1/summary.json
+artifacts/live-update-phase4d-typed-targets-wheel/dragongui-0.1.0-cp312-abi3-win_amd64.whl
+artifacts/live-update-phase4d-typed-targets-runtime
+```
+
+Wheel SHA-256:
+`512286b80e0289e09718acbaad65725bd0534744de51cde8eb94b3a786e5afaf`.
+Extracted `_dragongui.pyd` SHA-256:
+`01687d1fc026acd28006a8c15f48b0b124100d6c59feaddc19fec4a9fdeb41f2`.
+
+#### August 1, 2026 — Phase 4e matched full-fallback overhead gate
+
+Added `run_gui_update_pipeline_runtime_ab.py`, a runtime-to-runtime A/B harness
+that alternates control/candidate order by repetition, starts a fresh process per
+sample, validates every report, captures machine metadata, and gates throughput,
+command-drain p95, and rebuild-flush p95. Each pair must also have exact
+retained-state equivalence and screenshot hashes. The case and matrix runners
+now accept `--typed-target-diagnostics required|optional`, allowing the Phase 4b
+control to omit diagnostics that did not exist yet while requiring them from the
+Phase 4d candidate. Focused tests cover the overhead/regression calculations.
+
+The matched gate compared the Phase 4b pre-typed runtime with the Phase 4d
+typed-target runtime on the current workstation. It used `intrinsic-text:200`,
+batched optimized updates, two-second warmups, 20-second measurements, 60 Hz,
+five repetitions, alternated order, and screenshots. All ten runs validated:
+
+| Metric | Phase 4b control median | Phase 4d candidate median | Candidate change |
+|---|---:|---:|---:|
+| Throughput | 16.9501 Hz | 17.5499 Hz | 3.54% improvement |
+| Command-drain p95 | 92.9661 ms | 89.9343 ms | 3.26% improvement |
+| Rebuild-flush p95 | 91.7768 ms | 88.7737 ms | 3.27% improvement |
+
+The candidate passed all configured overhead gates. Equivalence was exact in
+all pairs at
+`847172609b9769bba6bce7ee07166459b0cd3a9525178b424e6a68adb2b20040`;
+screenshots were exact at
+`1ab6bfb6a0b3caeaae6e0ab218a8198518c550651338d3893db4729bbfb1bd38`.
+
+Final Python regressions pass: **569 passed**. The case runner, matrix runner,
+and new runtime A/B runner also pass bytecode compilation.
+
+```text
+artifacts/gui-update-pipeline-phase4e-full-fallback-ab-v1/summary.json
+```
+
+This closes Phase 4. Continue with centralized Phase 5 command coalescing keys,
+barriers, and merge rules.
+
+#### August 1, 2026 — Phase 5 command-semantics audit
+
+The initial audit confirms that coalescing semantics currently live in two
+independent implementations. Queue insertion in `native/src/commands.rs` uses
+the private `command_coalesce_key(...)` and
+`merge_replaced_command_flags(...)`. Drain-time batching in
+`native/src/runtime.rs` separately tracks properties, scatter/plot resources,
+themes, stylesheets, extension display lists, and icon themes, then performs an
+additional adjacent line-append merge. This is the divergence Phase 5 is meant
+to eliminate.
+
+The first bounded refactor will define one shared semantic descriptor covering
+coalescing key, barrier class, and merge policy. Before either consumer changes,
+table-driven and randomized reference tests must preserve the current safe
+behavior and explicitly cover:
+
+- `SetProps` expansion/property ordering;
+- structural replacement boundaries;
+- snapshot and request/response observation boundaries;
+- lossless append/event/callback commands;
+- `coalesce=false` data updates; and
+- sticky scatter/line `fit` and histogram `auto_fit` flags.
+
+After those tests exist, queue insertion and drain-time coalescing can migrate
+one command family at a time, with diagnostics distinguishing received,
+applied, superseded, merged, and barrier-segment counts.
+
+#### August 1, 2026 — Phase 5a shared key, merge, and strong barriers
+
+The command families already coalesced at both queue insertion and drain time
+now use one native contract:
+
+- `Command::coalescing_key()` defines replaceable widget/property, theme,
+  stylesheet, scatter, line-plot, histogram, scalar-bar, and actor identities;
+- `Command::merge_replaced(...)` owns sticky scatter/line `fit` and histogram
+  `auto_fit` merging; and
+- `Command::coalescing_barrier()` identifies structural and observation
+  boundaries.
+
+The runtime reverse pass now keys its overlapping family map with the shared
+`CommandCoalescingKey` rather than independently reconstructing IDs and
+properties. Queue insertion and drain-time batching both clear their active
+replacement segment at `ReplaceNode`/`ReplaceChildren` and at scatter/window
+screenshot, debug-snapshot, and latency-probe requests.
+
+This corrects an earlier semantic mismatch in which a later update could
+supersede an earlier update across `DebugSnapshot`. Tests now require the
+pre-snapshot update, snapshot request, and post-snapshot update to remain in
+that order at both queue and drain levels. Structural tests likewise preserve
+property and extension-display-list updates on both sides of replacement. The
+barrier is intentionally global and conservative for this first increment;
+target-scoped structural segmentation can be considered only with reference
+coverage and a measured reason.
+
+New contract tests also prove that `coalesce=false`, `SetProps`, append,
+structural, and observation commands do not acquire replacement keys, and that
+sticky flags survive replacement only within matching command families.
+Complete native regressions pass: **926 passed / 13 ignored**.
+
+Still outstanding for Phase 5: define `SetProps` packet-level handling,
+migrate runtime-only display-list/icon-theme and adjacent-append policies,
+classify callback/event boundaries, add randomized queue/packet/drain reference
+tests, and add received/applied/superseded/merged/barrier diagnostics.
+
+#### August 1, 2026 — Phase 5b packets and runtime-only families
+
+Extension display lists and icon themes now participate in
+`Command::coalescing_key()`. This removes their independent runtime tracking
+set/boolean and lets queue insertion discard obsolete payloads before drain.
+The queue snapshot adds replacement-family counters for
+`extension_display_list` and `icon_theme`; existing aggregate replacement
+counts retain their meaning.
+
+Adjacent line-plot append semantics are now centralized in
+`Command::try_merge_adjacent(...)`. It merges only consecutive appends with the
+same widget, series, `max_points`, and payload format, consumes the later byte
+buffer without cloning, and returns incompatible commands unchanged. The
+runtime pass retains its distinct adjacent merge stage but no longer owns the
+compatibility definition.
+
+`PropUpdate::coalescing_key()` now shares the exact widget/property identity
+used by individual `SetProp`. Drain-time `SetProps` processing uses it to:
+
+- retain the latest duplicate inside a packet;
+- remove an earlier packet update superseded by a later packet or `SetProp`;
+- preserve the relative order of surviving updates;
+- retain the surviving updates in one `SetProps` command; and
+- stop replacement at structural or observation segment barriers.
+
+The queue continues to preserve each property packet atomically; packet-aware
+deduplication belongs at drain time because one queue node can contain multiple
+independent keys. Tests cover cross-packet replacement and prove that a debug
+snapshot preserves the packet before it and the property update after it.
+
+Focused coverage also verifies compatible and incompatible adjacent append
+merges and queue-level display-list/icon-theme replacement diagnostics.
+Complete native regressions pass: **930 passed / 13 ignored**.
+
+The Phase 2 randomized model still treats snapshots as ordinary lossless
+commands and its generational candidate has no barrier segment identity. The
+next increment must update the reference, stable-slot, linked-slot, and
+generational models together before claiming randomized barrier equivalence.
+Callback/event classification and received/applied/superseded/merged/barrier
+diagnostics also remain open. Build and benchmark a fresh release runtime after
+those items land so the performance gate measures the complete semantics.
+
+#### August 1, 2026 — Phase 5c barrier-aware models and diagnostics
+
+The Phase 2 randomized reference gate now models strong segments. `Snapshot`
+and generic lossless/callback commands are barriers in the abstract stream:
+
+- the reference queue limits replacement/removal to the suffix after the most
+  recent barrier;
+- stable-slot and linked-slot candidates clear their active latest-key maps at
+  barriers;
+- stable-slot compaction rebuilds the latest map while respecting barriers; and
+- the generational candidate stores `(segment, key)` identities, preserving
+  earlier payloads while preventing cross-segment invalidation.
+
+The existing seeded differential passes **2,000 seeds × 200 commands = 400,000
+generated commands** with random partial drains. Reference, stable-slot,
+linked-slot, and generational outputs remain exact for every drain.
+
+Production `DrainPythonTasks` is now `CommandCoalescingBarrier::Callback`.
+Queue insertion and runtime reverse coalescing therefore preserve commands on
+both sides of Python callback execution. Focused property/scatter tests and the
+full scalar-bar regression now enforce that boundary. Native input/window
+events travel through the event-loop path rather than the queued `Command`
+stream, so no additional event command requires classification here.
+
+Queue diagnostics add:
+
+```text
+barrier_segments.total
+barrier_segments.by_class.structural
+barrier_segments.by_class.observation
+barrier_segments.by_class.callback
+```
+
+Runtime debug snapshots add cumulative `command_drain.coalescing` data:
+
+- command counts: received, retained, superseded, and merged;
+- property-update counts: received, retained, and superseded; and
+- barrier-segment count.
+
+Focused tests assert exact callback, packet-deduplication, and adjacent-append
+accounting. The first full run found one stale scalar-bar expectation that
+assumed callback crossing; updating it to preserve both segments closed the
+suite. Complete native regressions pass: **930 passed / 13 ignored**.
+
+The remaining Phase 5 instrumentation item is runtime superseded/merged
+attribution by command family. After that, build a fresh release wheel/runtime
+and run the current-machine ordered-barrier and representative throughput gates
+with exact retained-state and screenshot validation.
+
+#### August 1, 2026 - Phase 5d per-family attribution and release gate
+
+Runtime command coalescing now attributes received, retained, superseded, and
+merged commands to a fixed 12-family enum. The families cover property,
+property packet, theme, stylesheet, scatter points, line plot, histogram,
+scatter scalar bar, scatter actor, extension display list, icon theme, and
+line-plot append. `Command::merge_replaced(...)` reports whether the shared
+sticky-flag policy performed a merge, so attribution cannot drift from command
+semantics. A fixed counter array is used in the drain hot path; family names are
+materialized only when serializing a debug snapshot.
+
+This representation was selected from measurement. The first release candidate
+used a `BTreeMap`; its exact ordered-barrier A/B measured 11.50% command-drain
+overhead and failed the 5% gate. That intermediate remains available at
+`artifacts/gui-update-pipeline-phase5d-ordered-barrier-ab-v1/summary.json`.
+The fixed-array candidate was rebuilt and remeasured rather than accepting the
+instrumentation cost.
+
+The authoritative release A/B compares the Phase 4d control runtime with the
+fixed-array Phase 5d candidate on this workstation. Runs used fresh processes,
+two-second warmups, 20-second measurements, a 60 Hz target, five alternating
+repetitions, screenshots, and a 5% overhead limit.
+
+| Workload / metric | Phase 4d control | Phase 5d candidate | Candidate change |
+|---|---:|---:|---:|
+| Ordered barrier throughput | 59.9993 Hz | 59.9998 Hz | 0.0009% improvement |
+| Ordered barrier command-drain p95 | 3.6116 ms | 3.4999 ms | 3.09% improvement |
+| Ordered barrier rebuild-flush p95 | 3.0532 ms | 2.9291 ms | 4.06% improvement |
+| Mixed-state throughput | 59.8982 Hz | 59.8998 Hz | 0.0027% improvement |
+| Mixed-state command-drain p95 | 15.7334 ms | 15.5791 ms | 0.98% improvement |
+| Mixed-state rebuild-flush p95 | 1.0385 ms | 1.0152 ms | 2.24% improvement |
+
+All ten samples per workload validated. Ordered-barrier samples matched
+equivalence hash
+`bb6c089af9966f1a3a06e2c40159db7f13369145d1b29a175b65118b43452c2f`
+and screenshot hash
+`0641bc4e82a0e948194f891c5e59e08aed7af8c14dac309f7d60d8efe733fde4`.
+Mixed-state samples matched equivalence hash
+`411e52f18d7d6f06ced7540e8f5e756e506ca58bdf0cb806b33bed5c79f4ae5d`
+and screenshot hash
+`917013df2102f401dda28de5fc45f7e3444b8514905fc66a191a14aeddc43ac9`.
+
+The emitted diagnostics contain useful family attribution. One ordered-barrier
+candidate sample reports `property_packet` commands as 2,640 received, 1,320
+retained, and 1,320 superseded; nested property updates report 54,120 received,
+27,720 retained, and 26,400 superseded. A focused native test covers sticky
+scatter replacement attribution. Complete native regressions pass: **931
+passed / 13 ignored**. Formatting and diff validation pass.
+
+```text
+artifacts/gui-update-pipeline-phase5d-ordered-barrier-ab-v2/summary.json
+artifacts/gui-update-pipeline-phase5d-mixed-state-ab-v1/summary.json
+artifacts/live-update-phase5d-command-semantics-wheel/dragongui-0.1.0-cp312-abi3-win_amd64.whl
+artifacts/live-update-phase5d-command-semantics-runtime
+```
+
+The release wheel SHA-256 is
+`0a03445e6c48f94f19c70de1bb1f600da68495e21f5af62c8b33a11cf4bc93e8`;
+the extracted extension SHA-256 is
+`527c468b3e4558960641718099610b5ced3f06f1f99f612703db5196d5846e4c`.
+The wheel currently omits `WebView2Loader.dll`, so the benchmark runtime carries
+the repository copy beside the extension; direct native import then passes.
+
+Phase 5 is complete. Queue-level, packet-level, and drain-level coalescing use
+the same keys, barrier classes, and merge policies, with barrier-aware
+randomized equivalence, per-family diagnostics, and passed release A/B gates.
+
+#### August 1, 2026 - Phase 6a unkeyed backlog safety
+
+The Phase 6 orientation audit found that the existing keyed task path already
+implements the proposed latest-state abstraction. `App.call_soon_threadsafe`
+with a stable `coalesce_key` is thread-safe, retains only the newest pending
+callback at its latest ordered position, composes with `update_batch()`, and is
+already exercised by the public batched telemetry example. A separate
+`latest_updates(...)` helper is therefore deferred unless usability evidence
+shows that a second name materially improves safety.
+
+The first safety increment instead detects the demonstrated failure mode:
+unkeyed/lossless Python task backlog growth. `AppHandle` now counts pending and
+high-water unkeyed tasks independently. It emits an actionable `RuntimeWarning`
+at 256 pending callbacks, then only when the backlog doubles. The message
+explains that unkeyed work is FIFO/lossless and directs replaceable snapshot
+producers to a stable `coalesce_key`; genuinely lossless producers are told to
+reduce rate or batch their events. This geometric policy bounds warning volume
+without hiding continued growth.
+
+Runtime Python snapshots add `unkeyed_tasks_pending`,
+`unkeyed_task_queue_high_water`, `task_queue_growth_warnings`, and
+`next_task_queue_warning_at`. Deterministic tests use a threshold of four and
+verify warnings exactly at four and eight, correct cleanup after drain, and a
+healthy 1,000-submission keyed control with no warnings, queue high-water one,
+and only the final callback executed.
+
+`dg.help.live_updates.threads()` now includes a table that distinguishes
+latest-state keyed snapshots from unkeyed lossless events, explicitly says
+intermediate snapshots may be skipped, and documents the warning and snapshot
+fields. The batched telemetry example now schedules its completion callback as
+an unkeyed lossless event so it cannot replace the final keyed state snapshot.
+The complete Python regression suite passes: **571 passed**. Bytecode
+compilation and diff validation pass.
+
+#### August 1, 2026 - Phase 6b validated producer-safety gate
+
+`examples/live_update_producer_safety_probe.py` now exercises the public live
+runtime rather than only the internal task queue. Every burst submits many
+replaceable snapshots under one stable key, follows them with one separately
+marked unkeyed event, and waits for that event before continuing. Its
+machine-readable report rejects stale Python/native final state, any lost or
+reordered event, Python queue high-water above two, unkeyed high-water above
+one, warning emissions, Python or native queue residue, worker errors, or a run
+that performed no replacement.
+
+The authoritative v2 run used 100 bursts of 100 snapshots:
+
+| Result | Observed |
+|---|---:|
+| Keyed snapshot submissions | 10,000 |
+| Applied snapshot callbacks | 100 |
+| Coalesced snapshot callbacks | 9,900 |
+| Lossless events submitted/retained | 100 / 100 |
+| Final Python/native snapshot | 9,999 / 9,999 |
+| Final Python/native event count | 100 / 100 |
+| Python total/unkeyed queue high-water | 2 / 1 |
+| Python/native final queue depth | 0 / 0 |
+| Queue-growth warnings | 0 |
+| Native physical-slot high-water | 3 |
+
+The native queue ended with zero live or stale entries and recorded 100
+callback barriers plus the final observation barrier. All 12 probe checks
+passed.
+
+```text
+artifacts/live-update-phase6b-producer-safety-v2/report.json
+artifacts/live-update-phase6b-producer-safety-runtime
+```
+
+The report SHA-256 is
+`5f7b2f6bbc60f2080dcb6bac896430c6201ef67053ca06149a7efca371996517`.
+The isolated runtime combines the current Python layer (`runtime.py` SHA-256
+`3cb4c564f0a6da18051928eabec2da35b1188413a6811be9cb1993b927ca8895`)
+with the validated Phase 5d native extension SHA-256
+`527c468b3e4558960641718099610b5ced3f06f1f99f612703db5196d5846e4c`.
+
+Native queue warnings were evaluated but not added. The bridge already reports
+depth, logical and physical high-water, replacements by family, stale entries,
+and barrier segments; replaceable state uses the bounded linked-slot queue. The
+validated producer workload peaked at only three native slots. Emitting a
+second warning without a demonstrated sustained lossless-native backlog would
+duplicate the Python warning and provide less actionable origin information.
+Revisit this only if Phase 7 scenario/soak evidence shows native-only growth.
+
+The full Python regression remains **571 passed**; bytecode and diff checks
+pass. Phase 6's target behavior is now demonstrated. The remaining work is the
+broader live-plot/stress-example and threading-guidance audit and an
+evidence-based decision on expensive-callback supersession warnings.
+
+#### August 1, 2026 - Phase 6c producer call-site and guidance audit
+
+Every `call_soon_threadsafe` site in active examples, legacy examples, and the
+Python runtime was inventoried with AST-based classification. Stable keys were
+added to replaceable histogram, scatter-camera, streaming-scatter,
+scatter-performance, diagnostic/stat, and thread-monitor snapshot paths. The
+built-in thread monitor now coalesces refreshes under
+`dragongui.thread-monitor.latest`, preventing its own UI refresh from becoming
+a backlog during a slow frame.
+
+After the changes, active examples contain eight keyed replacement sites and
+13 intentional unkeyed sites. The unkeyed sites are all lossless plot/log
+appends, marked events, ordered benchmark actions, one-shot launch/completion
+callbacks, or failure-monitor probes. Theme Forge and CATHODE already modeled
+the desired split and remain unchanged: append/log streams are unkeyed while
+replaceable gauge/label/LED snapshots use stable keys. Runtime unkeyed sites are
+one-shot app/dialog lifecycle callbacks or the explicitly per-payload legacy
+scatter callback handoff.
+
+Threading guidance is now consistent in:
+
+```text
+README.md
+docs/library-overview.md
+docs/widgets-reference.md
+docs/sphinx/live-updates.md
+dg.help.live_updates.threads()
+```
+
+All five distinguish stable-key latest-state work from unkeyed FIFO/lossless
+work. Public progress and prepared-scatter examples are keyed; plot appends are
+unkeyed. `dg.help` points to the batching example, producer-safety gate, Theme
+Forge, and CATHODE as executable reference patterns.
+
+New regressions require all standalone guides to mention both `coalesce_key`
+and lossless semantics and verify the built-in monitor's stable key. Existing
+manual tests validate linked paths and Python call shapes. All changed examples
+compile, the complete Python suite passes **573 tests**, and diff validation
+passes.
+
+Phase 6 is complete. The existing keyed API is the validated convenience
+pattern, so a redundant wrapper is not justified. Expensive-callback
+supersession warnings remain evidence-gated for Phase 7 rather than adding
+noise without a demonstrated distinct backlog.
+
+#### August 1, 2026 - Phase 7a coverage inventory and per-change matrix
+
+The integrated scenario inventory maps the required release coverage to
+existing executable tools:
+
+| Requirement | Coverage |
+|---|---|
+| Dashboard low/medium/high | live-dashboard case and matrix runner |
+| Labels-only/mixed state | update-pipeline case and matrix runner |
+| Theme/CSS replacement, resize, viewports, decorations | Theme Forge autopilot plus CSS/layout probes |
+| Scroll/focus/selection/tabs/overlays/tooltips/drag-drop | interaction and focused feature probes |
+| Malformed/stale updates and queued shutdown | native/Python regressions, Theme Forge malformed cases, queue models |
+| Lossless trace/log streams | CATHODE and Theme Forge split-stream workers |
+
+Theme Forge already has bounded autopilot cycles, report output, and automatic
+exit. CATHODE is the one orchestration gap: its lossless trace/log workload is
+present, but it cannot yet run for a bounded interval, capture diagnostics, or
+write a machine-readable result. Phase 7b should add that without changing the
+workload semantics.
+
+The required per-change labels-only and mixed-state tier ran against the
+current Phase 6 isolated runtime on this workstation. Each sample used a fresh
+process, two-second warmup, five-second measurement, a 60 Hz target, batched
+updates, required typed-target diagnostics, and a screenshot.
+
+| Scenario | Throughput | Dropped | Drain p95 | Apply p95 | Flush p95 |
+|---|---:|---:|---:|---:|---:|
+| Labels fixed, 200 | 59.8036 Hz | 1 | 4.4818 ms | 4.3607 ms | 0.1151 ms |
+| Mixed state, 200 | 59.9975 Hz | 0 | 17.4457 ms | 15.8522 ms | 1.0147 ms |
+
+Both completed tick 419 in Python and native retained state. All 30 labels and
+36 mixed-state checks passed, including screenshots, exact final state, typed
+targets, text-invalidation accounting, zero layout failures, zero targeted
+fallback, zero Python/native residue, and zero stale entries. Python task queue
+high-water remained one with zero warnings; native high-water was one/two.
+
+Labels equivalence/screenshot SHA-256 values are
+`44a47a1c2a21b1bc07022d7df62fd6bd725927faea43d742500b7e969410ca8b` and
+`027b3bb623bc7f1d6f1aee1aea248993da4b9352954532c972054f147c96b79e`.
+Mixed-state values are
+`4fac31afc112d6606cff451a3993069c17af912197d926741431961be10cadaf` and
+`d8ddc42a8c8bcec8f6d1f0cada3f66cc030159a1b1568d02aacb38606190590b`.
+
+```text
+artifacts/live-update-phase7a-per-change-matrix-v1/summary.json
+```
+
+The summary SHA-256 is
+`b3271b78bebe9c7aa0e95d9b3e09bf15d4caf54637875db10634461108d41452`.
+Absolute timings are current-machine evidence only.
+
+#### August 1, 2026 - Phase 7b bounded CATHODE validation
+
+The CATHODE stress demo now provides the missing bounded automation controls:
+`--validate-seconds`, `--validation-timeout`, and `--report`. It waits for
+runtime readiness, runs its existing split producer workload for the requested
+interval, stops the producer, drains both queues through the final keyed
+snapshot, emits a machine-readable JSON result, requests application exit, and
+returns a pass/fail process status. Normal interactive behavior is unchanged.
+
+Validation telemetry distinguishes produced ticks, unkeyed plot/trace stream
+ticks, lossless log ticks, and keyed latest-state snapshot ticks. The 11 checks
+cover exact stream and log retention, final keyed snapshot application,
+identical final Python/native retained lane text, Python/native queue drainage,
+zero queue-growth warnings, worker shutdown, and validation errors. Focused CI
+contracts also cover the bounded CLI and retained-tree/final-value helpers.
+
+The authoritative run used this workstation, the full 96-tile/480-row default
+workload, ten live seconds, a 20-second readiness/drain timeout, and the Phase
+6b isolated release runtime. All 11 checks passed:
+
+- 36 produced ticks and all 36 lossless stream ticks retained;
+- all five expected log ticks retained;
+- 32 keyed snapshots executed and four safely coalesced;
+- final tick 275 reached identical Python/native lane text `78%`;
+- Python queue high-water six, unkeyed high-water five, native high-water 30;
+- zero queue-growth warnings and zero final Python/native queue depth.
+
+```text
+artifacts/live-update-phase7b-cathode-validation-v1/report.json
+```
+
+The report SHA-256 is
+`8073864791ed208c4135d9c111bad782a203cfb40fe41e948925626aab1a03ab`;
+the exercised demo SHA-256 is
+`aeea4a4e06b3abe6c9f33c0929aac2755466839b309652c95a8a5a9667218b37`.
+The isolated runtime hashes remain
+`3cb4c564f0a6da18051928eabec2da35b1188413a6811be9cb1993b927ca8895`
+for `runtime.py` and
+`527c468b3e4558960641718099610b5ced3f06f1f99f612703db5196d5846e4c`
+for `_dragongui.pyd`. The focused benchmark-validation suite passes **10
+tests**, the complete Python suite passes **575 tests**, and bytecode/diff
+checks pass. The next Phase 7 increment is the combined bounded Theme
+Forge/CATHODE autopilot tier, followed by the remaining interaction/decorations
+matrix and extended soaks.
+
+#### August 1, 2026 - Phase 7c paired stress autopilots
+
+The paired Theme Forge/CATHODE tier is now bounded and green against the same
+Phase 6b isolated runtime. Theme Forge was aligned with the other benchmark
+entry points by honoring `DRAGONGUI_BENCH_PYTHON_PATH`. Its runner now also
+creates missing report-parent directories and joins background workers during
+shutdown. The initial two-cycle execution passed both integrity cycles but
+exposed the missing-directory exception and failed to terminate, so it was
+rejected. The repaired rerun used two cycles and the standard 0.32-second
+settle, completed in 187 seconds, wrote its report, and exited zero.
+
+Each Theme Forge cycle reported zero retained-state regressions, zero layout
+issues, zero bad viewports/pages, intact cascade recovery after malformed CSS,
+and no final stylesheet error. Phase 7b's paired CATHODE workload remains 11/11
+green with exact lossless stream/log retention and zero final queue depth.
+
+```text
+artifacts/live-update-phase7c-combined-autopilots-v1/theme-forge-report.json
+artifacts/live-update-phase7b-cathode-validation-v1/report.json
+```
+
+Theme Forge's report and exercised-script SHA-256 values are respectively
+`cd08bf074841f21f73f578bd98cfa7d1a67542d67922f3fb424e4462249acbf2` and
+`d4904da7537ed0d52d086ddab371a4316737589178b5817204285cfd758959c8`.
+The CATHODE report remains
+`8073864791ed208c4135d9c111bad782a203cfb40fe41e948925626aab1a03ab`.
+The next increment is the remaining interaction/decorations scenario matrix,
+followed by extended soaks and the final comparative report.
+
+#### August 1, 2026 - Phase 7d interaction and decoration matrix
+
+The visual-audit harness now honors `DRAGONGUI_BENCH_PYTHON_PATH` in both the
+parent process and generated wrapper and creates wrappers in a dedicated clean
+temporary directory. This repaired a rejected first attempt where an unrelated
+`inspect.py` in the general Windows temp directory shadowed the standard
+library. The v1 blocked artifact is diagnostic only; v2 is authoritative.
+
+The v2 client-decoration target passed three fresh outcome-checked states with
+native screenshots/snapshots: keyboard focus traversal, Enter/Space
+maximize-restore with Win32 state assertions, and Alt+Space system-menu
+open/close. Theme Forge then passed one complete live cycle with native OS
+decorations, reporting zero retained-state regressions, layout issues, bad
+viewports/pages, or final stylesheet error and clean malformed-CSS recovery.
+
+The current-machine `state-controls:8` batch sample used a two-second warmup,
+five-second measurement, 60 Hz target, typed diagnostics, screenshot, and a
+concurrent 50 ms interaction probe. It passed all **62 checks** at 59.9872 Hz
+with zero dropped ticks, exact tick-419 Python/native state, retained focus and
+caret geometry, bounded text clips, correct follow/static scroll behavior,
+zero layout failures, queue high-water two, and zero final queue depth. All 99
+interaction samples completed with 0.8117 ms p95 latency. Focused audit,
+headless Theme Forge, drag/drop payload, and decoration contracts pass **40
+tests**; the complete Python suite passes **575 tests**.
+
+```text
+artifacts/live-update-phase7d-interaction-decoration-matrix-v2/report.json
+artifacts/live-update-phase7d-interaction-decoration-matrix-v2/theme-forge-native-report.json
+artifacts/live-update-phase7d-state-controls-v1/summary.json
+```
+
+The artifact SHA-256 values are respectively
+`66e4a8af523518be7ce06388cb8ecd3de3b2ecaf63c2d0c7867d390ad752b4dd`,
+`e0e93711927d6c6adef63f64e3bb14c142fa11237f96d2909d03c805c3e0ebe5`,
+and `b680c92e0d844c81de55375313ba169db253806491a49e9aee88b59adbd11f19`.
+Physical title dragging/resizing/minimize/close and pointer-driven drag/drop
+remain platform/manual rows; their retained-state and dispatch contracts are
+green. Automate practical residual gestures before marking the complete
+scenario matrix done, then proceed to extended queue/memory soaks.
+
+#### August 1, 2026 - Phase 7e native pointer drag/drop
+
+The last practical application-interaction gap is now automated. The visual
+audit action language adds `drag:#source->#target`, implemented as a real
+Win32 left-button press, 12 interpolated mouse moves with the button held, and
+release over the retained target. A paired `assert-text:#widget=value` action
+checks callback output directly in the native retained tree. Stable source and
+result IDs plus an outcome-checked manifest state convert the drag/drop probe
+from manual to automated coverage.
+
+Against the Phase 6b isolated runtime, the live audit dragged `Sensor A` into
+the compatible asset lane, dispatched `on_drop`, and verified exact retained
+text `Asset lane: Sensor A (asset)`. The target passed with native screenshot
+and debug snapshot artifacts. Focused syntax, audit, and drag/drop contracts
+pass **37 tests**. Disabled-source and incompatible-target rejection remain
+API/dispatch contract-covered.
+
+```text
+artifacts/live-update-phase7e-pointer-interactions-v1/report.json
+```
+
+The report SHA-256 is
+`88c5d3879bcb24260484432807b05499fa30872702c865472643ab2dc6ab83f6`.
+Harness, probe, and manifest SHA-256 values are respectively
+`56222c310a8df8efb415a801b591dcbc12ea0625831fa56ae0500757de3a2eeb`,
+`25aace7dbeb544aebaad19b3c16447ef23c282ad44e41437d9af1c2015dac381`,
+and `d455d872a4c809f40303cb4c408f0d998356174719bc1818095332dabc42d095`.
+Physical titlebar move, edge/corner resize, minimize, and close remain explicit
+platform-manual rows because they move, hide, or destroy the audit window.
+Automated maximize/restore, focus traversal, system-menu, client/native
+decoration, live retained state, and application drag/drop are green. The next
+automated phase is the first extended high-load queue/memory soak. The complete
+Python regression suite passes **576 tests**.
+
+#### August 1, 2026 - Phase 7f high-load soak 1 of 3
+
+The live-dashboard matrix runner now exposes the case runner's existing
+`--update-mode` selection so extended artifacts explicitly record DragonGUI's
+transport. The first authoritative soak used a fresh process, the Phase 6b
+isolated runtime, batch mode, five-second warmup, and 600.0001 measured seconds
+at the full high load (six 50k-point lines, 50k scatter points, 128x128 heatmap,
+and 200 labels) on this workstation.
+
+All **23 validation checks passed**. It completed 13,858 measured generations
+at 23.0950 Hz, with 22,142 scheduled generations dropped/coalesced under
+overload and exact final producer tick 36,299. Python coalesced 22,324 obsolete
+tasks, held queue high-water at one (unkeyed zero), emitted zero warnings, and
+drained to zero. Native high-water/physical peak were 40, with 1,674
+replacements, zero stale entries, and zero final depth. Drain recovery was
+610.94 ms. Command-drain p95 was 45.2838 ms and CPU averaged 96.09% of one
+core, making command application the measured high-load limit in this sample.
+
+RSS was 245.97 MiB at start, 264.84 MiB peak, and 263.05 MiB at end. Whole-run
+growth was 17.08 MiB (1.708 MiB/minute), but the second half of 606 checkpoints
+added only 1.00 MiB. This is consistent with a warm-allocation plateau, not yet
+proof of leak freedom; two independent 10-minute repeats remain required.
+Absolute throughput is current-machine evidence only. The 23.1 Hz result is
+lower than desired and must be repeated and investigated before the final
+comparative report.
+
+```text
+artifacts/live-update-phase7f-high-soak-1-v1/summary.json
+artifacts/live-update-phase7f-high-soak-1-v1/raw/high-dragongui-1.json
+```
+
+Summary/raw SHA-256 values are
+`6d869e985685c4ad43cfea1a523052fd7ef36d4449f0661dddfc81d700344e68` and
+`1802e00899502f40cdf53a8024fc6bed99d6c21f8addcef82cf3a4b2e6111f9f`.
+The runner SHA-256 is
+`03609437220c529041c4a803f9de97a9764eae1933d4c9bd6109439b350b49e3`.
+Next run soak 2 with the same configuration and compare second-half RSS slope,
+throughput, command-drain distribution, and recovery time.
+
+#### August 1, 2026 - Phase 7g high-load soak 2 of 3
+
+The second independent soak used the identical fresh-process, isolated-runtime,
+batch-mode, five-second-warmup, 600-second high-load configuration. All **23
+checks passed**. It completed 18,591 measured generations at 30.9850 Hz,
+dropped/coalesced 17,409 scheduled generations, and reached exact final tick
+36,299. Python high-water remained one (unkeyed zero), warnings were zero,
+17,565 obsolete tasks were coalesced, and final depth was zero. Native
+high-water/physical peak again stayed 40, stale/final depth stayed zero, and
+drain recovery was 394.13 ms.
+
+The pair now demonstrates material runtime variance despite identical inputs.
+Soak 2 throughput was 34.16% above soak 1 (30.9850 versus 23.0950 Hz), while
+command-drain p95 was 24.41% lower (34.2311 versus 45.2838 ms). CPU remained
+saturated at 100.95% of one core. Native replacements increased from 1,674 to
+28,980 as the faster run admitted more overlapping work, without increasing
+the 40-slot bound or leaving residue.
+
+RSS started at 246.75 MiB and peaked/ended at 265.74 MiB: +18.99 MiB or 1.899
+MiB/minute. Quarter growth was +15.21, +1.50, +0.05, and +2.23 MiB; second-half
+growth was +2.84 MiB versus soak 1's +1.00 MiB. Both runs allocate primarily
+in the first quarter and are nearly flat in the third, but the late soak-2 step
+means bounded allocation is not yet accepted. Soak 3 must resolve both the RSS
+shape and 23.1–31.0 Hz throughput spread.
+
+```text
+artifacts/live-update-phase7g-high-soak-2-v1/summary.json
+artifacts/live-update-phase7g-high-soak-2-v1/raw/high-dragongui-1.json
+```
+
+Summary/raw SHA-256 values are
+`0c8f72f0c03fa70c5a26b670d0556bfd218ff5bf30cb9b0bedea7084eab9e18c` and
+`44f1ecd1731891c421ab1e72ec0096e2b2c6ccbb93640e45f8cd2d08eae177ad`.
+Next run soak 3 identically and aggregate all three before the 60-minute gate.
+
+#### August 1, 2026 - Phase 7h high-load soak 3 and aggregate
+
+Soak 3 used the identical configuration and passed all **23 checks**, exact
+final tick 36,299, and clean Python/native drains with zero warnings/stale
+entries. It ran at 29.0316 Hz, command-drain p95 41.0441 ms, and recovery
+438.74 ms. Queue high-water was again one/40. RSS rose from 245.04 to 267.31
+MiB (+22.27 MiB, 2.227 MiB/minute); quarter deltas were +16.86, +0.57, +1.49,
+and +3.35 MiB, leaving +4.84 MiB second-half growth.
+
+The three fresh 10-minute samples pass **69/69 checks** with zero warnings,
+stale entries, or final residue and identical maximum Python/native high-water
+of one/40. Queue correctness and boundedness therefore pass. Aggregate results:
+
+- throughput median 29.0316 Hz, range 23.0950–30.9850 Hz (34.16% spread);
+- command-drain p95 median 41.0441 ms, range 34.2311–45.2838 ms;
+- RSS-growth median 18.99 MiB, range 17.08–22.27 MiB;
+- second-half RSS-growth median 2.84 MiB, range 1.00–4.84 MiB.
+
+Memory/performance stability remains unresolved, so the 60-minute gate is
+deferred. Retained counts stayed fixed at 617 widgets, six line series, 300,000
+source points, 1,976 rendered points, and 29 text entries. In contrast, each
+sample accumulated 5.38–7.41 million layout-text cache misses, 328–452 capacity
+clears, and 18,483–24,192 glyph-atlas trims, scaling with completed generations.
+This points to transient text-measurement/atlas allocation pressure rather than
+obvious retained resource growth. Attribute and control that churn before the
+hour-long release soak.
+
+```text
+artifacts/live-update-phase7h-high-soak-3-v1/summary.json
+artifacts/live-update-phase7h-high-soak-3-v1/raw/high-dragongui-1.json
+artifacts/live-update-phase7h-high-soak-aggregate-v1/summary.json
+```
+
+Soak-3 summary/raw hashes are
+`07ce03901af4499579749a7e9e309f8eb68ae321e56580a18f0bd28f7b898a73` and
+`0d7d5f85bb64c814665f577bc12f7e873bbc517e8485b2d40b35748f8007f0e8`.
+The aggregate SHA-256 is
+`ac31598a873e5c70ea68eb2fc284fda2698c1e68b371da933d90019dc20c1208`.
+Next run a short controlled cache/atlas attribution gate, then decide whether
+to fix or proceed to the 60-minute soak with the limitation documented.
+
+## Historical July 31 baseline — original machine, reference only
 
 The July 31 validated matrix is the initial reference point:
 
@@ -1654,7 +2996,8 @@ that would make both regressions and performance attribution difficult.
 - [x] Add dirty-class and fallback-reason metrics.
 - [x] Add labels-only, intrinsic-text, mixed-state, and burst cases.
 - [x] Add the ordered-barrier benchmark case.
-- [ ] Capture five-run baseline artifacts.
+- [x] Capture fresh five-run baseline artifacts on the current computer before
+  Phase 4 performance changes; historical-machine absolutes are reference only.
 - [x] Identify the first measured implementation target.
 
 ### Phase 1 — Batch transport/API
@@ -1689,21 +3032,51 @@ that would make both regressions and performance attribution difficult.
 - [x] Add conservative fast-path eligibility and reasons.
 - [x] Add geometry, clip, scroll, hit-test, and screenshot equivalence tests.
 - [x] Run fixed versus intrinsic text A/B cases.
-- [ ] Expand eligibility only after zero mismatches.
+- [x] Add a forced-safe layout control and fixed-label differential case.
+- [x] Add the state-control differential and focused-caret/scroll validation.
+- [x] Add the plot-chrome differential and line-plot GPU rebuild proof.
+- [x] Add HTML-fallback, embedded-WebView, and icon differentials.
+- [x] Close the repeated-release targeted-fallback gate (0% fallback).
+- [x] Close the repeated-release rebuild-flush performance gate (99.05% median
+  reduction measured; 20% required).
+- [x] Make the post-differential eligibility decision; retain explicit
+  target-local routes rather than broadening the general predicate.
 
 ### Phase 4/5 — Dirty locality and command semantics
 
-- [ ] Add typed target sets and structure generations.
-- [ ] Add targeted-versus-full differential verification mode.
-- [ ] Centralize command coalescing keys, barriers, and merge rules.
-- [ ] Run randomized batches and locality scaling probes.
-- [ ] Confirm full-fallback workloads do not materially regress.
+- [x] Add retained-tree structure generations and stale-target fallback diagnostics.
+- [x] Consolidate deferred work into typed retained-visual, primitive-paint,
+  table-text, and overlay target classes with preserved fallback semantics.
+- [x] Add core retained primitive/text/line-plot targeted-versus-full
+  differential verification mode.
+- [x] Establish the shared command key, sticky-merge, and strong
+  structural/observation barrier contract for overlapping queue/drain families.
+- [x] Centralize `SetProps`, display-list, icon-theme, and adjacent-append
+  semantics across packet-level and runtime-only processing.
+- [x] Add callback barrier classification and pass the barrier-aware randomized
+  reference gate over 400,000 generated commands with partial drains.
+- [x] Add queue barrier-class and aggregate runtime command/property coalescing
+  diagnostics.
+- [x] Add runtime superseded/merged attribution by command family and run the
+  fresh current-machine release correctness/performance gate.
+- [x] Add and pass deterministic randomized 1-of-1,000 and 20-of-1,000 locality
+  scaling controls.
+- [x] Reach 10,000 randomized targeted-versus-full differential batches (10,080
+  matches, zero mismatches).
+- [x] Confirm full-fallback workloads do not materially regress (matched
+  five-repetition runtime A/B improved throughput 3.54%, command-drain p95
+  3.26%, and rebuild-flush p95 3.27%).
 
 ### Phase 6/7 — Developer safety and release
 
-- [ ] Add validated latest-state convenience pattern if still justified.
-- [ ] Add bounded queue-growth diagnostics.
-- [ ] Update `dg.help`, examples, and threading guidance.
+- [x] Validate the existing keyed latest-state convenience pattern; do not add
+  a redundant wrapper without usability evidence.
+- [x] Add bounded Python task queue-growth diagnostics with rate-limited,
+  actionable warnings and snapshot counters.
+- [x] Update `dg.help`, examples, and threading guidance with tested
+  latest-state versus FIFO/lossless semantics.
+- [x] Generate the refreshed current-machine three-library engineering report
+  with 99/99 validated checks and explicit July 31 context deltas.
 - [ ] Run full scenario matrix and extended soaks.
 - [ ] Generate final comparative report.
 - [ ] Remove temporary legacy/candidate switches.
@@ -1733,3 +3106,75 @@ This plan is complete when:
 The goal is not merely a higher frame-rate number. The completed system must be
 faster because it performs less obsolete and unrelated work, while remaining
 observable, bounded, and semantically correct.
+
+## August 1 comparative-report checkpoint
+
+The requested refreshed live-dashboard comparison is complete at
+`plans/gui-live-dashboard-performance-report-2026-08-01.html`. It preserves
+the original July 31 HTML and adds a dated current-machine report.
+
+Method:
+
+- nine fresh processes: low/medium/high × DragonGUI/Dear PyGui/PyQtGraph;
+- one measured repetition per configuration;
+- five-second warmup and 60-second measurement;
+- rotating framework order;
+- DragonGUI keyed latest-frame coalescing plus batch property transport;
+- portable project-local CPython 3.12.10 and isolated comparison packages;
+- fresh current-source MSVC release wheel, SHA-256
+  `7df7b3fd09f8f38c331ca5f29daf236f49d0b9cfa54766c2f5b59558e73bcff7`.
+
+The matrix passed 99/99 validation checks with zero failures. Exact throughput
+was:
+
+| Load | DragonGUI | Dear PyGui | PyQtGraph |
+|---|---:|---:|---:|
+| Low | 60.000 Hz | 60.000 Hz | 59.983 Hz |
+| Medium | 59.966 Hz | 59.999 Hz | 23.384 Hz |
+| High | 28.049 Hz | 23.964 Hz | 3.017 Hz |
+
+DragonGUI therefore leads the fresh high-load current-machine comparison by
+17.0% over Dear PyGui and 829.8% over PyQtGraph. High-load peak RSS was 251.3
+MiB for DragonGUI, 787.7 MiB for Dear PyGui, and 123.6 MiB for PyQtGraph.
+DragonGUI high-load submit p95/frame-work p95 were 11.253/0.596 ms.
+
+The dated report also shows the published July 31 table beside the fresh
+results. DragonGUI low and medium throughput rose from 58.7/58.3 Hz to
+60.000/59.966 Hz. High throughput changed from 38.1 to 28.049 Hz, while high
+submit p95 improved from 16.27 to 11.253 ms, frame p95 from 0.89 to 0.596 ms,
+and peak RSS from 432 to 251.3 MiB. These are not a controlled code-only A/B:
+the old report came from the prior slower computer and individual property
+transport. The report labels the deltas accordingly.
+
+A same-machine legacy-wheel control was attempted with the preserved July 3
+wheel. It did not meet the current harness contract in a usable time: three
+one-second smoke cases exceeded a two-minute timeout and produced no validated
+summary. Its two remaining Python processes were stopped and the partial run
+was excluded.
+
+Artifacts:
+
+```text
+artifacts/gui-live-dashboard-comparison-2026-08-01-v1/summary.json
+artifacts/gui-live-dashboard-comparison-2026-08-01-v1/raw/*.json
+plans/gui-live-dashboard-performance-report-2026-08-01.html
+```
+
+Summary/report SHA-256 values are
+`555c19ff3ac8b44a03cb1322db04da601f8496e7c3b2e451c247f81625d3062a`
+and
+`debc0da62a18ac5560fce2c81d2ac3ff17c7ea81b761eb1ec5042c1b85d6e7cc`.
+Both changed benchmark scripts passed `python -m py_compile`; the focused
+benchmark-validation suite passed 10/10 tests in 0.15 seconds; and the touched
+files passed `git diff --check` (line-ending notices only).
+
+This is a validated engineering comparison, not the final Phase 7 release
+report. It does not satisfy the definition-of-complete high-load target:
+28.049 Hz does not exceed the historical 38.1 Hz target, even though that
+target came from another machine. The authoritative next sequence remains:
+
+1. Attribute text-measurement-cache clears and glyph-atlas trims.
+2. Run a short controlled verification of the selected churn change.
+3. Run the 60-minute high-load release soak.
+4. Generate the final release report and remove temporary legacy/candidate
+   switches.

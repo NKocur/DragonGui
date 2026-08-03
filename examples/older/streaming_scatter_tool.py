@@ -75,7 +75,10 @@ def start_stream() -> None:
     def worker() -> None:
         while not stream_stop.wait(0.5):
             try:
-                app.call_soon_threadsafe(push_frame)
+                app.call_soon_threadsafe(
+                    push_frame,
+                    coalesce_key="streaming-scatter.latest-frame",
+                )
             except RuntimeError:
                 break
 

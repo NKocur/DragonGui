@@ -118,6 +118,12 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--load", action="append", choices=LOADS)
     parser.add_argument("--framework", action="append", choices=FRAMEWORKS)
+    parser.add_argument(
+        "--update-mode",
+        choices=("individual", "batch"),
+        default="individual",
+        help="DragonGUI property transport mode (default: individual).",
+    )
     parser.add_argument("--resume", action="store_true", help="Reuse existing raw samples that passed validation")
     args = parser.parse_args()
     loads = tuple(args.load or LOADS)
@@ -152,6 +158,8 @@ def main() -> int:
                     "--load", load, "--warmup-seconds", str(args.warmup_seconds),
                     "--measure-seconds", str(args.measure_seconds), "--output", str(output),
                 ]
+                if framework == "dragongui":
+                    command.extend(["--update-mode", args.update_mode])
                 print(f"[{repetition + 1}/{repetitions}] {load}: {framework}", flush=True)
                 started = time.perf_counter()
                 completed = subprocess.run(
@@ -181,6 +189,7 @@ def main() -> int:
             "target_hz": 60.0,
             "warmup_seconds": args.warmup_seconds,
             "measure_seconds": args.measure_seconds,
+            "dragon_update_mode": args.update_mode,
             "synchronous_adapters_drop_overdue_scheduled_ticks": True,
             "dragon_uses_latest_frame_task_coalescing": True,
             "dragon_exits_after_producer_completion_and_queue_settle": True,

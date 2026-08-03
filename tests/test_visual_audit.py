@@ -22,6 +22,18 @@ def load_visual_audit():
     return module
 
 
+def test_visual_audit_accepts_checked_native_drag_actions() -> None:
+    visual_audit = load_visual_audit()
+
+    visual_audit.validate_state_action("drag:#sensor-a-source->#asset-drop-zone")
+    visual_audit.validate_state_action(
+        "assert-text:#asset-drop-result=Asset lane: Sensor A (asset)"
+    )
+
+    with pytest.raises(ValueError, match="unsupported visual audit state action"):
+        visual_audit.validate_state_action("drag:#source")
+
+
 def test_merge_results_preserves_existing_artifacts_and_worst_status() -> None:
     visual_audit = load_visual_audit()
     manifest = [{"id": "a"}, {"id": "b"}]

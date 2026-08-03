@@ -10,6 +10,7 @@ from threading import local, RLock
 import time
 import traceback
 from typing import Any
+import warnings
 
 from .diagnostics import _get_collector as _diagnostics_collector
 from .diagnostics import record_task_failure as _record_task_failure
@@ -17,6 +18,7 @@ from .diagnostics import record_task_failure as _record_task_failure
 
 _MAX_PYTHON_TASKS_PER_DRAIN = 100
 _PYTHON_TASK_DRAIN_BUDGET_MS = 6.0
+_PYTHON_TASK_QUEUE_WARNING_THRESHOLD = 256
 _TOAST_LEVELS = {"info", "success", "warning", "error"}
 _TOAST_POSITIONS = {"top-right", "top-left", "bottom-right", "bottom-left"}
 _active_app_handle: AppHandle | None = None
@@ -635,6 +637,10 @@ class AppHandle:
         self._python_tasks_executed = 0
         self._python_tasks_coalesced = 0
         self._python_task_queue_high_water = 0
+        self._unkeyed_python_tasks_pending = 0
+        self._unkeyed_python_task_queue_high_water = 0
+        self._python_task_queue_growth_warnings = 0
+        self._next_python_task_queue_warning = _PYTHON_TASK_QUEUE_WARNING_THRESHOLD
         self._pending_native: deque[tuple[str, tuple[object, ...]]] = deque()
         self._click_callbacks: dict[str, Callable[[], None]] = {}
         self._change_callbacks: dict[str, Callable[[object], None]] = {}
@@ -707,6 +713,7 @@ class AppHandle:
                 collector = _diagnostics_collector()
         except Exception:
             collector = None
+        queue_growth_warning: str | None = None
         with self._lock:
             if self._closed:
                 raise RuntimeError("DragonGUI app handle is closed")
@@ -723,6 +730,27 @@ class AppHandle:
                 if replaced_sequence is not None and self._tasks.pop(replaced_sequence, None):
                     self._python_tasks_coalesced += 1
                 self._pending_task_keys[coalesce_key] = scheduled.sequence
+            else:
+                self._unkeyed_python_tasks_pending += 1
+                self._unkeyed_python_task_queue_high_water = max(
+                    self._unkeyed_python_task_queue_high_water,
+                    self._unkeyed_python_tasks_pending,
+                )
+                if (
+                    self._unkeyed_python_tasks_pending
+                    >= self._next_python_task_queue_warning
+                ):
+                    pending = self._unkeyed_python_tasks_pending
+                    queue_growth_warning = (
+                        "DragonGUI's unkeyed Python task backlog reached "
+                        f"{pending} pending callbacks. Unkeyed "
+                        "call_soon_threadsafe work is FIFO and lossless; use a stable "
+                        "coalesce_key for replaceable latest-state snapshots, or reduce "
+                        "the producer rate for events that must remain lossless."
+                    )
+                    self._python_task_queue_growth_warnings += 1
+                    while self._next_python_task_queue_warning <= pending:
+                        self._next_python_task_queue_warning *= 2
             self._tasks[scheduled.sequence] = scheduled
             self._python_tasks_enqueued += 1
             self._python_task_queue_high_water = max(
@@ -738,6 +766,8 @@ class AppHandle:
                 scheduled.origin = collector.record_enqueue()
             except Exception:
                 pass
+        if queue_growth_warning is not None:
+            warnings.warn(queue_growth_warning, RuntimeWarning, stacklevel=2)
         if should_request_drain:
             try:
                 sender.enqueue_drain_python_tasks()
@@ -1451,6 +1481,12 @@ class AppHandle:
                 "tasks_executed": self._python_tasks_executed,
                 "tasks_coalesced": self._python_tasks_coalesced,
                 "task_queue_high_water": self._python_task_queue_high_water,
+                "unkeyed_tasks_pending": self._unkeyed_python_tasks_pending,
+                "unkeyed_task_queue_high_water": (
+                    self._unkeyed_python_task_queue_high_water
+                ),
+                "task_queue_growth_warnings": self._python_task_queue_growth_warnings,
+                "next_task_queue_warning_at": self._next_python_task_queue_warning,
                 "task_drain_budget_ms": _PYTHON_TASK_DRAIN_BUDGET_MS,
                 "task_drain_timing": dict(self._python_task_drain_timing),
                 "last_task_drain": (
@@ -1896,6 +1932,8 @@ class AppHandle:
                         pending_sequence = self._pending_task_keys.get(scheduled.coalesce_key)
                         if pending_sequence == scheduled.sequence:
                             self._pending_task_keys.pop(scheduled.coalesce_key, None)
+                    else:
+                        self._unkeyed_python_tasks_pending -= 1
                 task = scheduled.fn
                 task_label = _callable_label(task)
                 task_t0 = time.perf_counter()
@@ -1979,6 +2017,7 @@ class AppHandle:
             self._drain_requested = False
             self._tasks.clear()
             self._pending_task_keys.clear()
+            self._unkeyed_python_tasks_pending = 0
             self._pending_native.clear()
             self._click_callbacks.clear()
             self._change_callbacks.clear()

@@ -117,7 +117,14 @@ with dg.HLayout(
                     df = _make_scatter_data()
                     try:
                         app.call_soon_threadsafe(
-                            lambda d=df: scatter.set_points(d, x="x", y="y", z="z", scalars=d["v"])
+                            lambda d=df: scatter.set_points(
+                                d,
+                                x="x",
+                                y="y",
+                                z="z",
+                                scalars=d["v"],
+                            ),
+                            coalesce_key="thread-monitor.scatter.latest",
                         )
                     except RuntimeError:
                         break

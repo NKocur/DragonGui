@@ -20,7 +20,18 @@ over rebuilding the entire document tree.
 Use thread-safe scheduling for general UI callbacks:
 
 ```python
-app.call_soon_threadsafe(lambda: progress.set_value(value))
+app.call_soon_threadsafe(
+    lambda: progress.set_value(value),
+    coalesce_key="training.progress.latest",
+)
+```
+
+Stable keys provide latest-state semantics: only the newest pending callback
+for that key runs, so intermediate snapshots may be skipped. Keep lossless
+events and append-only streams unkeyed:
+
+```python
+app.call_soon_threadsafe(lambda: plot.append_points(xs, ys, series="loss"))
 ```
 
 For high-frequency plot data, use packed enqueue APIs where available, such as

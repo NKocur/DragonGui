@@ -520,7 +520,10 @@ def start_stream() -> None:
     def worker() -> None:
         while not stream_stop.wait(0.75):
             try:
-                app.call_soon_threadsafe(push_scatter)
+                app.call_soon_threadsafe(
+                    push_scatter,
+                    coalesce_key="all-features-css.scatter.latest",
+                )
             except RuntimeError:
                 break
 

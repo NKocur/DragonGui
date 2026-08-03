@@ -353,7 +353,8 @@ def toggle_rotate(checked: bool) -> None:
                 tick += 1
                 try:
                     app.call_soon_threadsafe(
-                        lambda t=tick: set_status(f"Auto-rotate tick {t}")
+                        lambda t=tick: set_status(f"Auto-rotate tick {t}"),
+                        coalesce_key="meridian.auto-rotate-status.latest",
                     )
                 except RuntimeError:
                     break
@@ -374,7 +375,8 @@ def show_snapshot() -> None:
             count = gpu.get("renderer", {}).get("widget_count", "?")
             frames = snap.get("runtime", {}).get("frames_rendered", "?")
             app.call_soon_threadsafe(
-                lambda: set_status(f"Widgets: {count}, Frames: {frames}")
+                lambda: set_status(f"Widgets: {count}, Frames: {frames}"),
+                coalesce_key="meridian.snapshot-status.latest",
             )
         except RuntimeError:
             pass

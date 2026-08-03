@@ -3549,6 +3549,30 @@ Guidelines:
 - Leave append/event callbacks unkeyed so every value remains FIFO and lossless.
 - Use live frame streams for high-volume scatter replacement.
 - Prefer latest-frame semantics when old frames are not useful.
+
+| Producer kind | Scheduling form | Semantics |
+|---|---|---|
+| Latest-state snapshot | `call_soon_threadsafe(fn, coalesce_key="stable-name")` | Only the newest pending callback for that key runs. Intermediate snapshots may be skipped. |
+| Lossless event or append | `call_soon_threadsafe(fn)` | Every callback remains FIFO. Nothing is replaced. |
+
+DragonGUI emits a rate-limited `RuntimeWarning` if the pending unkeyed backlog
+reaches 256 callbacks, then only at doubling thresholds. Treat it as a signal
+to add a stable `coalesce_key` when the work is replaceable, or to reduce the
+producer rate/batch lossless events when every item must be retained. Runtime
+debug snapshots expose `unkeyed_tasks_pending`,
+`unkeyed_task_queue_high_water`, and `task_queue_growth_warnings` under
+`runtime.python`. Healthy keyed latest-state traffic does not emit this warning.
+
+Validated overload probe:
+`examples/live_update_producer_safety_probe.py`. It requires a final keyed
+snapshot, retention of every separately marked lossless event, Python task
+queue high-water of two or less, zero warning emissions, and zero queue residue.
+
+Reference workloads `examples/theme_forge_stress_demo.py` and
+`examples/cathode_ops_stress_demo.py` show the combined pattern: plot/log
+appends stay unkeyed and lossless, while gauge/label/LED snapshots use stable
+keys. `examples/live_update_batch_demo.py` shows batching inside one keyed
+latest-state callback.
 """,
     )
     live_batching = _section(

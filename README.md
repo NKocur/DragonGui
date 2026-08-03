@@ -265,11 +265,18 @@ import threading
 def worker():
     while True:
         data = fetch_data()
-        app.call_soon_threadsafe(lambda d=data: scatter.set_points(d))
+        app.call_soon_threadsafe(
+            lambda d=data: scatter.set_points(d),
+            coalesce_key="readme.scatter.latest",
+        )
         time.sleep(1.0)
 
 threading.Thread(target=worker, daemon=True).start()
 ```
+
+Reuse a stable `coalesce_key` for replaceable snapshots so slow rendering skips
+obsolete pending state. Omit the key for lossless events and append-only plot or
+log streams, where every callback must remain FIFO.
 
 **Toasts:**
 ```python

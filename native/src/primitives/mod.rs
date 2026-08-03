@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet, VecDeque},
+    hash::{DefaultHasher, Hash, Hasher},
     ops::Range,
     sync::Arc,
     time::{Instant, SystemTime, UNIX_EPOCH},
@@ -951,6 +952,16 @@ pub struct PrimitivesRenderer {
 }
 
 impl PrimitivesRenderer {
+    /// Stable, process-local signature of the retained primitive stream in
+    /// paint order. Used only by targeted-vs-full rebuild diagnostics.
+    pub(crate) fn diagnostic_signature(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.overlay_start.hash(&mut hasher);
+        self.instances.len().hash(&mut hasher);
+        hasher.write(bytemuck::cast_slice(&self.instances));
+        hasher.finish()
+    }
+
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -1892,6 +1903,17 @@ pub struct LinePlotRenderer {
 }
 
 impl LinePlotRenderer {
+    /// Stable, process-local signature of retained line-plot GPU inputs.
+    pub(crate) fn diagnostic_signature(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.enabled.hash(&mut hasher);
+        self.points.len().hash(&mut hasher);
+        hasher.write(bytemuck::cast_slice(&self.points));
+        self.series_instances.len().hash(&mut hasher);
+        hasher.write(bytemuck::cast_slice(&self.series_instances));
+        hasher.finish()
+    }
+
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,

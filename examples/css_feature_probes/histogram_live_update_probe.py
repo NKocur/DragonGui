@@ -125,7 +125,7 @@ def live_worker() -> None:
             histogram.set_data(frame)
             status.set_value(f"Step {step}: {frame.shape[0]} samples pushed through live Histogram.set_data()")
 
-        app.call_soon_threadsafe(update)
+        app.call_soon_threadsafe(update, coalesce_key="histogram-live.latest")
         step += 1
 
 

@@ -74,6 +74,10 @@ enum CoalesceKey {
 }
 
 impl ModelCommand {
+    fn is_barrier(&self) -> bool {
+        matches!(self, Self::Lossless { .. } | Self::Snapshot { .. })
+    }
+
     fn key(&self) -> Option<CoalesceKey> {
         match self {
             Self::SetProp { widget, prop, .. } => Some(CoalesceKey::SetProp(*widget, *prop)),
@@ -109,23 +113,39 @@ struct ReferenceQueue {
 
 impl ReferenceQueue {
     fn push(&mut self, mut command: ModelCommand) {
+        if command.is_barrier() {
+            self.items.push_back(command);
+            return;
+        }
+        let segment_start = self
+            .items
+            .iter()
+            .rposition(ModelCommand::is_barrier)
+            .map_or(0, |index| index + 1);
         match &command {
             ModelCommand::ClearSheets { origin } => {
+                let mut index = 0;
                 self.items.retain(|queued| {
-                    !matches!(
-                        queued,
-                        ModelCommand::SetSheet { origin: queued_origin, .. }
-                            | ModelCommand::RemoveSheet { origin: queued_origin, .. }
-                            | ModelCommand::ClearSheets { origin: queued_origin }
-                            if queued_origin == origin
-                    )
+                    let in_active_segment = index >= segment_start;
+                    index += 1;
+                    !in_active_segment
+                        || !matches!(
+                            queued,
+                            ModelCommand::SetSheet { origin: queued_origin, .. }
+                                | ModelCommand::RemoveSheet { origin: queued_origin, .. }
+                                | ModelCommand::ClearSheets { origin: queued_origin }
+                                if queued_origin == origin
+                        )
                 });
             }
             _ => {
                 if let Some(key) = command.key() {
                     let mut removed = Vec::new();
+                    let mut index = 0;
                     self.items.retain(|queued| {
-                        if queued.key().as_ref() == Some(&key) {
+                        let in_active_segment = index >= segment_start;
+                        index += 1;
+                        if in_active_segment && queued.key().as_ref() == Some(&key) {
                             removed.push(queued.clone());
                             false
                         } else {
@@ -176,7 +196,9 @@ impl StableSlotQueue {
     }
 
     fn push(&mut self, mut command: ModelCommand) {
-        if let ModelCommand::ClearSheets { origin } = command {
+        if command.is_barrier() {
+            self.latest.clear();
+        } else if let ModelCommand::ClearSheets { origin } = command {
             let keys = self
                 .latest
                 .keys()
@@ -254,7 +276,9 @@ impl StableSlotQueue {
                 continue;
             };
             let new_index = slots.len();
-            if let Some(key) = command.key() {
+            if command.is_barrier() {
+                latest.clear();
+            } else if let Some(key) = command.key() {
                 latest.insert(key, new_index);
             }
             slots.push(Some(command));
@@ -341,7 +365,9 @@ impl LinkedSlotQueue {
     }
 
     fn push(&mut self, mut command: ModelCommand) {
-        if let ModelCommand::ClearSheets { origin } = command {
+        if command.is_barrier() {
+            self.latest.clear();
+        } else if let ModelCommand::ClearSheets { origin } = command {
             let keys = self
                 .latest
                 .keys()
@@ -403,8 +429,17 @@ impl LinkedSlotQueue {
 
 #[derive(Debug)]
 enum GenerationEntry {
-    Keyed { key: CoalesceKey, generation: u64 },
+    Keyed {
+        key: SegmentedCoalesceKey,
+        generation: u64,
+    },
     Lossless(ModelCommand),
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+struct SegmentedCoalesceKey {
+    segment: u64,
+    key: CoalesceKey,
 }
 
 /// Third candidate: ordering contains lightweight generation tokens while the
@@ -413,8 +448,9 @@ enum GenerationEntry {
 #[derive(Default)]
 struct GenerationalQueue {
     order: VecDeque<GenerationEntry>,
-    latest: HashMap<CoalesceKey, (u64, ModelCommand)>,
+    latest: HashMap<SegmentedCoalesceKey, (u64, ModelCommand)>,
     next_generation: u64,
+    current_segment: u64,
     live: usize,
     stale: usize,
     compactions: usize,
@@ -424,7 +460,7 @@ struct GenerationalQueue {
 impl GenerationalQueue {
     const COMPACT_MIN_PHYSICAL: usize = 64;
 
-    fn invalidate_key(&mut self, key: &CoalesceKey) -> Option<ModelCommand> {
+    fn invalidate_key(&mut self, key: &SegmentedCoalesceKey) -> Option<ModelCommand> {
         let (_, previous) = self.latest.remove(key)?;
         self.live -= 1;
         self.stale += 1;
@@ -432,17 +468,26 @@ impl GenerationalQueue {
     }
 
     fn push(&mut self, mut command: ModelCommand) {
+        if command.is_barrier() {
+            self.order.push_back(GenerationEntry::Lossless(command));
+            self.current_segment = self.current_segment.wrapping_add(1);
+            self.live += 1;
+            self.peak_physical = self.peak_physical.max(self.order.len());
+            self.compact_if_needed();
+            return;
+        }
         if let ModelCommand::ClearSheets { origin } = command {
             let keys = self
                 .latest
                 .keys()
                 .filter(|key| {
-                    matches!(
-                        key,
-                        CoalesceKey::Sheet(queued_origin, _)
-                            | CoalesceKey::ClearSheets(queued_origin)
-                            if *queued_origin == origin
-                    )
+                    key.segment == self.current_segment
+                        && matches!(
+                            &key.key,
+                            CoalesceKey::Sheet(queued_origin, _)
+                                | CoalesceKey::ClearSheets(queued_origin)
+                                if *queued_origin == origin
+                        )
                 })
                 .cloned()
                 .collect::<Vec<_>>();
@@ -451,12 +496,20 @@ impl GenerationalQueue {
             }
             command = ModelCommand::ClearSheets { origin };
         } else if let Some(key) = command.key() {
+            let key = SegmentedCoalesceKey {
+                segment: self.current_segment,
+                key,
+            };
             if let Some(previous) = self.invalidate_key(&key) {
                 command.merge_sticky_flags_from(&previous);
             }
         }
 
         if let Some(key) = command.key() {
+            let key = SegmentedCoalesceKey {
+                segment: self.current_segment,
+                key,
+            };
             let generation = self.next_generation;
             self.next_generation = self.next_generation.wrapping_add(1);
             self.latest.insert(key.clone(), (generation, command));

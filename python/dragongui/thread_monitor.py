@@ -98,6 +98,7 @@ def _start_monitor(
                 try:
                     app.call_soon_threadsafe(
                         lambda s=new_snap: _apply_snapshot(s),
+                        coalesce_key="dragongui.thread-monitor.latest",
                         _diagnostics=False,
                     )
                 except RuntimeError:

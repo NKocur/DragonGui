@@ -362,6 +362,38 @@ def test_thread_monitor_worker_stops_when_component_detaches() -> None:
     assert not thread.is_alive()
 
 
+def test_thread_monitor_refresh_uses_stable_latest_state_key() -> None:
+    _reset_collector()
+    handle = AppHandle()
+
+    class Runtime:
+        app_handle = handle
+
+    class Slot:
+        _runtime = Runtime()
+
+        def set(self, value: object) -> None:
+            pass
+
+    slot = Slot()
+    thread = thread_monitor_module._start_monitor(handle, slot, 30, 15.0)
+    deadline = time.monotonic() + 1.0
+    scheduled = None
+    while scheduled is None and time.monotonic() < deadline:
+        with handle._lock:
+            scheduled = next(iter(handle._tasks.values()), None)
+        if scheduled is None:
+            time.sleep(0.01)
+
+    slot._runtime.app_handle = None
+    handle._close()
+    thread.join(timeout=1.0)
+
+    assert scheduled is not None
+    assert scheduled.coalesce_key == "dragongui.thread-monitor.latest"
+    assert not thread.is_alive()
+
+
 def test_thread_monitor_refresh_does_not_record_user_enqueue_metrics() -> None:
     collector = _reset_collector()
     handle = AppHandle()

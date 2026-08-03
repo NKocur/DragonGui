@@ -486,7 +486,10 @@ def stats_worker() -> None:
             snapshot = app.debug_snapshot(timeout_ms=500)
         except Exception:
             continue
-        app.call_soon_threadsafe(lambda s=snapshot: update_stats(s))
+        app.call_soon_threadsafe(
+            lambda s=snapshot: update_stats(s),
+            coalesce_key="scatter-perf.stats.latest",
+        )
 
 
 def streaming_worker() -> None:
@@ -543,7 +546,8 @@ def streaming_worker() -> None:
                 point_size=ps,
                 fit=False,
                 payload=p,
-            )
+            ),
+            coalesce_key="scatter-perf.latest-frame",
         )
         enqueue_ms = (time.perf_counter() - enqueue_t0) * 1000.0
         producer_ms = (time.perf_counter() - producer_t0) * 1000.0

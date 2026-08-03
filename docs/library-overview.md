@@ -265,7 +265,8 @@ updates from UI callbacks or background threads.
 
 Important APIs:
 
-- `App.call_soon_threadsafe(fn)`
+- `App.call_soon_threadsafe(fn, coalesce_key=None)`; reuse a stable key for
+  replaceable latest-state snapshots and omit it for FIFO/lossless events.
 - `App.debug_snapshot(timeout_ms=1000)`
 - `Widget.set_style(style)`
 - `Container.replace_children(children)`

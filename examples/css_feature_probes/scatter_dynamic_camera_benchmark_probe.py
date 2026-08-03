@@ -190,7 +190,10 @@ def run_camera_updates() -> None:
         if stop_event.is_set():
             break
         try:
-            app.call_soon_threadsafe(lambda i=index: dense_plot.set_camera(camera_state(i)))
+            app.call_soon_threadsafe(
+                lambda i=index: dense_plot.set_camera(camera_state(i)),
+                coalesce_key="scatter-camera.latest",
+            )
         except RuntimeError:
             break
         with state_lock:

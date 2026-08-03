@@ -2516,7 +2516,10 @@ def refresh_scatter_stats() -> None:
     def worker() -> None:
         try:
             snapshot = app.debug_snapshot(timeout_ms=500)
-            app.call_soon_threadsafe(lambda s=snapshot: update_scatter_stats(s))
+            app.call_soon_threadsafe(
+                lambda s=snapshot: update_scatter_stats(s),
+                coalesce_key="all-features-v3.scatter-stats.latest",
+            )
         except RuntimeError:
             pass
 
@@ -2595,7 +2598,10 @@ def refresh_html_report_snapshot() -> None:
             count = len(instances) if isinstance(instances, dict) else 0
             recovered = reports.get("profile_recovered") if isinstance(reports, dict) else None
             detail = f"HtmlReport: enabled={enabled}, instances={count}, recovered={recovered}"
-            app.call_soon_threadsafe(lambda text=detail: set_html_report_status(text))
+            app.call_soon_threadsafe(
+                lambda text=detail: set_html_report_status(text),
+                coalesce_key="all-features-v3.html-status.latest",
+            )
         except RuntimeError:
             pass
 
@@ -2635,7 +2641,8 @@ def scatter_stats_worker() -> None:
         last_frames = frames
         try:
             app.call_soon_threadsafe(
-                lambda s=snapshot, fps=observed_fps: update_scatter_stats(s, fps)
+                lambda s=snapshot, fps=observed_fps: update_scatter_stats(s, fps),
+                coalesce_key="all-features-v3.scatter-stats.latest",
             )
         except RuntimeError:
             break

@@ -58,7 +58,7 @@ mod platform {
             CreateCoreWebView2EnvironmentWithOptions, ICoreWebView2, ICoreWebView2Controller,
             ICoreWebView2Environment, ICoreWebView2EnvironmentOptions,
         },
-        WebMessageReceivedEventHandler,
+        NavigationCompletedEventHandler, WebMessageReceivedEventHandler,
     };
     use windows::{
         core::{Error as WindowsError, PWSTR},
@@ -104,6 +104,7 @@ mod platform {
         allow_scripts: Option<bool>,
         status: String,
         message_token: Option<i64>,
+        navigation_token: Option<i64>,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -184,6 +185,7 @@ mod platform {
             collect_visible_reports(tree, layout, state, &mut reports);
 
             let mut active = HashSet::new();
+            let mut sync_error = None;
             for (id, source, rect, allow_scripts) in reports {
                 active.insert(id.clone());
                 if let Err(error) = self.sync_one(&id, source, rect, allow_scripts) {
@@ -193,10 +195,11 @@ mod platform {
                             "WebView2 initialization failed; using native fallback".to_string(),
                         );
                     }
-                    self.last_error = Some(error);
+                    sync_error = Some(error);
                     self.hide_view(&id);
                 }
             }
+            self.last_error = sync_error;
 
             let inactive = self
                 .views
@@ -250,6 +253,7 @@ mod platform {
                         "rect": view.rect,
                         "status": view.status,
                         "source": source_label(view.source.as_ref()),
+                        "source_fingerprint": source_fingerprint(view.source.as_ref()),
                         "allow_scripts": view.allow_scripts,
                     }))
                 }).collect::<serde_json::Map<_, _>>(),
@@ -412,6 +416,8 @@ mod platform {
                 self.message_tx.clone(),
                 self.wake_proxy.clone(),
             )?;
+            let navigation_token =
+                Self::register_navigation_handler(&webview, self.wake_proxy.clone())?;
             Ok(HtmlReportView {
                 controller,
                 webview,
@@ -421,7 +427,30 @@ mod platform {
                 allow_scripts: None,
                 status: "created".to_string(),
                 message_token: Some(message_token),
+                navigation_token: Some(navigation_token),
             })
+        }
+
+        fn register_navigation_handler(
+            webview: &ICoreWebView2,
+            wake_proxy: EventLoopProxy<RuntimeEvent>,
+        ) -> Result<i64, String> {
+            let mut token = 0;
+            unsafe {
+                webview
+                    .add_NavigationCompleted(
+                        &NavigationCompletedEventHandler::create(Box::new(move |_, _| {
+                            // A source update can temporarily fail with ERROR_INVALID_STATE while
+                            // WebView2 is completing the previous navigation. Wake the runtime so
+                            // sync_one can retry the still-pending desired source.
+                            let _ = wake_proxy.send_event(RuntimeEvent::Wake);
+                            Ok(())
+                        })),
+                        &mut token,
+                    )
+                    .map_err(|error| format!("WebView2 navigation handler failed: {error}"))?;
+            }
+            Ok(token)
         }
 
         fn register_message_handler(
@@ -564,6 +593,9 @@ mod platform {
             unsafe {
                 if let Some(token) = self.message_token.take() {
                     let _ = self.webview.remove_WebMessageReceived(token);
+                }
+                if let Some(token) = self.navigation_token.take() {
+                    let _ = self.webview.remove_NavigationCompleted(token);
                 }
                 let _ = self.controller.Close();
             }
@@ -840,6 +872,21 @@ mod platform {
             Some(ReportSource::Empty) => "empty",
             None => "none",
         }
+    }
+
+    fn source_fingerprint(source: Option<&ReportSource>) -> Option<String> {
+        let text = match source? {
+            ReportSource::Url(text) | ReportSource::Html(text) | ReportSource::Blocked(text) => {
+                text
+            }
+            ReportSource::Empty => return None,
+        };
+        let mut hash = 0xcbf29ce484222325_u64;
+        for byte in text.as_bytes() {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        Some(format!("{hash:016x}"))
     }
 }
 

@@ -212,6 +212,13 @@ def validate_state_action(action: str) -> None:
         action,
     ):
         return
+    if re.fullmatch(
+        r"drag:#[A-Za-z_][A-Za-z0-9_.:-]*->#[A-Za-z_][A-Za-z0-9_.:-]*",
+        action,
+    ):
+        return
+    if re.fullmatch(r"assert-text:#[A-Za-z_][A-Za-z0-9_.:-]*=.+", action):
+        return
     if re.fullmatch(r"assert-window-state:(?:normal|maximized|minimized)", action):
         return
     if re.fullmatch(r"set-window-state:normal", action):
@@ -1894,7 +1901,10 @@ def run_probe_process(
     for checkpoint_path in snapshot_path.parent.glob(f"{snapshot_path.stem}-resize-*.json"):
         checkpoint_path.unlink(missing_ok=True)
     env = os.environ.copy()
-    env["PYTHONPATH"] = str(ROOT / "python") + os.pathsep + env.get("PYTHONPATH", "")
+    runtime_path = os.environ.get("DRAGONGUI_BENCH_PYTHON_PATH")
+    env["PYTHONPATH"] = (
+        runtime_path or str(ROOT / "python")
+    ) + os.pathsep + env.get("PYTHONPATH", "")
     env["DRAGONGUI_VISUAL_AUDIT"] = "1"
     env["DRAGONGUI_AUDIT_TARGET"] = target_id
     env["DRAGONGUI_AUDIT_WAIT_MS"] = str(wait_ms)
@@ -2080,7 +2090,10 @@ import zlib
 import ctypes
 from ctypes import wintypes
 
-sys.path.insert(0, {str(ROOT / "python")!r})
+sys.path.insert(
+    0,
+    os.environ.get("DRAGONGUI_BENCH_PYTHON_PATH") or {str(ROOT / "python")!r},
+)
 sys.path.insert(0, {str(script.parent)!r})
 
 import dragongui as dg
@@ -2228,6 +2241,65 @@ def _audited_run(self, window):
                     time.sleep(interval_ms / 1000.0)
         return True
 
+    def pointer_drag(source_selector, target_selector):
+        if os.name != "nt":
+            return False
+        snapshot = debug_snapshot_with_retry()
+        rects = snapshot.get("gpu", {{}}).get("layout", {{}}).get("rects", {{}})
+        source = rects.get(source_selector.lstrip("#"))
+        target = rects.get(target_selector.lstrip("#"))
+        hwnd = current_window_handle()
+        if not isinstance(source, dict) or not isinstance(target, dict) or not hwnd:
+            return False
+
+        def center(rect):
+            return (
+                round(float(rect.get("x", 0)) + float(rect.get("w", 0)) * 0.5),
+                round(float(rect.get("y", 0)) + float(rect.get("h", 0)) * 0.5),
+            )
+
+        def packed(x, y):
+            return ((int(y) & 0xFFFF) << 16) | (int(x) & 0xFFFF)
+
+        def move_cursor(x, y):
+            point = wintypes.POINT(x, y)
+            ctypes.windll.user32.ClientToScreen(hwnd, ctypes.byref(point))
+            ctypes.windll.user32.SetCursorPos(point.x, point.y)
+
+        start_x, start_y = center(source)
+        end_x, end_y = center(target)
+        ctypes.windll.user32.SetForegroundWindow(hwnd)
+        move_cursor(start_x, start_y)
+        ctypes.windll.user32.PostMessageW(hwnd, 0x0200, 0, packed(start_x, start_y))
+        ctypes.windll.user32.PostMessageW(hwnd, 0x0201, 0x0001, packed(start_x, start_y))
+        time.sleep(0.12)
+        for step in range(1, 13):
+            fraction = step / 12.0
+            x = round(start_x + (end_x - start_x) * fraction)
+            y = round(start_y + (end_y - start_y) * fraction)
+            move_cursor(x, y)
+            ctypes.windll.user32.PostMessageW(hwnd, 0x0200, 0x0001, packed(x, y))
+            time.sleep(0.025)
+        ctypes.windll.user32.PostMessageW(hwnd, 0x0202, 0, packed(end_x, end_y))
+        return True
+
+    def retained_node(snapshot, widget_id):
+        def walk(value):
+            if isinstance(value, dict):
+                if value.get("id") == widget_id:
+                    return value
+                for child in value.values():
+                    found = walk(child)
+                    if found is not None:
+                        return found
+            elif isinstance(value, list):
+                for child in value:
+                    found = walk(child)
+                    if found is not None:
+                        return found
+            return None
+        return walk(snapshot)
+
     def key_action(name):
         if os.name != "nt":
             return False
@@ -2345,6 +2417,14 @@ def _audited_run(self, window):
                 raise RuntimeError(f"could not right-click visual audit target {{payload}}")
             time.sleep(0.15)
             return
+        if command == "drag":
+            source, target = payload.split("->", 1)
+            if not pointer_drag(source, target):
+                raise RuntimeError(
+                    f"could not drag visual audit target {{source}} to {{target}}"
+                )
+            time.sleep(0.3)
+            return
         if command == "key":
             if not key_action(payload):
                 raise RuntimeError(f"could not send visual audit key {{payload!r}}")
@@ -2357,6 +2437,16 @@ def _audited_run(self, window):
             if focused != expected:
                 raise RuntimeError(
                     f"expected focus {{expected!r}}, observed {{focused!r}}"
+                )
+            return
+        if command == "assert-text":
+            selector, expected = payload.split("=", 1)
+            snapshot = debug_snapshot_with_retry()
+            node = retained_node(snapshot, selector.lstrip("#"))
+            actual = ((node or {{}}).get("props") or {{}}).get("text")
+            if actual != expected:
+                raise RuntimeError(
+                    f"expected text {{expected!r}} on {{selector}}, observed {{actual!r}}"
                 )
             return
         if command == "assert-system-menu":
@@ -2548,10 +2638,13 @@ sys.argv = [
 ]
 runpy.run_path({str(script)!r}, run_name="__main__")
 """
+    wrapper_dir = Path(tempfile.gettempdir()) / "dragongui_visual_audit_wrappers"
+    wrapper_dir.mkdir(parents=True, exist_ok=True)
     handle = tempfile.NamedTemporaryFile(
         "w",
         suffix="_dragongui_visual_audit.py",
         prefix="",
+        dir=wrapper_dir,
         delete=False,
         encoding="utf-8",
     )

@@ -12,12 +12,15 @@ Run:
     python examples/cathode_ops_stress_demo.py --style amber
     python examples/cathode_ops_stress_demo.py --style ice --rows 1200
     python examples/cathode_ops_stress_demo.py --no-live
+    python examples/cathode_ops_stress_demo.py --validate-seconds 10 --report cathode-validation.json
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import math
+import os
 import random
 import sys
 import threading
@@ -26,7 +29,11 @@ from pathlib import Path
 from typing import Any
 
 if __name__ == "__main__" and __package__ is None:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
+    runtime_path = os.environ.get("DRAGONGUI_BENCH_PYTHON_PATH")
+    sys.path.insert(
+        0,
+        runtime_path or str(Path(__file__).resolve().parents[1] / "python"),
+    )
 
 import dragongui as dg
 
@@ -1375,6 +1382,12 @@ class DemoState:
         self.tick = len(SAMPLES)
         self.random = random.Random(19770614)
         self.stop = threading.Event()
+        self.telemetry_lock = threading.Lock()
+        self.produced_ticks: list[int] = []
+        self.stream_ticks: list[int] = []
+        self.snapshot_ticks: list[int] = []
+        self.log_ticks: list[int] = []
+        self.validation_report: dict[str, Any] | None = None
 
 
 state = DemoState()
@@ -2334,6 +2347,8 @@ def live_worker(app: dg.App) -> None:
         time.sleep(0.28)
         tick = state.tick
         state.tick += 1
+        with state.telemetry_lock:
+            state.produced_ticks.append(tick)
         core = 58.0 + math.sin(tick / 13.0) * 17.0 + math.sin(tick / 3.1) * 4.5
         channel = 41.0 + math.cos(tick / 9.4 + 0.7) * 12.0 + math.sin(tick / 2.3) * 3.1
         scope_window.append(core / 40.0)
@@ -2341,6 +2356,8 @@ def live_worker(app: dg.App) -> None:
         frame = list(scope_window)
 
         def apply_stream(tick: int = tick, core: float = core, channel: float = channel) -> None:
+            with state.telemetry_lock:
+                state.stream_ticks.append(tick)
             if state.plot is not None:
                 state.plot.append_points([float(tick)], [core], series="core", max_points=240)
                 state.plot.append_points([float(tick)], [channel], series="channel", max_points=240)
@@ -2349,6 +2366,8 @@ def live_worker(app: dg.App) -> None:
                 state.console_log.append_line(
                     f"{stamp}  CHANNEL SCAN {tick:05d} CORE {core:5.1f} CH {channel:5.1f}"
                 )
+                with state.telemetry_lock:
+                    state.log_ticks.append(tick)
             if tick % 60 == 0 and state.core_map is not None:
                 state.core_map.cycle(17)
 
@@ -2356,6 +2375,8 @@ def live_worker(app: dg.App) -> None:
             tick: int = tick,
             frame: list[float] = frame,
         ) -> None:
+            with state.telemetry_lock:
+                state.snapshot_ticks.append(tick)
             if state.scope is not None:
                 state.scope.set_values(frame)
 
@@ -2392,6 +2413,151 @@ def live_worker(app: dg.App) -> None:
             break
 
 
+def _find_node(value: object, widget_id: str) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        if value.get("id") == widget_id:
+            return value
+        for child in value.values():
+            found = _find_node(child, widget_id)
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for child in value:
+            found = _find_node(child, widget_id)
+            if found is not None:
+                return found
+    return None
+
+
+def _expected_first_lane_text(tick: int) -> str:
+    value = min(0.99, max(0.03, 0.86 + math.sin(tick * 0.11) * 0.09))
+    return f"{value:.0%}"
+
+
+def bounded_validation(
+    app: dg.App,
+    live_thread: threading.Thread,
+    *,
+    duration_seconds: float,
+    timeout_seconds: float,
+    report_path: Path | None,
+) -> None:
+    started = time.monotonic()
+    report: dict[str, Any]
+    snapshot: dict[str, Any] = {}
+    error: str | None = None
+    try:
+        readiness_deadline = time.monotonic() + timeout_seconds
+        while True:
+            try:
+                snapshot = app.debug_snapshot(timeout_ms=3000)
+                break
+            except RuntimeError:
+                if time.monotonic() >= readiness_deadline:
+                    raise TimeoutError("CATHODE validation runtime did not become ready")
+                time.sleep(0.02)
+
+        time.sleep(duration_seconds)
+        state.stop.set()
+        live_thread.join(timeout=2.0)
+
+        drain_deadline = time.monotonic() + timeout_seconds
+        while True:
+            snapshot = app.debug_snapshot(timeout_ms=5000)
+            runtime = snapshot.get("runtime") or {}
+            python_runtime = runtime.get("python") or {}
+            with state.telemetry_lock:
+                produced = list(state.produced_ticks)
+                stream = list(state.stream_ticks)
+                snapshots = list(state.snapshot_ticks)
+            queues_empty = (
+                int(python_runtime.get("queued_tasks", -1)) == 0
+                and int(runtime.get("command_queue_depth", -1)) == 0
+            )
+            final_snapshot_applied = bool(produced and snapshots and snapshots[-1] == produced[-1])
+            if queues_empty and final_snapshot_applied:
+                break
+            if time.monotonic() >= drain_deadline:
+                break
+            time.sleep(0.05)
+    except Exception as exc:  # pragma: no cover - emitted in validation report
+        error = f"{type(exc).__name__}: {exc}"
+
+    runtime = snapshot.get("runtime") or {}
+    python_runtime = runtime.get("python") or {}
+    command_queue = runtime.get("command_queue") or {}
+    with state.telemetry_lock:
+        produced = list(state.produced_ticks)
+        stream = list(state.stream_ticks)
+        snapshots = list(state.snapshot_ticks)
+        logged = list(state.log_ticks)
+    expected_logged = [tick for tick in produced if tick % 8 == 0]
+    final_tick = produced[-1] if produced else None
+    expected_lane = _expected_first_lane_text(final_tick) if final_tick is not None else None
+    python_lane = state.lane_values[0].text if state.lane_values else None
+    native_lane = None
+    if state.lane_values:
+        native_node = _find_node(snapshot, state.lane_values[0].id)
+        native_lane = ((native_node or {}).get("props") or {}).get("text")
+
+    checks = {
+        "validation_error_free": error is None,
+        "telemetry_produced": len(produced) >= 3,
+        "lossless_stream_ticks_retained": stream == produced,
+        "lossless_log_ticks_retained": logged == expected_logged,
+        "latest_snapshot_reached_final_tick": bool(
+            produced and snapshots and snapshots[-1] == produced[-1]
+        ),
+        "python_latest_snapshot_state": python_lane == expected_lane,
+        "native_latest_snapshot_state": native_lane == expected_lane,
+        "python_queue_drained": int(python_runtime.get("queued_tasks", -1)) == 0,
+        "native_queue_drained": (
+            int(runtime.get("command_queue_depth", -1)) == 0
+            and int(command_queue.get("depth", -1)) == 0
+        ),
+        "no_queue_growth_warnings": (
+            int(python_runtime.get("task_queue_growth_warnings", -1)) == 0
+        ),
+        "live_worker_stopped": not live_thread.is_alive(),
+    }
+    report = {
+        "schema": 1,
+        "probe": "cathode_bounded_validation",
+        "passed": all(checks.values()),
+        "config": {
+            "duration_seconds": duration_seconds,
+            "timeout_seconds": timeout_seconds,
+        },
+        "checks": checks,
+        "observed": {
+            "elapsed_seconds": time.monotonic() - started,
+            "produced_ticks": produced,
+            "stream_ticks": stream,
+            "snapshot_ticks": snapshots,
+            "logged_ticks": logged,
+            "expected_logged_ticks": expected_logged,
+            "final_tick": final_tick,
+            "expected_lane_text": expected_lane,
+            "python_lane_text": python_lane,
+            "native_lane_text": native_lane,
+            "validation_error": error,
+            "python_runtime": python_runtime,
+            "native_command_queue": command_queue,
+        },
+    }
+    state.validation_report = report
+    payload = json.dumps(report, indent=2, sort_keys=True)
+    if report_path is not None:
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(payload + "\n", encoding="utf-8")
+        print(f"[cathode-validation] report written to {report_path}", flush=True)
+    print(payload, flush=True)
+    try:
+        app.request_exit()
+    except RuntimeError:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -2414,6 +2580,13 @@ def build_app(
     state.metric_values.clear()
     state.leds.clear()
     state.tick = len(SAMPLES)
+    state.stop.clear()
+    with state.telemetry_lock:
+        state.produced_ticks.clear()
+        state.stream_ticks.clear()
+        state.snapshot_ticks.clear()
+        state.log_ticks.clear()
+    state.validation_report = None
 
     app = dg.App(theme=theme_for(state.palette))
     state.app = app
@@ -2448,25 +2621,76 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Disable the background telemetry worker.",
     )
+    parser.add_argument(
+        "--validate-seconds",
+        type=float,
+        default=None,
+        help="Run live telemetry for this many seconds, validate it, write the report, and exit.",
+    )
+    parser.add_argument(
+        "--validation-timeout",
+        type=float,
+        default=15.0,
+        help="Seconds allowed for runtime readiness and final queue drainage (default: 15).",
+    )
+    parser.add_argument(
+        "--report",
+        type=Path,
+        default=None,
+        help="Write the bounded validation report to this JSON path.",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.validate_seconds is not None and args.validate_seconds <= 0:
+        raise SystemExit("--validate-seconds must be positive")
+    if args.validation_timeout <= 0:
+        raise SystemExit("--validation-timeout must be positive")
+    if args.validate_seconds is not None and args.no_live:
+        raise SystemExit("--validate-seconds requires live telemetry")
+    if args.report is not None and args.validate_seconds is None:
+        raise SystemExit("--report requires --validate-seconds")
     app, window = build_app(args.style, tiles=max(1, args.tiles), rows=max(1, args.rows))
 
+    live_thread: threading.Thread | None = None
     if not args.no_live:
-        threading.Thread(
+        live_thread = threading.Thread(
             target=live_worker,
             args=(app,),
             name="cathode-telemetry",
             daemon=True,
-        ).start()
+        )
+        live_thread.start()
+
+    validation_thread: threading.Thread | None = None
+    if args.validate_seconds is not None and live_thread is not None:
+        validation_thread = threading.Thread(
+            target=bounded_validation,
+            args=(app, live_thread),
+            kwargs={
+                "duration_seconds": args.validate_seconds,
+                "timeout_seconds": args.validation_timeout,
+                "report_path": args.report,
+            },
+            name="cathode-validation",
+            daemon=True,
+        )
+        validation_thread.start()
 
     try:
-        print(app.run(window))
+        run_result = app.run(window)
+        if args.validate_seconds is None:
+            print(run_result)
     finally:
         state.stop.set()
+        if live_thread is not None:
+            live_thread.join(timeout=2.0)
+        if validation_thread is not None:
+            validation_thread.join(timeout=2.0)
+    if args.validate_seconds is not None:
+        return 0 if state.validation_report and state.validation_report.get("passed") else 1
     return 0
 
 

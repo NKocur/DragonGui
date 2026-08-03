@@ -34,8 +34,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime;
 use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXDOUBLECLK, SM_CYDOUBLECLK};
 
 use crate::commands::{
-    Command, CommandBridge, CommandValue, Dirty, RuntimeEvent, ScatterHoverColumnPacket,
-    ScatterTelemetry, TableColumnPacket,
+    Command, CommandBridge, CommandCoalescingFamily, CommandCoalescingKey, CommandValue, Dirty,
+    RuntimeEvent, ScatterHoverColumnPacket, ScatterTelemetry, TableColumnPacket,
 };
 use crate::css_style::{
     apply_stylesheets_to_tree_for_diagnostics, apply_stylesheets_to_tree_for_media_and_containers,
@@ -68,14 +68,14 @@ use crate::layout::{
 };
 use crate::overlays::{dropdown_overlay_rect, find_node, menu_popup_rect};
 use crate::primitives::{
-    bar_chart_bar_at as primitive_bar_chart_bar_at, bar_chart_text_labels, bar_chart_toolbar_hit,
-    heatmap_cell_at as primitive_heatmap_cell_at, heatmap_text_labels, histogram_plot_rect,
-    histogram_resolved_bounds, histogram_text_labels, histogram_toolbar_hit,
-    interpolate_visual_style, line_plot_plot_rect, line_plot_resolved_bounds,
-    line_plot_text_labels, line_plot_toolbar_hit, modal_close_button_rect,
-    panel_scrollbar_geometry, pie_chart_text_labels, table_scrollbar_geometry, LinePlotBounds,
-    LinePlotRenderer, PanelScrollbarAxis, PanelScrollbarAxisGeometry, PrimitivesRenderer,
-    RectInstance,
+    bar_chart_bar_at as primitive_bar_chart_bar_at, bar_chart_plot_rect, bar_chart_resolved_bounds,
+    bar_chart_text_labels, bar_chart_toolbar_hit, heatmap_cell_at as primitive_heatmap_cell_at,
+    heatmap_text_labels, histogram_plot_rect, histogram_resolved_bounds, histogram_text_labels,
+    histogram_toolbar_hit, interpolate_visual_style, line_plot_plot_rect,
+    line_plot_resolved_bounds, line_plot_text_labels, line_plot_toolbar_hit,
+    modal_close_button_rect, panel_scrollbar_geometry, pie_chart_text_labels,
+    table_scrollbar_geometry, LinePlotBounds, LinePlotRenderer, PanelScrollbarAxis,
+    PanelScrollbarAxisGeometry, PrimitivesRenderer, RectInstance,
 };
 use crate::resources::ResourceRegistry;
 use crate::scatter::{self, PointInstance, ScatterWidget};
@@ -222,185 +222,331 @@ const MAX_COMMANDS_PER_DRAIN_BATCH: usize = 32;
 const COMMAND_DRAIN_BUDGET: Duration = Duration::from_millis(6);
 const COMMAND_FAIRNESS_WARNING_INTERVAL: Duration = Duration::from_secs(1);
 
-fn merge_deferred_visual_targets(
-    text_targets: &mut HashSet<String>,
-    visual_targets: HashSet<String>,
-) {
-    text_targets.extend(visual_targets);
-}
-
 fn can_use_targeted_deferred_rebuild(
     dirty: Dirty,
     text_requires_full: bool,
     visual_requires_full: bool,
     has_targets: bool,
+    structure_generation_matches: bool,
 ) -> bool {
-    matches!(dirty, Dirty::Text) && !text_requires_full && !visual_requires_full && has_targets
+    matches!(dirty, Dirty::Text)
+        && !text_requires_full
+        && !visual_requires_full
+        && has_targets
+        && structure_generation_matches
 }
 
-fn coalesce_runtime_command_batch(commands: &mut Vec<Command>) {
-    if commands.len() < 2 {
-        return;
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct CommandFamilyCoalescingStats {
+    received: u64,
+    retained: u64,
+    superseded: u64,
+    merged: u64,
+}
+
+impl CommandFamilyCoalescingStats {
+    fn record(&mut self, batch: Self) {
+        self.received = self.received.saturating_add(batch.received);
+        self.retained = self.retained.saturating_add(batch.retained);
+        self.superseded = self.superseded.saturating_add(batch.superseded);
+        self.merged = self.merged.saturating_add(batch.merged);
     }
-    let mut seen_scatter_updates = HashMap::new();
-    let mut seen_scatter_actor_updates = HashMap::new();
-    let mut seen_scatter_scalar_bars = HashMap::new();
-    let mut seen_line_plot_updates = HashMap::new();
-    let structurally_replaced_ids: HashSet<String> = commands
-        .iter()
-        .filter_map(|command| match command {
-            Command::ReplaceNode { id, .. } | Command::ReplaceChildren { id, .. } => {
-                Some(id.clone())
-            }
-            _ => None,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct CommandCoalescingStats {
+    received_commands: u64,
+    retained_commands: u64,
+    superseded_commands: u64,
+    merged_commands: u64,
+    barrier_segments: u64,
+    property_updates_received: u64,
+    property_updates_retained: u64,
+    property_updates_superseded: u64,
+    families: [CommandFamilyCoalescingStats; CommandCoalescingFamily::COUNT],
+}
+
+impl CommandCoalescingStats {
+    fn family_mut(&mut self, family: CommandCoalescingFamily) -> &mut CommandFamilyCoalescingStats {
+        &mut self.families[family as usize]
+    }
+
+    fn record(&mut self, batch: Self) {
+        self.received_commands = self
+            .received_commands
+            .saturating_add(batch.received_commands);
+        self.retained_commands = self
+            .retained_commands
+            .saturating_add(batch.retained_commands);
+        self.superseded_commands = self
+            .superseded_commands
+            .saturating_add(batch.superseded_commands);
+        self.merged_commands = self.merged_commands.saturating_add(batch.merged_commands);
+        self.barrier_segments = self.barrier_segments.saturating_add(batch.barrier_segments);
+        self.property_updates_received = self
+            .property_updates_received
+            .saturating_add(batch.property_updates_received);
+        self.property_updates_retained = self
+            .property_updates_retained
+            .saturating_add(batch.property_updates_retained);
+        self.property_updates_superseded = self
+            .property_updates_superseded
+            .saturating_add(batch.property_updates_superseded);
+        for (family, family_batch) in self.families.iter_mut().zip(batch.families) {
+            family.record(family_batch);
+        }
+    }
+
+    fn json_value(&self) -> Value {
+        let families = CommandCoalescingFamily::ALL
+            .into_iter()
+            .map(|family| {
+                let stats = self.families[family as usize];
+                (
+                    family.as_str().to_string(),
+                    json!({
+                        "received": stats.received,
+                        "retained": stats.retained,
+                        "superseded": stats.superseded,
+                        "merged": stats.merged,
+                    }),
+                )
+            })
+            .collect::<Map<String, Value>>();
+        json!({
+            "commands": {
+                "received": self.received_commands,
+                "retained": self.retained_commands,
+                "superseded": self.superseded_commands,
+                "merged": self.merged_commands,
+            },
+            "barrier_segments": self.barrier_segments,
+            "property_updates": {
+                "received": self.property_updates_received,
+                "retained": self.property_updates_retained,
+                "superseded": self.property_updates_superseded,
+            },
+            "families": families,
         })
-        .collect();
-    let mut seen_extension_display_lists = HashSet::new();
-    let mut seen_icon_theme = false;
-    let mut seen_theme = false;
-    let mut seen_stylesheet_mutations = HashSet::new();
+    }
+}
+
+fn coalesce_runtime_command_batch(commands: &mut Vec<Command>) -> CommandCoalescingStats {
+    let mut stats = CommandCoalescingStats {
+        received_commands: commands.len() as u64,
+        ..CommandCoalescingStats::default()
+    };
+    for command in commands.iter() {
+        if let Some(family) = command.coalescing_family() {
+            let family_stats = stats.family_mut(family);
+            family_stats.received = family_stats.received.saturating_add(1);
+        }
+    }
+    if commands.len() < 2 {
+        stats.retained_commands = commands.len() as u64;
+        stats.property_updates_received = commands
+            .iter()
+            .map(|command| match command {
+                Command::SetProps { updates } => updates.len() as u64,
+                Command::SetProp { .. } => 1,
+                _ => 0,
+            })
+            .sum();
+        stats.property_updates_retained = stats.property_updates_received;
+        for command in commands.iter() {
+            if let Some(family) = command.coalescing_family() {
+                let family_stats = stats.family_mut(family);
+                family_stats.retained = family_stats.retained.saturating_add(1);
+            }
+        }
+        return stats;
+    }
+    let mut seen_replacements: HashMap<CommandCoalescingKey, usize> = HashMap::new();
     let mut seen_stylesheet_clears = HashSet::new();
-    let mut seen_props = HashSet::new();
-    let mut filtered = Vec::with_capacity(commands.len());
+    let mut filtered: Vec<Command> = Vec::with_capacity(commands.len());
     while let Some(command) = commands.pop() {
+        if command.coalescing_barrier().is_some() {
+            stats.barrier_segments = stats.barrier_segments.saturating_add(1);
+            seen_replacements.clear();
+            seen_stylesheet_clears.clear();
+            filtered.push(command);
+            continue;
+        }
+        let mut command = command;
+        let family = command.coalescing_family();
+        if let Command::SetProps { updates } = &mut command {
+            let received = updates.len() as u64;
+            stats.property_updates_received =
+                stats.property_updates_received.saturating_add(received);
+            let mut retained = Vec::with_capacity(updates.len());
+            for update in updates.drain(..).rev() {
+                if seen_replacements
+                    .insert(update.coalescing_key(), filtered.len())
+                    .is_none()
+                {
+                    retained.push(update);
+                }
+            }
+            retained.reverse();
+            *updates = retained;
+            let retained = updates.len() as u64;
+            stats.property_updates_retained =
+                stats.property_updates_retained.saturating_add(retained);
+            stats.property_updates_superseded = stats
+                .property_updates_superseded
+                .saturating_add(received.saturating_sub(retained));
+            if !updates.is_empty() {
+                filtered.push(command);
+            } else {
+                stats.superseded_commands = stats.superseded_commands.saturating_add(1);
+                if let Some(family) = family {
+                    let family_stats = stats.family_mut(family);
+                    family_stats.superseded = family_stats.superseded.saturating_add(1);
+                }
+            }
+            continue;
+        }
+        if matches!(&command, Command::SetProp { .. }) {
+            stats.property_updates_received = stats.property_updates_received.saturating_add(1);
+        }
+        let mut merged_replacement = false;
         let keep = match &command {
-            Command::SetProp { id, prop, .. } => seen_props.insert((id.clone(), prop.clone())),
-            Command::SetScatterPointsPacked {
-                id,
-                fit,
-                coalesce: true,
-                ..
-            } => {
-                if let Some(index) = seen_scatter_updates.get(id).copied() {
-                    if *fit {
-                        if let Command::SetScatterPointsPacked { fit: kept_fit, .. } =
-                            &mut filtered[index]
-                        {
-                            *kept_fit = true;
-                        }
-                    }
+            Command::SetProp { .. } => seen_replacements
+                .insert(
+                    command
+                        .coalescing_key()
+                        .expect("SetProp must have a coalescing key"),
+                    filtered.len(),
+                )
+                .is_none(),
+            Command::SetScatterPointsPacked { coalesce: true, .. } => {
+                let key = command
+                    .coalescing_key()
+                    .expect("coalesced scatter points must have a key");
+                if let Some(index) = seen_replacements.get(&key).copied() {
+                    merged_replacement = filtered[index].merge_replaced(&command);
                     false
                 } else {
-                    seen_scatter_updates.insert(id.clone(), filtered.len());
+                    seen_replacements.insert(key, filtered.len());
                     true
                 }
             }
-            Command::SetLinePlotDataPacked {
-                id,
-                series,
-                fit,
-                coalesce: true,
-                ..
-            } => {
-                let key = (id.clone(), series.clone());
-                if let Some(index) = seen_line_plot_updates.get(&key).copied() {
-                    if *fit {
-                        if let Command::SetLinePlotDataPacked { fit: kept_fit, .. } =
-                            &mut filtered[index]
-                        {
-                            *kept_fit = true;
-                        }
-                    }
+            Command::SetLinePlotDataPacked { coalesce: true, .. } => {
+                let key = command
+                    .coalescing_key()
+                    .expect("coalesced line-plot data must have a key");
+                if let Some(index) = seen_replacements.get(&key).copied() {
+                    merged_replacement = filtered[index].merge_replaced(&command);
                     false
                 } else {
-                    seen_line_plot_updates.insert(key, filtered.len());
+                    seen_replacements.insert(key, filtered.len());
                     true
                 }
             }
-            Command::UpdateScatterActorPacked { id, actor_id, .. } => {
-                let key = (id.clone(), *actor_id);
-                if seen_scatter_actor_updates.contains_key(&key) {
-                    false
-                } else {
-                    seen_scatter_actor_updates.insert(key, filtered.len());
-                    true
-                }
-            }
-            Command::SetScatterScalarBar { id, .. } => {
-                if seen_scatter_scalar_bars.contains_key(id) {
-                    false
-                } else {
-                    seen_scatter_scalar_bars.insert(id.clone(), filtered.len());
-                    true
-                }
-            }
-            Command::UpdateExtensionDisplayList { id, .. } => {
-                structurally_replaced_ids.contains(id)
-                    || seen_extension_display_lists.insert(id.clone())
-            }
-            Command::SetIconTheme { .. } => {
-                let keep = !seen_icon_theme;
-                seen_icon_theme = true;
-                keep
-            }
-            Command::SetTheme { .. } => {
-                let keep = !seen_theme;
-                seen_theme = true;
-                keep
-            }
-            Command::SetStylesheet { origin, id, .. } => {
+            Command::UpdateScatterActorPacked { .. }
+            | Command::SetScatterScalarBar { .. }
+            | Command::UpdateExtensionDisplayList { .. }
+            | Command::SetIconTheme { .. } => seen_replacements
+                .insert(
+                    command
+                        .coalescing_key()
+                        .expect("replaceable commands must have a coalescing key"),
+                    filtered.len(),
+                )
+                .is_none(),
+            Command::SetTheme { .. } => seen_replacements
+                .insert(
+                    command
+                        .coalescing_key()
+                        .expect("SetTheme must have a coalescing key"),
+                    filtered.len(),
+                )
+                .is_none(),
+            Command::SetStylesheet { origin, .. } => {
                 !seen_stylesheet_clears.contains(origin)
-                    && seen_stylesheet_mutations.insert((*origin, id.clone()))
+                    && seen_replacements
+                        .insert(
+                            command
+                                .coalescing_key()
+                                .expect("SetStylesheet must have a coalescing key"),
+                            filtered.len(),
+                        )
+                        .is_none()
             }
-            Command::RemoveStylesheet { origin, id } => {
+            Command::RemoveStylesheet { origin, .. } => {
                 !seen_stylesheet_clears.contains(origin)
-                    && seen_stylesheet_mutations.insert((*origin, Some(id.clone())))
+                    && seen_replacements
+                        .insert(
+                            command
+                                .coalescing_key()
+                                .expect("RemoveStylesheet must have a coalescing key"),
+                            filtered.len(),
+                        )
+                        .is_none()
             }
             Command::ClearStylesheets { origin } => seen_stylesheet_clears.insert(*origin),
             _ => true,
         };
         if keep {
+            if matches!(&command, Command::SetProp { .. }) {
+                stats.property_updates_retained = stats.property_updates_retained.saturating_add(1);
+            }
             filtered.push(command);
+        } else {
+            stats.superseded_commands = stats.superseded_commands.saturating_add(1);
+            if let Some(family) = family {
+                let family_stats = stats.family_mut(family);
+                family_stats.superseded = family_stats.superseded.saturating_add(1);
+                if merged_replacement {
+                    family_stats.merged = family_stats.merged.saturating_add(1);
+                }
+            }
+            if merged_replacement {
+                stats.merged_commands = stats.merged_commands.saturating_add(1);
+            }
+            if matches!(&command, Command::SetProp { .. }) {
+                stats.property_updates_superseded =
+                    stats.property_updates_superseded.saturating_add(1);
+            }
         }
     }
     filtered.reverse();
-    coalesce_adjacent_line_plot_appends(&mut filtered);
+    let adjacent_merges = coalesce_adjacent_line_plot_appends(&mut filtered);
+    stats.merged_commands = stats.merged_commands.saturating_add(adjacent_merges);
+    if adjacent_merges > 0 {
+        let family_stats = stats.family_mut(CommandCoalescingFamily::LinePlotAppend);
+        family_stats.merged = family_stats.merged.saturating_add(adjacent_merges);
+    }
+    stats.retained_commands = filtered.len() as u64;
+    for command in &filtered {
+        if let Some(family) = command.coalescing_family() {
+            let family_stats = stats.family_mut(family);
+            family_stats.retained = family_stats.retained.saturating_add(1);
+        }
+    }
     *commands = filtered;
+    stats
 }
 
-fn coalesce_adjacent_line_plot_appends(commands: &mut Vec<Command>) {
+fn coalesce_adjacent_line_plot_appends(commands: &mut Vec<Command>) -> u64 {
     if commands.len() < 2 {
-        return;
+        return 0;
     }
+    let mut merged_count = 0_u64;
     let mut merged: Vec<Command> = Vec::with_capacity(commands.len());
     for command in commands.drain(..) {
-        match command {
-            Command::AppendLinePlotPointsPacked {
-                id,
-                series,
-                xy,
-                max_points,
-                payload_format,
-            } => {
-                if let Some(Command::AppendLinePlotPointsPacked {
-                    id: prev_id,
-                    series: prev_series,
-                    xy: prev_xy,
-                    max_points: prev_max_points,
-                    payload_format: prev_payload_format,
-                }) = merged.last_mut()
-                {
-                    if *prev_id == id
-                        && *prev_series == series
-                        && *prev_max_points == max_points
-                        && *prev_payload_format == payload_format
-                    {
-                        prev_xy.extend(xy);
-                        continue;
-                    }
-                }
-                merged.push(Command::AppendLinePlotPointsPacked {
-                    id,
-                    series,
-                    xy,
-                    max_points,
-                    payload_format,
-                });
-            }
-            other => merged.push(other),
+        let Some(previous) = merged.last_mut() else {
+            merged.push(command);
+            continue;
+        };
+        if let Err(command) = previous.try_merge_adjacent(command) {
+            merged.push(command);
+        } else {
+            merged_count = merged_count.saturating_add(1);
         }
     }
     *commands = merged;
+    merged_count
 }
 
 fn command_is_coalesced_scatter_points(command: &Command) -> bool {
@@ -1772,15 +1918,97 @@ impl DirtyRebuildStats {
 
 const MAX_TARGETED_TEXT_ROOTS_PER_BATCH: usize = 64;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeferredWidgetTargetClass {
+    /// Rebuild retained text and primitive output for this widget subtree.
+    RetainedVisual,
+    /// Rebuild primitive paint; it may piggyback on a retained-visual batch.
+    PrimitivePaint,
+    /// Rebuild table-owned text without treating cell entries as widget text.
+    TableText,
+}
+
+#[derive(Debug, Default)]
+struct DeferredRebuildTargets {
+    retained_visual_roots: HashSet<String>,
+    primitive_paint_roots: HashSet<String>,
+    table_text_roots: HashSet<String>,
+    overlay_text: bool,
+    retained_visual_requires_full: bool,
+    primitive_paint_requires_full: bool,
+    scatter_style_sync: bool,
+}
+
+impl DeferredRebuildTargets {
+    fn insert_widget(&mut self, class: DeferredWidgetTargetClass, widget_id: &str) {
+        match class {
+            DeferredWidgetTargetClass::RetainedVisual => {
+                self.retained_visual_roots.insert(widget_id.to_string());
+            }
+            DeferredWidgetTargetClass::PrimitivePaint => {
+                self.primitive_paint_roots.insert(widget_id.to_string());
+            }
+            DeferredWidgetTargetClass::TableText => {
+                self.table_text_roots.insert(widget_id.to_string());
+            }
+        }
+    }
+
+    fn raw_widget_count(&self) -> usize {
+        self.retained_visual_roots.len()
+            + self.primitive_paint_roots.len()
+            + self.table_text_roots.len()
+    }
+
+    fn take_visual_roots(&mut self) -> HashSet<String> {
+        let mut roots = std::mem::take(&mut self.retained_visual_roots);
+        roots.extend(std::mem::take(&mut self.primitive_paint_roots));
+        roots
+    }
+
+    fn has_targeted_work(&self) -> bool {
+        !self.retained_visual_roots.is_empty()
+            || !self.primitive_paint_roots.is_empty()
+            || !self.table_text_roots.is_empty()
+            || self.overlay_text
+    }
+}
+
+#[derive(Debug, Default)]
+struct DeferredRebuildBatch {
+    dirty: Option<Dirty>,
+    structure_generation: u64,
+    targets: DeferredRebuildTargets,
+}
+
+impl DeferredRebuildBatch {
+    fn begin(structure_generation: u64) -> Self {
+        Self {
+            structure_generation,
+            ..Self::default()
+        }
+    }
+
+    fn merge_dirty(&mut self, dirty: Dirty) -> bool {
+        let merged = self.dirty.is_some();
+        self.dirty = Some(merge_dirty(self.dirty, dirty));
+        merged
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 struct CommandTextRebuildStats {
     targeted_requests: u64,
     global_requests: u64,
     overlay_requests: u64,
+    retained_visual_requests: u64,
+    primitive_paint_requests: u64,
+    table_text_requests: u64,
     attempted_batches: u64,
     completed_batches: u64,
     overlay_batches: u64,
     fallback_batches: u64,
+    stale_generation_fallback_batches: u64,
     rebuilt_roots: u64,
 }
 
@@ -1813,12 +2041,120 @@ impl CommandTextRebuildStats {
             "targeted_requests": self.targeted_requests,
             "global_requests": self.global_requests,
             "overlay_requests": self.overlay_requests,
+            "target_classes": {
+                "retained_visual": self.retained_visual_requests,
+                "primitive_paint": self.primitive_paint_requests,
+                "table_text": self.table_text_requests,
+                "overlay_text": self.overlay_requests,
+            },
             "attempted_batches": self.attempted_batches,
             "completed_batches": self.completed_batches,
             "overlay_batches": self.overlay_batches,
             "fallback_batches": self.fallback_batches,
+            "stale_generation_fallback_batches": self.stale_generation_fallback_batches,
             "rebuilt_roots": self.rebuilt_roots,
             "max_roots_per_batch": MAX_TARGETED_TEXT_ROOTS_PER_BATCH,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum TargetedRebuildVerificationMode {
+    #[default]
+    Off,
+    VerifyFull,
+}
+
+impl TargetedRebuildVerificationMode {
+    const ENV: &'static str = "DRAGONGUI_DIAGNOSTIC_TARGETED_REBUILD_MODE";
+
+    fn from_value(value: Option<&str>) -> Self {
+        match value.map(str::trim) {
+            Some(value) if value.eq_ignore_ascii_case("verify-full") => Self::VerifyFull,
+            _ => Self::Off,
+        }
+    }
+
+    fn from_environment() -> Self {
+        let value = std::env::var(Self::ENV).ok();
+        Self::from_value(value.as_deref())
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::VerifyFull => "verify-full",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct RetainedVisualSignature {
+    primitives: Option<u64>,
+    text: Option<u64>,
+    line_plots: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct TargetedRebuildVerificationStats {
+    attempts: u64,
+    matches: u64,
+    mismatches: u64,
+    primitive_mismatches: u64,
+    text_mismatches: u64,
+    line_plot_mismatches: u64,
+    total_ms: f64,
+    last_targeted: RetainedVisualSignature,
+    last_full: RetainedVisualSignature,
+}
+
+impl TargetedRebuildVerificationStats {
+    fn record(
+        &mut self,
+        targeted: RetainedVisualSignature,
+        full: RetainedVisualSignature,
+        elapsed_ms: f64,
+    ) {
+        self.attempts = self.attempts.saturating_add(1);
+        self.total_ms += elapsed_ms;
+        if targeted == full {
+            self.matches = self.matches.saturating_add(1);
+        } else {
+            self.mismatches = self.mismatches.saturating_add(1);
+            if targeted.primitives != full.primitives {
+                self.primitive_mismatches = self.primitive_mismatches.saturating_add(1);
+            }
+            if targeted.text != full.text {
+                self.text_mismatches = self.text_mismatches.saturating_add(1);
+            }
+            if targeted.line_plots != full.line_plots {
+                self.line_plot_mismatches = self.line_plot_mismatches.saturating_add(1);
+            }
+        }
+        self.last_targeted = targeted;
+        self.last_full = full;
+    }
+
+    fn json_value(self, mode: TargetedRebuildVerificationMode) -> Value {
+        fn signature_json(signature: RetainedVisualSignature) -> Value {
+            json!({
+                "primitives": signature.primitives.map(|value| format!("{value:016x}")),
+                "text": signature.text.map(|value| format!("{value:016x}")),
+                "line_plots": signature.line_plots.map(|value| format!("{value:016x}")),
+            })
+        }
+
+        json!({
+            "mode": mode.name(),
+            "attempts": self.attempts,
+            "matches": self.matches,
+            "mismatches": self.mismatches,
+            "primitive_mismatches": self.primitive_mismatches,
+            "text_mismatches": self.text_mismatches,
+            "line_plot_mismatches": self.line_plot_mismatches,
+            "total_ms": self.total_ms,
+            "last_targeted": signature_json(self.last_targeted),
+            "last_full": signature_json(self.last_full),
         })
     }
 }
@@ -1828,10 +2164,67 @@ enum LiveTextInvalidationReason {
     FixedSingleLineLabel,
     FixedWrappedLabel,
     FixedComposite,
+    TargetLocalState,
+    TargetLocalPlot,
+    TargetLocalHtmlFallback,
+    TargetLocalIcon,
+    ForcedSafeLayout,
     IntrinsicWidth,
     IntrinsicHeight,
     IntrinsicBoth,
     UnsupportedProperty,
+}
+
+const DIAGNOSTIC_TEXT_GEOMETRY_IDS_ENV: &str = "DRAGONGUI_DIAGNOSTIC_TEXT_GEOMETRY_IDS";
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum LiveTextInvalidationMode {
+    #[default]
+    Optimized,
+    ForcedSafeLayout,
+}
+
+impl LiveTextInvalidationMode {
+    const ENV: &'static str = "DRAGONGUI_DIAGNOSTIC_TEXT_INVALIDATION_MODE";
+
+    fn from_environment() -> Self {
+        match std::env::var(Self::ENV) {
+            Ok(value) if value.trim().eq_ignore_ascii_case("forced-layout") => {
+                Self::ForcedSafeLayout
+            }
+            Ok(value)
+                if value.trim().is_empty() || value.trim().eq_ignore_ascii_case("optimized") =>
+            {
+                Self::Optimized
+            }
+            Ok(value) => {
+                eprintln!(
+                    "DragonGUI: ignoring unsupported {}={value:?}; expected optimized or forced-layout",
+                    Self::ENV
+                );
+                Self::Optimized
+            }
+            Err(_) => Self::Optimized,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Optimized => "optimized",
+            Self::ForcedSafeLayout => "forced-layout",
+        }
+    }
+
+    fn apply(self, decision: LiveTextInvalidationDecision) -> LiveTextInvalidationDecision {
+        if self == Self::ForcedSafeLayout && decision.dirty == Dirty::Text {
+            LiveTextInvalidationDecision {
+                dirty: Dirty::Layout,
+                reason: LiveTextInvalidationReason::ForcedSafeLayout,
+            }
+        } else {
+            decision
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1848,6 +2241,11 @@ struct LiveTextInvalidationStats {
     fixed_single_line_label: u64,
     fixed_wrapped_label: u64,
     fixed_composite: u64,
+    target_local_state: u64,
+    target_local_plot: u64,
+    target_local_html_fallback: u64,
+    target_local_icon: u64,
+    forced_safe_layout: u64,
     intrinsic_width: u64,
     intrinsic_height: u64,
     intrinsic_both: u64,
@@ -1866,6 +2264,13 @@ impl LiveTextInvalidationStats {
             LiveTextInvalidationReason::FixedSingleLineLabel => &mut self.fixed_single_line_label,
             LiveTextInvalidationReason::FixedWrappedLabel => &mut self.fixed_wrapped_label,
             LiveTextInvalidationReason::FixedComposite => &mut self.fixed_composite,
+            LiveTextInvalidationReason::TargetLocalState => &mut self.target_local_state,
+            LiveTextInvalidationReason::TargetLocalPlot => &mut self.target_local_plot,
+            LiveTextInvalidationReason::TargetLocalHtmlFallback => {
+                &mut self.target_local_html_fallback
+            }
+            LiveTextInvalidationReason::TargetLocalIcon => &mut self.target_local_icon,
+            LiveTextInvalidationReason::ForcedSafeLayout => &mut self.forced_safe_layout,
             LiveTextInvalidationReason::IntrinsicWidth => &mut self.intrinsic_width,
             LiveTextInvalidationReason::IntrinsicHeight => &mut self.intrinsic_height,
             LiveTextInvalidationReason::IntrinsicBoth => &mut self.intrinsic_both,
@@ -1874,8 +2279,9 @@ impl LiveTextInvalidationStats {
         *reason = reason.saturating_add(1);
     }
 
-    fn json_value(self) -> Value {
+    fn json_value(self, mode: LiveTextInvalidationMode) -> Value {
         json!({
+            "mode": mode.as_str(),
             "candidates": self.candidates,
             "text_only": self.text_only,
             "layout": self.layout,
@@ -1883,6 +2289,11 @@ impl LiveTextInvalidationStats {
                 "fixed_single_line_label": self.fixed_single_line_label,
                 "fixed_wrapped_label": self.fixed_wrapped_label,
                 "fixed_composite": self.fixed_composite,
+                "target_local_state": self.target_local_state,
+                "target_local_plot": self.target_local_plot,
+                "target_local_html_fallback": self.target_local_html_fallback,
+                "target_local_icon": self.target_local_icon,
+                "forced_safe_layout": self.forced_safe_layout,
                 "intrinsic_width": self.intrinsic_width,
                 "intrinsic_height": self.intrinsic_height,
                 "intrinsic_both": self.intrinsic_both,
@@ -3980,6 +4391,15 @@ fn collect_computed_styles_snapshot(
     }
 }
 
+fn diagnostic_fnv1a64(text: &str) -> String {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in text.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
+}
+
 fn props_snapshot(node: &WidgetNode) -> Value {
     let props = &node.props;
     let mut snapshot = json!({
@@ -4064,6 +4484,12 @@ fn props_snapshot(node: &WidgetNode) -> Value {
             "intrinsic_height".to_string(),
             json!(props.intrinsic_height),
         );
+        if node.kind == WidgetKind::IconButton {
+            map.insert(
+                "icon".to_string(),
+                json!(props.raw_props.get("icon").and_then(Value::as_str)),
+            );
+        }
     }
     if node.kind == WidgetKind::HtmlReport {
         if let Value::Object(map) = &mut snapshot {
@@ -4076,6 +4502,10 @@ fn props_snapshot(node: &WidgetNode) -> Value {
                     "allow_scripts": props.html_report_allow_scripts,
                     "external_fallback": props.html_report_external_fallback,
                     "inline_bytes": props.html_report_html.as_ref().map(|html| html.len()),
+                    "inline_fnv1a64": props
+                        .html_report_html
+                        .as_deref()
+                        .map(diagnostic_fnv1a64),
                 }),
             );
         }
@@ -4148,10 +4578,16 @@ fn props_snapshot(node: &WidgetNode) -> Value {
                 "show_grid": props.line_plot_show_grid,
                 "show_axes": props.line_plot_show_axes,
                 "show_ticks": props.line_plot_show_ticks,
+                "show_toolbar": props.line_plot_show_toolbar,
                 "show_legend": props.line_plot_show_legend,
                 "legend_position": props.line_plot_legend_position,
                 "tick_count": props.line_plot_tick_count,
+                "auto_fit": props.line_plot_auto_fit,
                 "window_size": props.line_plot_window_size,
+                "x_min": props.line_plot_x_min,
+                "x_max": props.line_plot_x_max,
+                "y_min": props.line_plot_y_min,
+                "y_max": props.line_plot_y_max,
                 "series": line_plot_series,
                 }),
             );
@@ -4174,6 +4610,80 @@ fn node_snapshot(node: &WidgetNode) -> Value {
         "style": &node.style_json,
         "children": node.children.iter().map(node_snapshot).collect::<Vec<_>>(),
     })
+}
+
+fn diagnostic_plot_geometry_snapshot(
+    tree: Option<&WidgetNode>,
+    layout: Option<&LayoutResult>,
+    theme: &Theme,
+    scale_factor: f32,
+    requested_ids: &HashSet<String>,
+) -> Value {
+    let (Some(tree), Some(layout)) = (tree, layout) else {
+        return json!({});
+    };
+    let mut ids = requested_ids.iter().collect::<Vec<_>>();
+    ids.sort_unstable();
+    let mut snapshot = Map::new();
+    for id in ids {
+        let Some(node) = find_widget(tree, id) else {
+            continue;
+        };
+        let Some(outer) = layout.rects.get(id).copied() else {
+            continue;
+        };
+        let outer_array = [outer.x, outer.y, outer.w, outer.h];
+        let (family, plot, bounds) = match node.kind {
+            WidgetKind::LinePlot => (
+                "line_plot",
+                line_plot_plot_rect(node, scale_factor, outer_array),
+                line_plot_resolved_bounds(node),
+            ),
+            WidgetKind::Histogram => (
+                "histogram",
+                histogram_plot_rect(node, scale_factor, outer_array),
+                histogram_resolved_bounds(node),
+            ),
+            WidgetKind::BarChart => (
+                "bar_chart",
+                bar_chart_plot_rect(node, theme, scale_factor, outer_array),
+                bar_chart_resolved_bounds(node),
+            ),
+            _ => continue,
+        };
+        let visible = layout.visible_rect(id);
+        snapshot.insert(
+            id.clone(),
+            json!({
+                "family": family,
+                "outer": {
+                    "left": outer.x,
+                    "top": outer.y,
+                    "width": outer.w,
+                    "height": outer.h,
+                },
+                "visible_clip": visible.map(|rect| json!({
+                    "left": rect.x,
+                    "top": rect.y,
+                    "width": rect.w,
+                    "height": rect.h,
+                })),
+                "plot": {
+                    "left": plot[0],
+                    "top": plot[1],
+                    "width": plot[2],
+                    "height": plot[3],
+                },
+                "bounds": bounds.map(|bounds| json!({
+                    "x_min": bounds.x_min,
+                    "x_max": bounds.x_max,
+                    "y_min": bounds.y_min,
+                    "y_max": bounds.y_max,
+                })),
+            }),
+        );
+    }
+    Value::Object(snapshot)
 }
 
 fn layout_diagnostic_issues(
@@ -5968,6 +6478,7 @@ fn pseudo_style_value_changes_text(key: &str, value: &Value) -> bool {
 #[cfg(test)]
 mod style_patch_tests {
     use super::*;
+    use crate::commands::PropUpdate;
 
     #[test]
     fn client_chrome_ids_map_only_to_window_actions() {
@@ -7456,7 +7967,7 @@ mod style_patch_tests {
     }
 
     #[test]
-    fn command_batch_coalesces_scatter_updates() {
+    fn command_batch_preserves_scatter_updates_across_callback_barrier() {
         let mut commands = vec![
             Command::SetScatterPointsPacked {
                 id: "scatter".to_string(),
@@ -7479,11 +7990,20 @@ mod style_patch_tests {
             },
         ];
 
-        coalesce_runtime_command_batch(&mut commands);
+        let stats = coalesce_runtime_command_batch(&mut commands);
 
         assert_eq!(
             commands,
             vec![
+                Command::SetScatterPointsPacked {
+                    id: "scatter".to_string(),
+                    xyz: vec![1; 12],
+                    telemetry: None,
+                    colormap: "viridis".to_string(),
+                    payload_format: ScatterPayloadFormat::XyzF32V0,
+                    fit: true,
+                    coalesce: true,
+                },
                 Command::DrainPythonTasks,
                 Command::SetScatterPointsPacked {
                     id: "scatter".to_string(),
@@ -7491,15 +8011,121 @@ mod style_patch_tests {
                     telemetry: None,
                     colormap: "turbo".to_string(),
                     payload_format: ScatterPayloadFormat::XyzF32V0,
-                    fit: true,
+                    fit: false,
                     coalesce: true,
                 },
             ]
         );
+        assert_eq!(stats.received_commands, 3);
+        assert_eq!(stats.retained_commands, 3);
+        assert_eq!(stats.barrier_segments, 1);
+        assert_eq!(stats.superseded_commands, 0);
     }
 
     #[test]
-    fn command_batch_coalesces_scatter_updates_across_debug_snapshot() {
+    fn command_batch_coalesces_property_packets_with_shared_property_keys() {
+        let mut commands = vec![
+            Command::SetProps {
+                updates: vec![
+                    PropUpdate {
+                        id: "a".to_string(),
+                        prop: "text".to_string(),
+                        value: CommandValue::Text("first-a".to_string()),
+                    },
+                    PropUpdate {
+                        id: "b".to_string(),
+                        prop: "text".to_string(),
+                        value: CommandValue::Text("first-b".to_string()),
+                    },
+                    PropUpdate {
+                        id: "a".to_string(),
+                        prop: "text".to_string(),
+                        value: CommandValue::Text("final-a".to_string()),
+                    },
+                ],
+            },
+            Command::SetProp {
+                id: "b".to_string(),
+                prop: "text".to_string(),
+                value: CommandValue::Text("final-b".to_string()),
+            },
+        ];
+
+        let stats = coalesce_runtime_command_batch(&mut commands);
+
+        assert_eq!(commands.len(), 2);
+        assert!(matches!(
+            &commands[0],
+            Command::SetProps { updates }
+                if matches!(updates.as_slice(), [PropUpdate { id, value: CommandValue::Text(value), .. }]
+                    if id == "a" && value == "final-a")
+        ));
+        assert_eq!(stats.received_commands, 2);
+        assert_eq!(stats.retained_commands, 2);
+        assert_eq!(stats.property_updates_received, 4);
+        assert_eq!(stats.property_updates_retained, 2);
+        assert_eq!(stats.property_updates_superseded, 2);
+        assert_eq!(
+            stats.families[CommandCoalescingFamily::PropertyPacket as usize],
+            CommandFamilyCoalescingStats {
+                received: 1,
+                retained: 1,
+                superseded: 0,
+                merged: 0,
+            }
+        );
+        assert_eq!(
+            stats.families[CommandCoalescingFamily::Property as usize],
+            CommandFamilyCoalescingStats {
+                received: 1,
+                retained: 1,
+                superseded: 0,
+                merged: 0,
+            }
+        );
+        assert!(matches!(
+            &commands[1],
+            Command::SetProp { id, value: CommandValue::Text(value), .. }
+                if id == "b" && value == "final-b"
+        ));
+    }
+
+    #[test]
+    fn command_batch_preserves_property_packets_across_debug_snapshot() {
+        let mut commands = vec![
+            Command::SetProps {
+                updates: vec![PropUpdate {
+                    id: "status".to_string(),
+                    prop: "text".to_string(),
+                    value: CommandValue::Text("before".to_string()),
+                }],
+            },
+            Command::DebugSnapshot { request_id: 1 },
+            Command::SetProp {
+                id: "status".to_string(),
+                prop: "text".to_string(),
+                value: CommandValue::Text("after".to_string()),
+            },
+        ];
+
+        let stats = coalesce_runtime_command_batch(&mut commands);
+
+        assert_eq!(commands.len(), 3);
+        assert!(matches!(commands[0], Command::SetProps { .. }));
+        assert!(matches!(
+            commands[1],
+            Command::DebugSnapshot { request_id: 1 }
+        ));
+        assert!(matches!(commands[2], Command::SetProp { .. }));
+        assert_eq!(stats.received_commands, 3);
+        assert_eq!(stats.retained_commands, 3);
+        assert_eq!(stats.barrier_segments, 1);
+        assert_eq!(stats.property_updates_received, 2);
+        assert_eq!(stats.property_updates_retained, 2);
+    }
+
+    #[test]
+    fn command_batch_preserves_scatter_updates_across_debug_snapshot() {
         let mut commands = vec![
             Command::SetScatterPointsPacked {
                 id: "scatter".to_string(),
@@ -7524,25 +8150,30 @@ mod style_patch_tests {
 
         coalesce_runtime_command_batch(&mut commands);
 
-        assert_eq!(commands.len(), 2);
+        assert_eq!(commands.len(), 3);
         assert!(matches!(
-            commands[0],
+            &commands[0],
+            Command::SetScatterPointsPacked { xyz, colormap, fit, .. }
+                if xyz == &vec![1; 12] && colormap == "viridis" && *fit
+        ));
+        assert!(matches!(
+            commands[1],
             Command::DebugSnapshot { request_id: 1 }
         ));
-        match &commands[1] {
+        match &commands[2] {
             Command::SetScatterPointsPacked {
                 xyz, colormap, fit, ..
             } => {
                 assert_eq!(xyz, &vec![2; 12]);
                 assert_eq!(colormap, "turbo");
-                assert!(*fit);
+                assert!(!*fit);
             }
             other => panic!("expected latest scatter update, got {other:?}"),
         }
     }
 
     #[test]
-    fn command_batch_coalesces_scatter_scalar_bars() {
+    fn command_batch_preserves_scatter_scalar_bars_across_debug_snapshot() {
         let mut commands = vec![
             Command::SetScatterScalarBar {
                 id: "scatter".to_string(),
@@ -7567,12 +8198,17 @@ mod style_patch_tests {
 
         coalesce_runtime_command_batch(&mut commands);
 
-        assert_eq!(commands.len(), 2);
+        assert_eq!(commands.len(), 3);
         assert!(matches!(
-            commands[0],
+            &commands[0],
+            Command::SetScatterScalarBar { vmin, vmax, colormap, .. }
+                if *vmin == 0.0 && *vmax == 1.0 && colormap == "turbo"
+        ));
+        assert!(matches!(
+            commands[1],
             Command::DebugSnapshot { request_id: 1 }
         ));
-        match &commands[1] {
+        match &commands[2] {
             Command::SetScatterScalarBar {
                 vmin,
                 vmax,
@@ -7605,7 +8241,7 @@ mod style_patch_tests {
             },
         ];
 
-        coalesce_runtime_command_batch(&mut commands);
+        let stats = coalesce_runtime_command_batch(&mut commands);
 
         assert_eq!(commands.len(), 2);
         assert!(matches!(&commands[0], Command::SetProp { id, .. } if id == "status"));
@@ -7616,6 +8252,58 @@ mod style_patch_tests {
                 display_list_json
             } if id == "scope" && display_list_json.contains("\"x1\":2")
         ));
+        assert_eq!(
+            stats.families[CommandCoalescingFamily::ExtensionDisplayList as usize],
+            CommandFamilyCoalescingStats {
+                received: 2,
+                retained: 1,
+                superseded: 1,
+                merged: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn command_batch_attributes_sticky_scatter_replacement_by_family() {
+        let mut commands = vec![
+            Command::SetScatterPointsPacked {
+                id: "scatter".to_string(),
+                xyz: vec![1; 12],
+                telemetry: None,
+                colormap: "viridis".to_string(),
+                payload_format: ScatterPayloadFormat::XyzF32V0,
+                fit: true,
+                coalesce: true,
+            },
+            Command::SetScatterPointsPacked {
+                id: "scatter".to_string(),
+                xyz: vec![2; 12],
+                telemetry: None,
+                colormap: "turbo".to_string(),
+                payload_format: ScatterPayloadFormat::XyzF32V0,
+                fit: false,
+                coalesce: true,
+            },
+        ];
+
+        let stats = coalesce_runtime_command_batch(&mut commands);
+
+        assert_eq!(commands.len(), 1);
+        assert!(matches!(
+            commands[0],
+            Command::SetScatterPointsPacked { fit: true, .. }
+        ));
+        assert_eq!(stats.superseded_commands, 1);
+        assert_eq!(stats.merged_commands, 1);
+        assert_eq!(
+            stats.families[CommandCoalescingFamily::ScatterPoints as usize],
+            CommandFamilyCoalescingStats {
+                received: 2,
+                retained: 1,
+                superseded: 1,
+                merged: 1,
+            }
+        );
     }
 
     #[test]
@@ -7741,6 +8429,39 @@ mod style_patch_tests {
     }
 
     #[test]
+    fn command_batch_does_not_coalesce_properties_across_structural_replacement() {
+        let mut commands = vec![
+            Command::SetProp {
+                id: "status".to_string(),
+                prop: "text".to_string(),
+                value: CommandValue::Text("before".to_string()),
+            },
+            Command::ReplaceNode {
+                id: "status".to_string(),
+                node_json: r#"{"id":"status","type":"label"}"#.to_string(),
+            },
+            Command::SetProp {
+                id: "status".to_string(),
+                prop: "text".to_string(),
+                value: CommandValue::Text("after".to_string()),
+            },
+        ];
+
+        coalesce_runtime_command_batch(&mut commands);
+
+        assert_eq!(commands.len(), 3);
+        assert!(matches!(
+            &commands[0],
+            Command::SetProp { value: CommandValue::Text(value), .. } if value == "before"
+        ));
+        assert!(matches!(commands[1], Command::ReplaceNode { .. }));
+        assert!(matches!(
+            &commands[2],
+            Command::SetProp { value: CommandValue::Text(value), .. } if value == "after"
+        ));
+    }
+
+    #[test]
     fn scatter_scalar_bar_props_survive_chrome_sync() {
         let mut root = document::parse_widget_node(&serde_json::json!({
             "id": "root",
@@ -7811,7 +8532,7 @@ mod style_patch_tests {
             },
         ];
 
-        coalesce_runtime_command_batch(&mut commands);
+        let stats = coalesce_runtime_command_batch(&mut commands);
 
         assert_eq!(commands.len(), 2);
         match &commands[0] {
@@ -7830,6 +8551,18 @@ mod style_patch_tests {
             }
             other => panic!("expected pressure append, got {other:?}"),
         }
+        assert_eq!(stats.received_commands, 3);
+        assert_eq!(stats.retained_commands, 2);
+        assert_eq!(stats.merged_commands, 1);
+        assert_eq!(
+            stats.families[CommandCoalescingFamily::LinePlotAppend as usize],
+            CommandFamilyCoalescingStats {
+                received: 3,
+                retained: 2,
+                superseded: 0,
+                merged: 1,
+            }
+        );
     }
 
     #[test]
@@ -8033,6 +8766,9 @@ mod style_patch_tests {
     #[test]
     fn synthetic_input_targets_are_trimmed_and_snapshot_safe() {
         assert!(SyntheticInputProfile::from_targets(" , ").is_none());
+        assert!(
+            SyntheticInputProfile::from_targets_and_focus("", Some("field".to_string())).is_some()
+        );
         let mut profile =
             SyntheticInputProfile::from_targets(" first,second ,, third ").expect("targets");
         profile.next_target = 2;
@@ -8195,19 +8931,61 @@ mod style_patch_tests {
 
     #[test]
     fn mixed_text_and_visual_batches_retain_line_plot_targets() {
-        let mut targets = HashSet::from(["status-label".to_string()]);
-        merge_deferred_visual_targets(&mut targets, HashSet::from(["channel-trace".to_string()]));
+        let mut targets = DeferredRebuildTargets::default();
+        targets.insert_widget(DeferredWidgetTargetClass::RetainedVisual, "status-label");
+        targets.insert_widget(DeferredWidgetTargetClass::PrimitivePaint, "channel-trace");
+        let has_targets = targets.has_targeted_work();
+        let roots = targets.take_visual_roots();
 
         assert_eq!(
-            targets,
+            roots,
             HashSet::from(["status-label".to_string(), "channel-trace".to_string()])
         );
         assert!(can_use_targeted_deferred_rebuild(
             Dirty::Text,
             false,
             false,
-            !targets.is_empty()
+            has_targets,
+            true,
         ));
+        assert!(!can_use_targeted_deferred_rebuild(
+            Dirty::Text,
+            false,
+            false,
+            has_targets,
+            false,
+        ));
+    }
+
+    #[test]
+    fn deferred_target_classes_preserve_table_overlay_and_raw_batch_limits() {
+        let mut targets = DeferredRebuildTargets::default();
+        targets.insert_widget(DeferredWidgetTargetClass::RetainedVisual, "shared");
+        targets.insert_widget(DeferredWidgetTargetClass::PrimitivePaint, "shared");
+        targets.insert_widget(DeferredWidgetTargetClass::TableText, "orders");
+        targets.overlay_text = true;
+
+        assert_eq!(targets.raw_widget_count(), 3);
+        assert!(targets.has_targeted_work());
+        assert_eq!(
+            targets.table_text_roots,
+            HashSet::from(["orders".to_string()])
+        );
+        assert_eq!(
+            targets.take_visual_roots(),
+            HashSet::from(["shared".to_string()])
+        );
+        assert!(targets.overlay_text);
+    }
+
+    #[test]
+    fn deferred_rebuild_batch_captures_generation_and_dirty_merge_order() {
+        let mut batch = DeferredRebuildBatch::begin(41);
+
+        assert!(!batch.merge_dirty(Dirty::Visual));
+        assert!(batch.merge_dirty(Dirty::Text));
+        assert_eq!(batch.structure_generation, 41);
+        assert_eq!(batch.dirty, Some(Dirty::Text));
     }
 
     #[test]
@@ -8216,13 +8994,15 @@ mod style_patch_tests {
             Dirty::Text,
             false,
             true,
-            true
+            true,
+            true,
         ));
         assert!(!can_use_targeted_deferred_rebuild(
             Dirty::Visual,
             false,
             false,
-            true
+            true,
+            true,
         ));
     }
 
@@ -8232,10 +9012,14 @@ mod style_patch_tests {
             targeted_requests: 4,
             global_requests: 1,
             overlay_requests: 2,
+            retained_visual_requests: 3,
+            primitive_paint_requests: 5,
+            table_text_requests: 1,
             attempted_batches: 2,
             completed_batches: 1,
             overlay_batches: 1,
             fallback_batches: 1,
+            stale_generation_fallback_batches: 1,
             rebuilt_roots: 3,
         };
 
@@ -8244,15 +9028,71 @@ mod style_patch_tests {
         assert_eq!(snapshot["targeted_requests"], 4);
         assert_eq!(snapshot["global_requests"], 1);
         assert_eq!(snapshot["overlay_requests"], 2);
+        assert_eq!(snapshot["target_classes"]["retained_visual"], 3);
+        assert_eq!(snapshot["target_classes"]["primitive_paint"], 5);
+        assert_eq!(snapshot["target_classes"]["table_text"], 1);
+        assert_eq!(snapshot["target_classes"]["overlay_text"], 2);
         assert_eq!(snapshot["attempted_batches"], 2);
         assert_eq!(snapshot["completed_batches"], 1);
         assert_eq!(snapshot["overlay_batches"], 1);
         assert_eq!(snapshot["fallback_batches"], 1);
+        assert_eq!(snapshot["stale_generation_fallback_batches"], 1);
         assert_eq!(snapshot["rebuilt_roots"], 3);
         assert_eq!(
             snapshot["max_roots_per_batch"],
             MAX_TARGETED_TEXT_ROOTS_PER_BATCH
         );
+    }
+
+    #[test]
+    fn targeted_rebuild_verification_mode_is_explicitly_opt_in() {
+        assert_eq!(
+            TargetedRebuildVerificationMode::from_value(Some("verify-full")),
+            TargetedRebuildVerificationMode::VerifyFull
+        );
+        assert_eq!(
+            TargetedRebuildVerificationMode::from_value(Some(" VERIFY-FULL ")),
+            TargetedRebuildVerificationMode::VerifyFull
+        );
+        assert_eq!(
+            TargetedRebuildVerificationMode::from_value(Some("optimized")),
+            TargetedRebuildVerificationMode::Off
+        );
+        assert_eq!(
+            TargetedRebuildVerificationMode::from_value(None),
+            TargetedRebuildVerificationMode::Off
+        );
+    }
+
+    #[test]
+    fn targeted_rebuild_verification_stats_classify_component_mismatches() {
+        let targeted = RetainedVisualSignature {
+            primitives: Some(1),
+            text: Some(2),
+            line_plots: Some(3),
+        };
+        let mut stats = TargetedRebuildVerificationStats::default();
+        stats.record(targeted, targeted, 1.25);
+        stats.record(
+            targeted,
+            RetainedVisualSignature {
+                primitives: Some(4),
+                text: Some(2),
+                line_plots: None,
+            },
+            2.5,
+        );
+
+        let snapshot = stats.json_value(TargetedRebuildVerificationMode::VerifyFull);
+        assert_eq!(snapshot["mode"], "verify-full");
+        assert_eq!(snapshot["attempts"], 2);
+        assert_eq!(snapshot["matches"], 1);
+        assert_eq!(snapshot["mismatches"], 1);
+        assert_eq!(snapshot["primitive_mismatches"], 1);
+        assert_eq!(snapshot["text_mismatches"], 0);
+        assert_eq!(snapshot["line_plot_mismatches"], 1);
+        assert_eq!(snapshot["last_targeted"]["primitives"], "0000000000000001");
+        assert_eq!(snapshot["last_full"]["primitives"], "0000000000000004");
     }
 
     #[test]
@@ -10085,13 +10925,59 @@ mod style_patch_tests {
             dirty: Dirty::Layout,
             reason: LiveTextInvalidationReason::IntrinsicHeight,
         });
+        stats.record(LiveTextInvalidationDecision {
+            dirty: Dirty::Text,
+            reason: LiveTextInvalidationReason::TargetLocalState,
+        });
+        stats.record(LiveTextInvalidationDecision {
+            dirty: Dirty::Text,
+            reason: LiveTextInvalidationReason::TargetLocalPlot,
+        });
+        stats.record(LiveTextInvalidationDecision {
+            dirty: Dirty::Text,
+            reason: LiveTextInvalidationReason::TargetLocalHtmlFallback,
+        });
+        stats.record(LiveTextInvalidationDecision {
+            dirty: Dirty::Text,
+            reason: LiveTextInvalidationReason::TargetLocalIcon,
+        });
 
-        let snapshot = stats.json_value();
-        assert_eq!(snapshot["candidates"], 2);
-        assert_eq!(snapshot["text_only"], 1);
+        let snapshot = stats.json_value(LiveTextInvalidationMode::Optimized);
+        assert_eq!(snapshot["mode"], "optimized");
+        assert_eq!(snapshot["candidates"], 6);
+        assert_eq!(snapshot["text_only"], 5);
         assert_eq!(snapshot["layout"], 1);
         assert_eq!(snapshot["reasons"]["fixed_composite"], 1);
         assert_eq!(snapshot["reasons"]["intrinsic_height"], 1);
+        assert_eq!(snapshot["reasons"]["target_local_state"], 1);
+        assert_eq!(snapshot["reasons"]["target_local_plot"], 1);
+        assert_eq!(snapshot["reasons"]["target_local_html_fallback"], 1);
+        assert_eq!(snapshot["reasons"]["target_local_icon"], 1);
+    }
+
+    #[test]
+    fn forced_safe_text_invalidation_only_promotes_fast_path_decisions() {
+        let fixed = LiveTextInvalidationDecision {
+            dirty: Dirty::Text,
+            reason: LiveTextInvalidationReason::FixedSingleLineLabel,
+        };
+        let intrinsic = LiveTextInvalidationDecision {
+            dirty: Dirty::Layout,
+            reason: LiveTextInvalidationReason::IntrinsicHeight,
+        };
+
+        assert_eq!(LiveTextInvalidationMode::Optimized.apply(fixed), fixed);
+        assert_eq!(
+            LiveTextInvalidationMode::ForcedSafeLayout.apply(fixed),
+            LiveTextInvalidationDecision {
+                dirty: Dirty::Layout,
+                reason: LiveTextInvalidationReason::ForcedSafeLayout,
+            }
+        );
+        assert_eq!(
+            LiveTextInvalidationMode::ForcedSafeLayout.apply(intrinsic),
+            intrinsic
+        );
     }
 
     #[test]
@@ -10338,9 +11224,11 @@ struct WgpuState {
     scatter_compositor: ScatterCompositeRenderer,
     html_reports: HtmlReportWebViewManager,
     widget_tree: Option<WidgetNode>,
+    structure_generation: u64,
     widget_kinds: HashMap<String, WidgetKind>,
     tooltip_overlay_targets: HashSet<String>,
     caret_positions: HashMap<String, [f32; 2]>,
+    diagnostic_text_geometry_ids: HashSet<String>,
     resources: ResourceRegistry,
     toasts: Vec<RuntimeToast>,
     toast_overlays: Vec<ToastOverlay>,
@@ -10364,17 +11252,13 @@ struct WgpuState {
     expanded_transitions: HashMap<String, HoverTransition>,
     expanded_state_snapshot: HashSet<String>,
     defer_rebuilds: bool,
-    deferred_dirty: Option<Dirty>,
-    deferred_text_targets: HashSet<String>,
-    deferred_visual_targets: HashSet<String>,
-    deferred_table_text_targets: HashSet<String>,
-    deferred_text_requires_full: bool,
-    deferred_visual_requires_full: bool,
-    deferred_overlay_text: bool,
-    deferred_scatter_style_sync: bool,
+    deferred_rebuild_batch: DeferredRebuildBatch,
     dirty_rebuild_stats: DirtyRebuildStats,
     command_text_rebuild_stats: CommandTextRebuildStats,
     interaction_text_rebuild_stats: InteractionTextRebuildStats,
+    targeted_rebuild_verification_mode: TargetedRebuildVerificationMode,
+    targeted_rebuild_verification_stats: TargetedRebuildVerificationStats,
+    live_text_invalidation_mode: LiveTextInvalidationMode,
     live_text_invalidation_stats: LiveTextInvalidationStats,
     apply_layout_timing: StageTimingStats,
     style_reapply_timing: StageTimingStats,
@@ -11478,7 +12362,8 @@ fn push_plot_overlay_labels(
                         }
                     }
                 }
-                text.push_scatter_label(
+                text.push_owned_scatter_label(
+                    &node.id,
                     &label.text,
                     label.screen_x,
                     label.screen_y,
@@ -12016,9 +12901,17 @@ impl WgpuState {
             scatter_compositor,
             html_reports: HtmlReportWebViewManager::new(window.as_ref(), wake_proxy),
             widget_tree: spec.widget_tree,
+            structure_generation: 0,
             widget_kinds,
             tooltip_overlay_targets,
             caret_positions: HashMap::new(),
+            diagnostic_text_geometry_ids: std::env::var(DIAGNOSTIC_TEXT_GEOMETRY_IDS_ENV)
+                .unwrap_or_default()
+                .split(',')
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .map(str::to_string)
+                .collect(),
             resources,
             toasts: Vec::new(),
             toast_overlays: Vec::new(),
@@ -12039,17 +12932,13 @@ impl WgpuState {
             expanded_transitions: HashMap::new(),
             expanded_state_snapshot,
             defer_rebuilds: false,
-            deferred_dirty: None,
-            deferred_text_targets: HashSet::new(),
-            deferred_visual_targets: HashSet::new(),
-            deferred_table_text_targets: HashSet::new(),
-            deferred_text_requires_full: false,
-            deferred_visual_requires_full: false,
-            deferred_overlay_text: false,
-            deferred_scatter_style_sync: false,
+            deferred_rebuild_batch: DeferredRebuildBatch::default(),
             dirty_rebuild_stats: DirtyRebuildStats::default(),
             command_text_rebuild_stats: CommandTextRebuildStats::default(),
             interaction_text_rebuild_stats: InteractionTextRebuildStats::default(),
+            targeted_rebuild_verification_mode: TargetedRebuildVerificationMode::from_environment(),
+            targeted_rebuild_verification_stats: TargetedRebuildVerificationStats::default(),
+            live_text_invalidation_mode: LiveTextInvalidationMode::from_environment(),
             live_text_invalidation_stats: LiveTextInvalidationStats::default(),
             apply_layout_timing: StageTimingStats::default(),
             style_reapply_timing: StageTimingStats::default(),
@@ -12831,6 +13720,40 @@ impl WgpuState {
         self.rebuild_primitives();
         self.rebuild_visuals_timing
             .record(total_t0.elapsed().as_secs_f64() * 1000.0);
+    }
+
+    fn retained_visual_signature(&self) -> RetainedVisualSignature {
+        RetainedVisualSignature {
+            primitives: self
+                .primitives
+                .as_ref()
+                .map(PrimitivesRenderer::diagnostic_signature),
+            text: self.text.as_ref().map(TextRendererDg::diagnostic_signature),
+            line_plots: self
+                .line_plots
+                .as_ref()
+                .map(LinePlotRenderer::diagnostic_signature),
+        }
+    }
+
+    /// In the opt-in diagnostic mode, preserve the targeted result signature,
+    /// reconstruct all retained visual buffers from the same synchronized
+    /// state, and compare them. The full result remains installed as the safe
+    /// final output. Normal runs never pay this cost.
+    fn verify_targeted_rebuild_against_full(&mut self) {
+        if self.targeted_rebuild_verification_mode != TargetedRebuildVerificationMode::VerifyFull {
+            return;
+        }
+        let started = Instant::now();
+        let targeted = self.retained_visual_signature();
+        self.rebuild_text();
+        self.rebuild_primitives();
+        let full = self.retained_visual_signature();
+        self.targeted_rebuild_verification_stats.record(
+            targeted,
+            full,
+            started.elapsed().as_secs_f64() * 1000.0,
+        );
     }
 
     fn rebuild_targeted_visuals(
@@ -14374,6 +15297,21 @@ impl WgpuState {
             .unwrap_or(true)
     }
 
+    fn target_local_text_dirty(&mut self, reason: LiveTextInvalidationReason) -> Dirty {
+        let decision = self
+            .live_text_invalidation_mode
+            .apply(LiveTextInvalidationDecision {
+                dirty: Dirty::Text,
+                reason,
+            });
+        self.live_text_invalidation_stats.record(decision);
+        decision.dirty
+    }
+
+    fn target_local_plot_dirty(&mut self) -> Dirty {
+        self.target_local_text_dirty(LiveTextInvalidationReason::TargetLocalPlot)
+    }
+
     fn apply_set_prop(&mut self, id: &str, prop: &str, value: CommandValue) -> Option<Dirty> {
         let kind = self.widget_kind(id)?;
         if kind == WidgetKind::IconButton && prop == "icon" {
@@ -14391,7 +15329,7 @@ impl WgpuState {
                 eprintln!("DragonGUI: failed to reconcile live icon {id:?}: {error}");
                 return None;
             }
-            return Some(Dirty::Text);
+            return Some(self.target_local_text_dirty(LiveTextInvalidationReason::TargetLocalIcon));
         }
         if matches!(prop, "scroll_x" | "scroll_y") {
             let CommandValue::Float(target_scroll) = value else {
@@ -14483,11 +15421,12 @@ impl WgpuState {
             return None;
         }
         if kind == WidgetKind::LoadingSpinner {
+            let invalidation_mode = self.live_text_invalidation_mode;
             let text_decision = self
                 .widget_tree
                 .as_ref()
                 .and_then(|tree| find_widget(tree, id))
-                .map(|node| live_text_prop_decision(node, prop))
+                .map(|node| invalidation_mode.apply(live_text_prop_decision(node, prop)))
                 .unwrap_or(LiveTextInvalidationDecision {
                     dirty: Dirty::Layout,
                     reason: LiveTextInvalidationReason::UnsupportedProperty,
@@ -14537,11 +15476,12 @@ impl WgpuState {
                     | WidgetKind::Menu
                     | WidgetKind::MenuItem
             ) {
+                let invalidation_mode = self.live_text_invalidation_mode;
                 let decision = self
                     .widget_tree
                     .as_ref()
                     .and_then(|tree| find_widget(tree, id))
-                    .map(|node| live_text_prop_decision(node, prop))
+                    .map(|node| invalidation_mode.apply(live_text_prop_decision(node, prop)))
                     .unwrap_or(LiveTextInvalidationDecision {
                         dirty: Dirty::Layout,
                         reason: LiveTextInvalidationReason::UnsupportedProperty,
@@ -14657,19 +15597,19 @@ impl WgpuState {
                 }
                 ("show_axes", CommandValue::Bool(visible)) => {
                     node.props.line_plot_show_axes = visible;
-                    return Some(Dirty::Text);
+                    return Some(self.target_local_plot_dirty());
                 }
                 ("show_ticks", CommandValue::Bool(visible)) => {
                     node.props.line_plot_show_ticks = visible;
-                    return Some(Dirty::Text);
+                    return Some(self.target_local_plot_dirty());
                 }
                 ("show_toolbar", CommandValue::Bool(visible)) => {
                     node.props.line_plot_show_toolbar = visible;
-                    return Some(Dirty::Text);
+                    return Some(self.target_local_plot_dirty());
                 }
                 ("show_legend", CommandValue::Bool(visible)) => {
                     node.props.line_plot_show_legend = visible;
-                    return Some(Dirty::Text);
+                    return Some(self.target_local_plot_dirty());
                 }
                 ("legend_position", CommandValue::Text(position)) => {
                     if matches!(
@@ -14677,21 +15617,21 @@ impl WgpuState {
                         "top-right" | "top-left" | "bottom-right" | "bottom-left"
                     ) {
                         node.props.line_plot_legend_position = position;
-                        return Some(Dirty::Text);
+                        return Some(self.target_local_plot_dirty());
                     }
                     return None;
                 }
                 ("tick_count", CommandValue::Float(count)) => {
                     node.props.line_plot_tick_count = (count.round() as isize).clamp(2, 9) as usize;
-                    return Some(Dirty::Text);
+                    return Some(self.target_local_plot_dirty());
                 }
                 ("x_label", CommandValue::Text(label)) => {
                     node.props.line_plot_x_label = (!label.trim().is_empty()).then_some(label);
-                    return Some(Dirty::Text);
+                    return Some(self.target_local_plot_dirty());
                 }
                 ("y_label", CommandValue::Text(label)) => {
                     node.props.line_plot_y_label = (!label.trim().is_empty()).then_some(label);
-                    return Some(Dirty::Text);
+                    return Some(self.target_local_plot_dirty());
                 }
                 ("auto_fit", CommandValue::Bool(auto_fit)) => {
                     node.props.line_plot_auto_fit = auto_fit;
@@ -14701,7 +15641,7 @@ impl WgpuState {
                     node.props.line_plot_window_size =
                         (size.is_finite() && size > 0.0).then_some(size);
                     apply_line_plot_window_to_node(node);
-                    return Some(Dirty::Text);
+                    return Some(self.target_local_plot_dirty());
                 }
                 ("window_size", CommandValue::None) => {
                     node.props.line_plot_window_size = None;
@@ -14710,7 +15650,7 @@ impl WgpuState {
                     node.props.line_plot_x_max = None;
                     node.props.line_plot_y_min = None;
                     node.props.line_plot_y_max = None;
-                    return Some(Dirty::Text);
+                    return Some(self.target_local_plot_dirty());
                 }
                 ("interaction", CommandValue::Text(mode)) => {
                     if matches!(mode.as_str(), "inspect" | "pan" | "zoom" | "box_zoom") {
@@ -14761,27 +15701,27 @@ impl WgpuState {
                 }
                 ("show_axes", CommandValue::Bool(visible)) => {
                     node.props.histogram.show_axes = visible;
-                    return Some(Dirty::Text);
+                    return Some(self.target_local_plot_dirty());
                 }
                 ("show_ticks", CommandValue::Bool(visible)) => {
                     node.props.histogram.show_ticks = visible;
-                    return Some(Dirty::Text);
+                    return Some(self.target_local_plot_dirty());
                 }
                 ("show_toolbar", CommandValue::Bool(visible)) => {
                     node.props.histogram.show_toolbar = visible;
-                    return Some(Dirty::Text);
+                    return Some(self.target_local_plot_dirty());
                 }
                 ("tick_count", CommandValue::Float(count)) => {
                     node.props.histogram.tick_count = (count.round() as isize).clamp(2, 9) as usize;
-                    return Some(Dirty::Text);
+                    return Some(self.target_local_plot_dirty());
                 }
                 ("x_label", CommandValue::Text(label)) => {
                     node.props.histogram.x_label = (!label.trim().is_empty()).then_some(label);
-                    return Some(Dirty::Text);
+                    return Some(self.target_local_plot_dirty());
                 }
                 ("y_label", CommandValue::Text(label)) => {
                     node.props.histogram.y_label = (!label.trim().is_empty()).then_some(label);
-                    return Some(Dirty::Text);
+                    return Some(self.target_local_plot_dirty());
                 }
                 ("auto_fit", CommandValue::Bool(auto_fit)) => {
                     node.props.histogram.auto_fit = auto_fit;
@@ -14822,27 +15762,27 @@ impl WgpuState {
                 }
                 ("show_axes", CommandValue::Bool(visible)) => {
                     node.props.bar_chart.show_axes = visible;
-                    return Some(Dirty::Text);
+                    return Some(self.target_local_plot_dirty());
                 }
                 ("show_ticks", CommandValue::Bool(visible)) => {
                     node.props.bar_chart.show_ticks = visible;
-                    return Some(Dirty::Text);
+                    return Some(self.target_local_plot_dirty());
                 }
                 ("show_toolbar", CommandValue::Bool(visible)) => {
                     node.props.bar_chart.show_toolbar = visible;
-                    return Some(Dirty::Text);
+                    return Some(self.target_local_plot_dirty());
                 }
                 ("tick_count", CommandValue::Float(count)) => {
                     node.props.bar_chart.tick_count = (count.round() as isize).clamp(2, 9) as usize;
-                    return Some(Dirty::Text);
+                    return Some(self.target_local_plot_dirty());
                 }
                 ("x_label", CommandValue::Text(label)) => {
                     node.props.bar_chart.x_label = (!label.trim().is_empty()).then_some(label);
-                    return Some(Dirty::Text);
+                    return Some(self.target_local_plot_dirty());
                 }
                 ("y_label", CommandValue::Text(label)) => {
                     node.props.bar_chart.y_label = (!label.trim().is_empty()).then_some(label);
-                    return Some(Dirty::Text);
+                    return Some(self.target_local_plot_dirty());
                 }
                 ("auto_fit", CommandValue::Bool(auto_fit)) => {
                     node.props.bar_chart.auto_fit = auto_fit;
@@ -14865,11 +15805,12 @@ impl WgpuState {
             WidgetKind::Button | WidgetKind::SmallButton | WidgetKind::Tab | WidgetKind::NavItem
         ) && prop == "badge"
         {
+            let invalidation_mode = self.live_text_invalidation_mode;
             let decision = self
                 .widget_tree
                 .as_ref()
                 .and_then(|tree| find_widget(tree, id))
-                .map(|node| live_text_prop_decision(node, prop))
+                .map(|node| invalidation_mode.apply(live_text_prop_decision(node, prop)))
                 .unwrap_or(LiveTextInvalidationDecision {
                     dirty: Dirty::Layout,
                     reason: LiveTextInvalidationReason::UnsupportedProperty,
@@ -14920,7 +15861,9 @@ impl WgpuState {
                     if let Some(tree) = self.widget_tree.as_mut() {
                         if set_widget_html_report_text_prop(tree, id, prop, Some(text)) {
                             return Some(if prop == "text" {
-                                Dirty::Text
+                                self.target_local_text_dirty(
+                                    LiveTextInvalidationReason::TargetLocalHtmlFallback,
+                                )
                             } else {
                                 Dirty::Full
                             });
@@ -14932,7 +15875,9 @@ impl WgpuState {
                     if let Some(tree) = self.widget_tree.as_mut() {
                         if set_widget_html_report_text_prop(tree, id, prop, None) {
                             return Some(if prop == "text" {
-                                Dirty::Text
+                                self.target_local_text_dirty(
+                                    LiveTextInvalidationReason::TargetLocalHtmlFallback,
+                                )
                             } else {
                                 Dirty::Full
                             });
@@ -14961,6 +15906,19 @@ impl WgpuState {
         }
         let log_view_follow =
             kind == WidgetKind::LogView && prop == "value" && self.log_view_follow(id);
+        let focused_text_geometry = matches!(kind, WidgetKind::TextArea | WidgetKind::CodeEditor)
+            .then(|| {
+                let focused = self
+                    .widget_state
+                    .as_ref()
+                    .and_then(|state| state.focused.as_deref())
+                    == Some(id);
+                focused
+                    .then(|| self.text_area_scroll_geometry(id))
+                    .flatten()
+            })
+            .flatten();
+        let invalidation_mode = self.live_text_invalidation_mode;
         let state = self.widget_state.as_mut()?;
         if matches!(kind, WidgetKind::Tabs | WidgetKind::Pages) && prop == "value" {
             let CommandValue::Text(value) = value else {
@@ -15035,7 +15993,12 @@ impl WgpuState {
             }
             (WidgetKind::NumberInput | WidgetKind::DragNumber, "value", CommandValue::Float(v)) => {
                 state.set_number_value(id, v)?;
-                Some(Dirty::Text)
+                let decision = invalidation_mode.apply(LiveTextInvalidationDecision {
+                    dirty: Dirty::Text,
+                    reason: LiveTextInvalidationReason::TargetLocalState,
+                });
+                self.live_text_invalidation_stats.record(decision);
+                Some(decision.dirty)
             }
             (WidgetKind::ProgressBar, "value", CommandValue::Float(v)) => {
                 state.try_set_float(id, v)?;
@@ -15043,7 +16006,12 @@ impl WgpuState {
             }
             (WidgetKind::Dropdown, "value", CommandValue::Text(v)) => {
                 state.set_dropdown_value(id, &v)?;
-                Some(Dirty::Text)
+                let decision = invalidation_mode.apply(LiveTextInvalidationDecision {
+                    dirty: Dirty::Text,
+                    reason: LiveTextInvalidationReason::TargetLocalState,
+                });
+                self.live_text_invalidation_stats.record(decision);
+                Some(decision.dirty)
             }
             (
                 WidgetKind::TextInput
@@ -15057,7 +16025,15 @@ impl WgpuState {
                 if log_view_follow {
                     state.text_scroll_y.insert(id.to_string(), f32::MAX);
                 }
-                Some(Dirty::Text)
+                if let Some((visible_w, visible_h, line_h)) = focused_text_geometry {
+                    state.ensure_text_area_cursor_visible(id, visible_w, visible_h, line_h, None);
+                }
+                let decision = invalidation_mode.apply(LiveTextInvalidationDecision {
+                    dirty: Dirty::Text,
+                    reason: LiveTextInvalidationReason::TargetLocalState,
+                });
+                self.live_text_invalidation_stats.record(decision);
+                Some(decision.dirty)
             }
             (kind, prop, _) => {
                 eprintln!(
@@ -15572,6 +16548,7 @@ impl WgpuState {
         if !replace_widget_children(tree, id, children) {
             return Ok(false);
         }
+        self.structure_generation = self.structure_generation.saturating_add(1);
         self.icon_theme
             .apply_to_tree(tree)
             .map_err(DragonError::Runtime)?;
@@ -15600,6 +16577,7 @@ impl WgpuState {
         if !replace_widget_node(tree, id, replacement) {
             return Ok(false);
         }
+        self.structure_generation = self.structure_generation.saturating_add(1);
         self.icon_theme
             .apply_to_tree(tree)
             .map_err(DragonError::Runtime)?;
@@ -17475,55 +18453,62 @@ impl WgpuState {
     }
 
     fn begin_deferred_rebuilds(&mut self) {
-        debug_assert!(self.deferred_dirty.is_none());
-        self.deferred_text_targets.clear();
-        self.deferred_visual_targets.clear();
-        self.deferred_table_text_targets.clear();
-        self.deferred_text_requires_full = false;
-        self.deferred_visual_requires_full = false;
-        self.deferred_overlay_text = false;
+        debug_assert!(self.deferred_rebuild_batch.dirty.is_none());
+        self.deferred_rebuild_batch = DeferredRebuildBatch::begin(self.structure_generation);
         self.defer_rebuilds = true;
     }
 
     fn flush_deferred_rebuilds(&mut self) -> bool {
         self.defer_rebuilds = false;
-        let mut text_targets = std::mem::take(&mut self.deferred_text_targets);
-        let visual_targets = std::mem::take(&mut self.deferred_visual_targets);
-        merge_deferred_visual_targets(&mut text_targets, visual_targets);
-        let table_text_targets = std::mem::take(&mut self.deferred_table_text_targets);
-        let text_requires_full = std::mem::take(&mut self.deferred_text_requires_full);
-        let visual_requires_full = std::mem::take(&mut self.deferred_visual_requires_full);
-        let overlay_text = std::mem::take(&mut self.deferred_overlay_text);
-        let Some(dirty) = self.deferred_dirty.take() else {
-            self.deferred_scatter_style_sync = false;
+        let mut batch = std::mem::take(&mut self.deferred_rebuild_batch);
+        let Some(dirty) = batch.dirty else {
             return false;
         };
-        let scatter_style_sync = std::mem::take(&mut self.deferred_scatter_style_sync);
-        if scatter_style_sync && matches!(dirty, Dirty::Text) {
+        if batch.targets.scatter_style_sync && matches!(dirty, Dirty::Text) {
             self.sync_scatter_style_overrides();
         }
-        if can_use_targeted_deferred_rebuild(
+        let has_targets = batch.targets.has_targeted_work();
+        let targeted_without_generation_guard = can_use_targeted_deferred_rebuild(
             dirty,
-            text_requires_full,
-            visual_requires_full,
-            !text_targets.is_empty() || !table_text_targets.is_empty() || overlay_text,
-        ) {
+            batch.targets.retained_visual_requires_full,
+            batch.targets.primitive_paint_requires_full,
+            has_targets,
+            true,
+        );
+        if targeted_without_generation_guard {
             self.command_text_rebuild_stats.attempted_batches = self
                 .command_text_rebuild_stats
                 .attempted_batches
                 .saturating_add(1);
-            let roots = if text_targets.is_empty() {
+            if batch.structure_generation != self.structure_generation {
+                self.command_text_rebuild_stats.fallback_batches = self
+                    .command_text_rebuild_stats
+                    .fallback_batches
+                    .saturating_add(1);
+                self.command_text_rebuild_stats
+                    .stale_generation_fallback_batches = self
+                    .command_text_rebuild_stats
+                    .stale_generation_fallback_batches
+                    .saturating_add(1);
+                self.execute_rebuild_for_dirty(Dirty::Full);
+                return true;
+            }
+            let visual_roots = batch.targets.take_visual_roots();
+            let table_text_targets = std::mem::take(&mut batch.targets.table_text_roots);
+            let overlay_text = batch.targets.overlay_text;
+            let roots = if visual_roots.is_empty() {
                 Some(HashSet::new())
             } else {
                 self.widget_tree
                     .as_ref()
-                    .and_then(|tree| normalize_targeted_text_roots(tree, &text_targets))
+                    .and_then(|tree| normalize_targeted_text_roots(tree, &visual_roots))
             };
             if let Some(roots) = roots.filter(|roots| {
                 roots.len() + table_text_targets.len() <= MAX_TARGETED_TEXT_ROOTS_PER_BATCH
             }) {
                 self.dirty_rebuild_stats.record_execution(Dirty::Text);
                 if self.rebuild_targeted_visuals(&roots, &table_text_targets, overlay_text) {
+                    self.verify_targeted_rebuild_against_full();
                     self.command_text_rebuild_stats.completed_batches = self
                         .command_text_rebuild_stats
                         .completed_batches
@@ -17567,12 +18552,11 @@ impl WgpuState {
             .overlay_requests
             .saturating_add(1);
         if self.defer_rebuilds {
-            self.deferred_overlay_text = true;
-            if self.deferred_dirty.is_some() {
+            self.deferred_rebuild_batch.targets.overlay_text = true;
+            if self.deferred_rebuild_batch.merge_dirty(Dirty::Text) {
                 self.dirty_rebuild_stats.deferred_merges =
                     self.dirty_rebuild_stats.deferred_merges.saturating_add(1);
             }
-            self.deferred_dirty = Some(merge_dirty(self.deferred_dirty, Dirty::Text));
             return;
         }
         self.dirty_rebuild_stats.record_execution(Dirty::Text);
@@ -17587,14 +18571,18 @@ impl WgpuState {
             .command_text_rebuild_stats
             .targeted_requests
             .saturating_add(1);
+        self.command_text_rebuild_stats.table_text_requests = self
+            .command_text_rebuild_stats
+            .table_text_requests
+            .saturating_add(1);
         if self.defer_rebuilds {
-            self.deferred_table_text_targets
-                .insert(widget_id.to_string());
-            if self.deferred_dirty.is_some() {
+            self.deferred_rebuild_batch
+                .targets
+                .insert_widget(DeferredWidgetTargetClass::TableText, widget_id);
+            if self.deferred_rebuild_batch.merge_dirty(Dirty::Text) {
                 self.dirty_rebuild_stats.deferred_merges =
                     self.dirty_rebuild_stats.deferred_merges.saturating_add(1);
             }
-            self.deferred_dirty = Some(merge_dirty(self.deferred_dirty, Dirty::Text));
             return;
         }
         self.dirty_rebuild_stats.record_execution(Dirty::Text);
@@ -17609,13 +18597,21 @@ impl WgpuState {
         if self.defer_rebuilds {
             if matches!(dirty, Dirty::Text) {
                 if let Some(widget_id) = widget_id {
-                    self.deferred_text_targets.insert(widget_id.to_string());
+                    self.deferred_rebuild_batch
+                        .targets
+                        .insert_widget(DeferredWidgetTargetClass::RetainedVisual, widget_id);
                     self.command_text_rebuild_stats.targeted_requests = self
                         .command_text_rebuild_stats
                         .targeted_requests
                         .saturating_add(1);
+                    self.command_text_rebuild_stats.retained_visual_requests = self
+                        .command_text_rebuild_stats
+                        .retained_visual_requests
+                        .saturating_add(1);
                 } else {
-                    self.deferred_text_requires_full = true;
+                    self.deferred_rebuild_batch
+                        .targets
+                        .retained_visual_requires_full = true;
                     self.command_text_rebuild_stats.global_requests = self
                         .command_text_rebuild_stats
                         .global_requests
@@ -17623,18 +18619,25 @@ impl WgpuState {
                 }
             }
             if matches!(dirty, Dirty::Visual) {
-                self.deferred_scatter_style_sync = true;
+                self.deferred_rebuild_batch.targets.scatter_style_sync = true;
                 if let Some(widget_id) = widget_id {
-                    self.deferred_visual_targets.insert(widget_id.to_string());
+                    self.deferred_rebuild_batch
+                        .targets
+                        .insert_widget(DeferredWidgetTargetClass::PrimitivePaint, widget_id);
+                    self.command_text_rebuild_stats.primitive_paint_requests = self
+                        .command_text_rebuild_stats
+                        .primitive_paint_requests
+                        .saturating_add(1);
                 } else {
-                    self.deferred_visual_requires_full = true;
+                    self.deferred_rebuild_batch
+                        .targets
+                        .primitive_paint_requires_full = true;
                 }
             }
-            if self.deferred_dirty.is_some() {
+            if self.deferred_rebuild_batch.merge_dirty(dirty) {
                 self.dirty_rebuild_stats.deferred_merges =
                     self.dirty_rebuild_stats.deferred_merges.saturating_add(1);
             }
-            self.deferred_dirty = Some(merge_dirty(self.deferred_dirty, dirty));
             return;
         }
         self.execute_rebuild_for_dirty(dirty);
@@ -18142,7 +19145,8 @@ impl WgpuState {
             .iter()
             .map(|(id, metrics)| (id.clone(), Self::line_plot_metrics_snapshot(None, metrics)))
             .collect::<serde_json::Map<_, _>>();
-        let framework = json!({
+        let mut framework = json!({
+            "structure_generation": self.structure_generation,
             "apply_layout": self.apply_layout_timing.json_value(),
             "style_reapply": self.style_reapply_timing.json_value(),
             "transition_sync": self.transition_sync_timing.json_value(),
@@ -18166,7 +19170,9 @@ impl WgpuState {
             "dirty_rebuilds": self.dirty_rebuild_stats.json_value(),
             "command_text_rebuilds": self.command_text_rebuild_stats.json_value(),
             "interaction_text_rebuilds": self.interaction_text_rebuild_stats.json_value(),
-            "live_text_invalidation": self.live_text_invalidation_stats.json_value(),
+            "live_text_invalidation": self
+                .live_text_invalidation_stats
+                .json_value(self.live_text_invalidation_mode),
             "animation_activity": {
                 "css_active": self.css_animations_active,
                 "style_transition_count":
@@ -18199,6 +19205,9 @@ impl WgpuState {
             "prewarm_scatter_widgets": self.prewarm_scatter_widget_timing.json_value(),
             "retained_line_plot_sync": self.retained_line_plot_sync_timing.json_value(),
         });
+        framework["targeted_rebuild_verification"] = self
+            .targeted_rebuild_verification_stats
+            .json_value(self.targeted_rebuild_verification_mode);
         let layout_text_measurement = crate::text::layout_text_measurement_stats();
         json!({
             "window": {
@@ -18346,6 +19355,20 @@ impl WgpuState {
                 }),
                 "has_text": self.text.is_some(),
                 "text": self.text.as_ref().map(|text| text.debug_stats()),
+                "text_owner_geometry": self
+                    .text
+                    .as_ref()
+                    .map(|text| {
+                        text.debug_owner_geometry(&self.diagnostic_text_geometry_ids)
+                    })
+                    .unwrap_or_else(|| json!({})),
+                "plot_geometry": diagnostic_plot_geometry_snapshot(
+                    self.widget_tree.as_ref(),
+                    self.current_layout.as_ref(),
+                    &self.theme,
+                    self.scale_factor,
+                    &self.diagnostic_text_geometry_ids,
+                ),
                 "layout_text_measurement": {
                     "cache_entries": layout_text_measurement.cache_entries,
                     "cache_limit": layout_text_measurement.cache_limit,
@@ -20244,6 +21267,7 @@ struct TextSelectionDrag {
 }
 
 const SYNTHETIC_HOVER_IDS_ENV: &str = "DRAGONGUI_SYNTHETIC_HOVER_IDS";
+const SYNTHETIC_FOCUS_ID_ENV: &str = "DRAGONGUI_SYNTHETIC_FOCUS_ID";
 
 #[derive(Debug)]
 struct PendingSyntheticInput {
@@ -20266,6 +21290,10 @@ struct HoverDispatchBreakdown {
 struct SyntheticInputProfile {
     targets: Vec<String>,
     next_target: usize,
+    focus_target: Option<String>,
+    focus_attempted: bool,
+    focus_applied: bool,
+    focus_resolved_id: Option<String>,
     pending: Option<PendingSyntheticInput>,
     dispatch_timing: StageTimingStats,
     dropdown_hit_timing: StageTimingStats,
@@ -20282,18 +21310,29 @@ struct SyntheticInputProfile {
 
 impl SyntheticInputProfile {
     fn from_env() -> Option<Self> {
-        Self::from_targets(&std::env::var(SYNTHETIC_HOVER_IDS_ENV).ok()?)
+        let hover_targets = std::env::var(SYNTHETIC_HOVER_IDS_ENV).unwrap_or_default();
+        let focus_target = std::env::var(SYNTHETIC_FOCUS_ID_ENV)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        Self::from_targets_and_focus(&hover_targets, focus_target)
     }
 
+    #[cfg(test)]
     fn from_targets(value: &str) -> Option<Self> {
+        Self::from_targets_and_focus(value, None)
+    }
+
+    fn from_targets_and_focus(value: &str, focus_target: Option<String>) -> Option<Self> {
         let targets = value
             .split(',')
             .map(str::trim)
             .filter(|id| !id.is_empty())
             .map(str::to_string)
             .collect::<Vec<_>>();
-        (!targets.is_empty()).then_some(Self {
+        (!targets.is_empty() || focus_target.is_some()).then_some(Self {
             targets,
+            focus_target,
             ..Self::default()
         })
     }
@@ -20307,6 +21346,12 @@ impl SyntheticInputProfile {
             "resolved": self.resolved,
             "missing": self.missing,
             "mismatched": self.mismatched,
+            "focus": {
+                "requested_id": self.focus_target.as_deref(),
+                "attempted": self.focus_attempted,
+                "applied": self.focus_applied,
+                "resolved_id": self.focus_resolved_id.as_deref(),
+            },
             "pending": self.pending.as_ref().map(|pending| json!({
                 "requested_id": &pending.requested_id,
                 "resolved_id": &pending.resolved_id,
@@ -20430,6 +21475,7 @@ struct DragonApp {
     command_drain_timing: StageTimingStats,
     command_drain_fetch_timing: StageTimingStats,
     command_drain_coalesce_timing: StageTimingStats,
+    command_coalescing_stats: CommandCoalescingStats,
     command_drain_apply_timing: StageTimingStats,
     command_drain_flush_timing: StageTimingStats,
     last_command_drain_batches: u64,
@@ -20891,6 +21937,7 @@ impl DragonApp {
             command_drain_timing: StageTimingStats::default(),
             command_drain_fetch_timing: StageTimingStats::default(),
             command_drain_coalesce_timing: StageTimingStats::default(),
+            command_coalescing_stats: CommandCoalescingStats::default(),
             command_drain_apply_timing: StageTimingStats::default(),
             command_drain_flush_timing: StageTimingStats::default(),
             last_command_drain_batches: 0,
@@ -21192,6 +22239,7 @@ impl DragonApp {
             "timing": self.command_drain_timing.json_value(),
             "fetch": self.command_drain_fetch_timing.json_value(),
             "coalesce": self.command_drain_coalesce_timing.json_value(),
+            "coalescing": self.command_coalescing_stats.json_value(),
             "apply": self.command_drain_apply_timing.json_value(),
             "flush_rebuilds": self.command_drain_flush_timing.json_value(),
             "last_batches": self.last_command_drain_batches,
@@ -21463,6 +22511,33 @@ impl DragonApp {
         let Some(mut profile) = self.synthetic_input_profile.take() else {
             return false;
         };
+        if !profile.focus_attempted {
+            if let Some(requested_id) = profile.focus_target.clone() {
+                profile.focus_attempted = true;
+                let resolved_id = self
+                    .gpu
+                    .as_ref()
+                    .and_then(|gpu| gpu.visible_widget_center(&requested_id))
+                    .and_then(|position| {
+                        self.gpu
+                            .as_ref()
+                            .and_then(|gpu| gpu.hit_test_ui(position).map(|(id, _)| id))
+                    });
+                profile.focus_resolved_id = resolved_id.clone();
+                if resolved_id.as_deref() == Some(requested_id.as_str()) {
+                    if let Some(gpu) = self.gpu.as_mut() {
+                        gpu.focus_widget(Some(requested_id.clone()));
+                        profile.focus_applied = gpu
+                            .widget_state
+                            .as_ref()
+                            .and_then(|state| state.focused.as_deref())
+                            == Some(requested_id.as_str());
+                    }
+                }
+                self.synthetic_input_profile = Some(profile);
+                return true;
+            }
+        }
         if let Some(pending) = profile.pending.take() {
             profile
                 .presentation_latency
@@ -21727,7 +22802,8 @@ impl DragonApp {
             bridge.drain_limited_into(&mut commands, MAX_COMMANDS_PER_DRAIN_BATCH);
             fetch_ms += fetch_t0.elapsed().as_secs_f64() * 1000.0;
             let coalesce_t0 = Instant::now();
-            coalesce_runtime_command_batch(&mut commands);
+            let batch_coalescing = coalesce_runtime_command_batch(&mut commands);
+            self.command_coalescing_stats.record(batch_coalescing);
             coalesce_ms += coalesce_t0.elapsed().as_secs_f64() * 1000.0;
             if commands.is_empty() {
                 break;
@@ -21909,9 +22985,8 @@ impl DragonApp {
                             None if !gpu.has_widget(&update.id) => stale += 1,
                             None => noops += 1,
                         }
-                        let deferred_target_count = gpu.deferred_text_targets.len()
-                            + gpu.deferred_visual_targets.len()
-                            + gpu.deferred_table_text_targets.len();
+                        let deferred_target_count =
+                            gpu.deferred_rebuild_batch.targets.raw_widget_count();
                         if index + 1 < update_count
                             && deferred_target_count >= MAX_TARGETED_TEXT_ROOTS_PER_BATCH
                         {
@@ -26751,6 +27826,9 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                 if !self.command_drain_continuation_pending {
                     self.drain_html_report_messages();
                     self.drain_runtime_commands();
+                    if let Some(gpu) = self.gpu.as_mut() {
+                        gpu.sync_html_reports();
+                    }
                 }
                 if self.startup_real_redraw_deadline.is_none() {
                     self.request_application_frame();

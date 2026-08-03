@@ -7,6 +7,7 @@ import json
 import re
 import struct
 import threading
+import warnings
 import subprocess
 import sys
 import os
@@ -232,6 +233,12 @@ def test_builtin_help_manual_exposes_nested_sections() -> None:
     assert "CSS type selector: `ColorPicker`" in dg.help.reference.widgets.color_picker()
     assert "CSS Limits" in dg.help.reference.css_limits()
     assert "Thread-Safe Updates" in dg.help.live_updates.threads()
+    threading_help = dg.help.live_updates.threads()
+    assert "Latest-state snapshot" in threading_help
+    assert "Lossless event or append" in threading_help
+    assert "Intermediate snapshots may be skipped" in threading_help
+    assert "unkeyed_task_queue_high_water" in threading_help
+    assert "rate-limited `RuntimeWarning`" in threading_help
     batching_help = dg.help.live_updates.batching()
     assert "Batched Property Updates" in batching_help
     assert "with app.update_batch():" in batching_help
@@ -505,6 +512,19 @@ def test_builtin_help_manual_python_examples_use_valid_public_call_shapes() -> N
 
     walk(dg.help.to_dict())
     assert issues == []
+
+
+def test_public_threading_guides_distinguish_latest_state_from_lossless_work() -> None:
+    guides = (
+        Path("README.md"),
+        Path("docs/library-overview.md"),
+        Path("docs/widgets-reference.md"),
+        Path("docs/sphinx/live-updates.md"),
+    )
+    for path in guides:
+        text = path.read_text(encoding="utf-8")
+        assert "coalesce_key" in text, path
+        assert "lossless" in text.lower(), path
 
 
 def test_builtin_help_manual_examples_use_supported_style_properties() -> None:
@@ -3549,6 +3569,56 @@ def test_app_handle_keyed_tasks_are_thread_safe_and_require_hashable_keys() -> N
     assert handle.debug_snapshot()["runtime"]["python"]["tasks_coalesced"] == 399
     with pytest.raises(TypeError, match="hashable"):
         handle.call_soon_threadsafe(lambda: None, coalesce_key=[])
+
+
+def test_app_handle_warns_at_bounded_unkeyed_queue_growth_thresholds(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(runtime_module, "_PYTHON_TASK_QUEUE_WARNING_THRESHOLD", 4)
+    handle = AppHandle()
+
+    with pytest.warns(RuntimeWarning) as captured:
+        for _ in range(8):
+            handle.call_soon_threadsafe(lambda: None)
+
+    assert len(captured) == 2
+    assert "reached 4 pending callbacks" in str(captured[0].message)
+    assert "reached 8 pending callbacks" in str(captured[1].message)
+    assert "stable coalesce_key" in str(captured[0].message)
+    snapshot = handle._python_debug_snapshot()
+    assert snapshot["unkeyed_tasks_pending"] == 8
+    assert snapshot["unkeyed_task_queue_high_water"] == 8
+    assert snapshot["task_queue_growth_warnings"] == 2
+    assert snapshot["next_task_queue_warning_at"] == 16
+
+    handle._drain_python_tasks()
+    assert handle._python_debug_snapshot()["unkeyed_tasks_pending"] == 0
+
+
+def test_app_handle_keyed_latest_state_queue_stays_bounded_without_warning(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(runtime_module, "_PYTHON_TASK_QUEUE_WARNING_THRESHOLD", 4)
+    handle = AppHandle()
+    calls: list[int] = []
+
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always")
+        for index in range(1_000):
+            handle.call_soon_threadsafe(
+                lambda value=index: calls.append(value),
+                coalesce_key="telemetry",
+            )
+
+    assert captured == []
+    snapshot = handle._python_debug_snapshot()
+    assert snapshot["task_queue_high_water"] == 1
+    assert snapshot["unkeyed_tasks_pending"] == 0
+    assert snapshot["unkeyed_task_queue_high_water"] == 0
+    assert snapshot["task_queue_growth_warnings"] == 0
+
+    handle._drain_python_tasks()
+    assert calls == [999]
 
 
 def test_app_handle_reentrant_keyed_scheduling_keeps_current_and_latest() -> None:

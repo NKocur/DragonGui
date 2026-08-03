@@ -504,7 +504,11 @@ def _run_loop(
 
 
 def run_dearpygui(args: argparse.Namespace, config: LoadConfig) -> dict[str, Any]:
-    sys.path.insert(0, str(ROOT / "artifacts" / "benchmark-deps"))
+    dependency_root = os.environ.get("DRAGONGUI_BENCHMARK_DEPS_PATH")
+    sys.path.insert(
+        0,
+        dependency_root or str(ROOT / "artifacts" / "benchmark-deps"),
+    )
     import dearpygui.dearpygui as dpg
 
     data = DashboardData(config)

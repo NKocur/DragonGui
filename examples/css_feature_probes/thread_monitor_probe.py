@@ -145,7 +145,8 @@ def ThreadMonitorProbe(_ctx: dg.ComponentCtx) -> dg.Window:
                         count += 1
                         try:
                             app.call_soon_threadsafe(
-                                lambda c=count: _counter.set_value(f"tasks sent: {c}")
+                                lambda c=count: _counter.set_value(f"tasks sent: {c}"),
+                                coalesce_key="thread-monitor-probe.counter.latest",
                             )
                         except RuntimeError:
                             break

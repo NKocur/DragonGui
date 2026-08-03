@@ -587,7 +587,7 @@ struct CommandQueueNode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum CommandCoalesceKey {
+pub(crate) enum CommandCoalescingKey {
     SetProp(String, String),
     Theme,
     Stylesheet(StylesheetOrigin, Option<String>),
@@ -597,9 +597,74 @@ enum CommandCoalesceKey {
     Histogram(String),
     ScatterScalarBar(String),
     ScatterActor(String, u32),
+    ExtensionDisplayList(String),
+    IconTheme,
 }
 
-impl CommandCoalesceKey {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CommandCoalescingBarrier {
+    Structural,
+    Observation,
+    Callback,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(usize)]
+pub(crate) enum CommandCoalescingFamily {
+    Property,
+    PropertyPacket,
+    Theme,
+    Stylesheet,
+    ScatterPoints,
+    LinePlot,
+    Histogram,
+    ScatterScalarBar,
+    ScatterActor,
+    ExtensionDisplayList,
+    IconTheme,
+    LinePlotAppend,
+}
+
+impl CommandCoalescingFamily {
+    pub(crate) const ALL: [Self; 12] = [
+        Self::Property,
+        Self::PropertyPacket,
+        Self::Theme,
+        Self::Stylesheet,
+        Self::ScatterPoints,
+        Self::LinePlot,
+        Self::Histogram,
+        Self::ScatterScalarBar,
+        Self::ScatterActor,
+        Self::ExtensionDisplayList,
+        Self::IconTheme,
+        Self::LinePlotAppend,
+    ];
+    pub(crate) const COUNT: usize = Self::ALL.len();
+
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Property => "property",
+            Self::PropertyPacket => "property_packet",
+            Self::Theme => "theme",
+            Self::Stylesheet => "stylesheet",
+            Self::ScatterPoints => "scatter_points",
+            Self::LinePlot => "line_plot",
+            Self::Histogram => "histogram",
+            Self::ScatterScalarBar => "scatter_scalar_bar",
+            Self::ScatterActor => "scatter_actor",
+            Self::ExtensionDisplayList => "extension_display_list",
+            Self::IconTheme => "icon_theme",
+            Self::LinePlotAppend => "line_plot_append",
+        }
+    }
+}
+
+impl CommandCoalescingKey {
+    fn property(id: &str, prop: &str) -> Self {
+        Self::SetProp(id.to_string(), prop.to_string())
+    }
+
     fn stylesheet_origin(&self) -> Option<StylesheetOrigin> {
         match self {
             Self::Stylesheet(origin, _) | Self::ClearStylesheets(origin) => Some(*origin),
@@ -608,11 +673,17 @@ impl CommandCoalesceKey {
     }
 }
 
+impl PropUpdate {
+    pub(crate) fn coalescing_key(&self) -> CommandCoalescingKey {
+        CommandCoalescingKey::property(&self.id, &self.prop)
+    }
+}
+
 #[derive(Debug, Default)]
 struct CommandQueueInner {
     nodes: Vec<Option<CommandQueueNode>>,
     free: Vec<usize>,
-    latest: HashMap<CommandCoalesceKey, usize>,
+    latest: HashMap<CommandCoalescingKey, usize>,
     head: Option<usize>,
     tail: Option<usize>,
     len: usize,
@@ -645,12 +716,12 @@ impl CommandQueueInner {
         node.command
     }
 
-    fn remove_key(&mut self, key: &CommandCoalesceKey) -> Option<Command> {
+    fn remove_key(&mut self, key: &CommandCoalescingKey) -> Option<Command> {
         let index = self.latest.remove(key)?;
         Some(self.unlink(index))
     }
 
-    fn append(&mut self, command: Command, key: Option<CommandCoalesceKey>) {
+    fn append(&mut self, command: Command, key: Option<CommandCoalescingKey>) {
         let index = self.free.pop().unwrap_or(self.nodes.len());
         let node = CommandQueueNode {
             command,
@@ -679,7 +750,7 @@ impl CommandQueueInner {
 
     fn pop_front(&mut self) -> Option<Command> {
         let index = self.head?;
-        let key = command_coalesce_key(&self.nodes[index].as_ref()?.command);
+        let key = self.nodes[index].as_ref()?.command.coalescing_key();
         if let Some(key) = key {
             if self.latest.get(&key) == Some(&index) {
                 self.latest.remove(&key);
@@ -700,6 +771,8 @@ enum QueueReplacementFamily {
     Histogram,
     ScatterScalarBar,
     ScatterActor,
+    ExtensionDisplayList,
+    IconTheme,
     Other,
 }
 
@@ -714,6 +787,12 @@ struct CommandQueueStats {
     histogram_replacements: u64,
     scatter_scalar_bar_replacements: u64,
     scatter_actor_replacements: u64,
+    extension_display_list_replacements: u64,
+    icon_theme_replacements: u64,
+    barrier_segments: u64,
+    structural_barriers: u64,
+    observation_barriers: u64,
+    callback_barriers: u64,
     high_water: usize,
     push_ms: VecDeque<f64>,
     push_total_ms: f64,
@@ -721,6 +800,19 @@ struct CommandQueueStats {
 }
 
 impl CommandQueueStats {
+    fn record_barrier(&mut self, barrier: Option<CommandCoalescingBarrier>) {
+        let Some(barrier) = barrier else {
+            return;
+        };
+        self.barrier_segments = self.barrier_segments.saturating_add(1);
+        let class = match barrier {
+            CommandCoalescingBarrier::Structural => &mut self.structural_barriers,
+            CommandCoalescingBarrier::Observation => &mut self.observation_barriers,
+            CommandCoalescingBarrier::Callback => &mut self.callback_barriers,
+        };
+        *class = class.saturating_add(1);
+    }
+
     fn record_push(
         &mut self,
         elapsed_ms: f64,
@@ -745,6 +837,10 @@ impl CommandQueueStats {
             QueueReplacementFamily::Histogram => &mut self.histogram_replacements,
             QueueReplacementFamily::ScatterScalarBar => &mut self.scatter_scalar_bar_replacements,
             QueueReplacementFamily::ScatterActor => &mut self.scatter_actor_replacements,
+            QueueReplacementFamily::ExtensionDisplayList => {
+                &mut self.extension_display_list_replacements
+            }
+            QueueReplacementFamily::IconTheme => &mut self.icon_theme_replacements,
             QueueReplacementFamily::Other => return,
         };
         *target = target.saturating_add(replacements as u64);
@@ -785,6 +881,16 @@ impl CommandQueueStats {
                 "histogram": self.histogram_replacements,
                 "scatter_scalar_bar": self.scatter_scalar_bar_replacements,
                 "scatter_actor": self.scatter_actor_replacements,
+                "extension_display_list": self.extension_display_list_replacements,
+                "icon_theme": self.icon_theme_replacements,
+            },
+            "barrier_segments": {
+                "total": self.barrier_segments,
+                "by_class": {
+                    "structural": self.structural_barriers,
+                    "observation": self.observation_barriers,
+                    "callback": self.callback_barriers,
+                },
             },
             "push_timing": {
                 "count": self.pushes,
@@ -800,63 +906,148 @@ impl CommandQueueStats {
     }
 }
 
-fn command_coalesce_key(command: &Command) -> Option<CommandCoalesceKey> {
-    match command {
-        Command::SetProp { id, prop, .. } => {
-            Some(CommandCoalesceKey::SetProp(id.clone(), prop.clone()))
-        }
-        Command::SetTheme { .. } => Some(CommandCoalesceKey::Theme),
-        Command::SetStylesheet { origin, id, .. } => {
-            Some(CommandCoalesceKey::Stylesheet(*origin, id.clone()))
-        }
-        Command::RemoveStylesheet { origin, id } => {
-            Some(CommandCoalesceKey::Stylesheet(*origin, Some(id.clone())))
-        }
-        Command::ClearStylesheets { origin } => Some(CommandCoalesceKey::ClearStylesheets(*origin)),
-        Command::SetScatterPointsPacked {
-            id, coalesce: true, ..
-        } => Some(CommandCoalesceKey::ScatterPoints(id.clone())),
-        Command::SetLinePlotDataPacked {
-            id,
-            series,
-            coalesce: true,
-            ..
-        } => Some(CommandCoalesceKey::LinePlot(id.clone(), series.clone())),
-        Command::SetHistogramData {
-            id, coalesce: true, ..
-        } => Some(CommandCoalesceKey::Histogram(id.clone())),
-        Command::SetScatterScalarBar { id, .. } => {
-            Some(CommandCoalesceKey::ScatterScalarBar(id.clone()))
-        }
-        Command::UpdateScatterActorPacked { id, actor_id, .. } => {
-            Some(CommandCoalesceKey::ScatterActor(id.clone(), *actor_id))
-        }
-        _ => None,
-    }
-}
-
-fn merge_replaced_command_flags(command: &mut Command, previous: &Command) {
-    match (command, previous) {
-        (
-            Command::SetScatterPointsPacked { fit, .. },
+impl Command {
+    pub(crate) fn coalescing_key(&self) -> Option<CommandCoalescingKey> {
+        match self {
+            Command::SetProp { id, prop, .. } => Some(CommandCoalescingKey::property(id, prop)),
+            Command::SetTheme { .. } => Some(CommandCoalescingKey::Theme),
+            Command::SetStylesheet { origin, id, .. } => {
+                Some(CommandCoalescingKey::Stylesheet(*origin, id.clone()))
+            }
+            Command::RemoveStylesheet { origin, id } => {
+                Some(CommandCoalescingKey::Stylesheet(*origin, Some(id.clone())))
+            }
+            Command::ClearStylesheets { origin } => {
+                Some(CommandCoalescingKey::ClearStylesheets(*origin))
+            }
             Command::SetScatterPointsPacked {
-                fit: previous_fit, ..
-            },
-        )
-        | (
-            Command::SetLinePlotDataPacked { fit, .. },
+                id, coalesce: true, ..
+            } => Some(CommandCoalescingKey::ScatterPoints(id.clone())),
             Command::SetLinePlotDataPacked {
-                fit: previous_fit, ..
-            },
-        ) => *fit |= *previous_fit,
-        (
-            Command::SetHistogramData { auto_fit, .. },
-            Command::SetHistogramData {
-                auto_fit: previous_auto_fit,
+                id,
+                series,
+                coalesce: true,
                 ..
-            },
-        ) => *auto_fit |= *previous_auto_fit,
-        _ => {}
+            } => Some(CommandCoalescingKey::LinePlot(id.clone(), series.clone())),
+            Command::SetHistogramData {
+                id, coalesce: true, ..
+            } => Some(CommandCoalescingKey::Histogram(id.clone())),
+            Command::SetScatterScalarBar { id, .. } => {
+                Some(CommandCoalescingKey::ScatterScalarBar(id.clone()))
+            }
+            Command::UpdateScatterActorPacked { id, actor_id, .. } => {
+                Some(CommandCoalescingKey::ScatterActor(id.clone(), *actor_id))
+            }
+            Command::UpdateExtensionDisplayList { id, .. } => {
+                Some(CommandCoalescingKey::ExtensionDisplayList(id.clone()))
+            }
+            Command::SetIconTheme { .. } => Some(CommandCoalescingKey::IconTheme),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn merge_replaced(&mut self, previous: &Command) -> bool {
+        match (self, previous) {
+            (
+                Command::SetHistogramData { auto_fit, .. },
+                Command::SetHistogramData {
+                    auto_fit: previous_auto_fit,
+                    ..
+                },
+            ) => {
+                *auto_fit |= *previous_auto_fit;
+                true
+            }
+            (
+                Command::SetScatterPointsPacked { fit, .. },
+                Command::SetScatterPointsPacked {
+                    fit: previous_fit, ..
+                },
+            )
+            | (
+                Command::SetLinePlotDataPacked { fit, .. },
+                Command::SetLinePlotDataPacked {
+                    fit: previous_fit, ..
+                },
+            ) => {
+                *fit |= *previous_fit;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    pub(crate) fn coalescing_family(&self) -> Option<CommandCoalescingFamily> {
+        match self {
+            Command::SetProp { .. } => Some(CommandCoalescingFamily::Property),
+            Command::SetProps { .. } => Some(CommandCoalescingFamily::PropertyPacket),
+            Command::SetTheme { .. } => Some(CommandCoalescingFamily::Theme),
+            Command::SetStylesheet { .. }
+            | Command::RemoveStylesheet { .. }
+            | Command::ClearStylesheets { .. } => Some(CommandCoalescingFamily::Stylesheet),
+            Command::SetScatterPointsPacked { coalesce: true, .. } => {
+                Some(CommandCoalescingFamily::ScatterPoints)
+            }
+            Command::SetLinePlotDataPacked { coalesce: true, .. } => {
+                Some(CommandCoalescingFamily::LinePlot)
+            }
+            Command::SetHistogramData { coalesce: true, .. } => {
+                Some(CommandCoalescingFamily::Histogram)
+            }
+            Command::SetScatterScalarBar { .. } => Some(CommandCoalescingFamily::ScatterScalarBar),
+            Command::UpdateScatterActorPacked { .. } => Some(CommandCoalescingFamily::ScatterActor),
+            Command::UpdateExtensionDisplayList { .. } => {
+                Some(CommandCoalescingFamily::ExtensionDisplayList)
+            }
+            Command::SetIconTheme { .. } => Some(CommandCoalescingFamily::IconTheme),
+            Command::AppendLinePlotPointsPacked { .. } => {
+                Some(CommandCoalescingFamily::LinePlotAppend)
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn coalescing_barrier(&self) -> Option<CommandCoalescingBarrier> {
+        match self {
+            Command::ReplaceChildren { .. } | Command::ReplaceNode { .. } => {
+                Some(CommandCoalescingBarrier::Structural)
+            }
+            Command::ScatterScreenshot { .. }
+            | Command::WindowScreenshot { .. }
+            | Command::DebugSnapshot { .. }
+            | Command::LatencyProbe { .. } => Some(CommandCoalescingBarrier::Observation),
+            Command::DrainPythonTasks => Some(CommandCoalescingBarrier::Callback),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn try_merge_adjacent(&mut self, next: Command) -> Result<(), Command> {
+        match (self, next) {
+            (
+                Command::AppendLinePlotPointsPacked {
+                    id,
+                    series,
+                    xy,
+                    max_points,
+                    payload_format,
+                },
+                Command::AppendLinePlotPointsPacked {
+                    id: next_id,
+                    series: next_series,
+                    xy: next_xy,
+                    max_points: next_max_points,
+                    payload_format: next_payload_format,
+                },
+            ) if *id == next_id
+                && *series == next_series
+                && *max_points == next_max_points
+                && *payload_format == next_payload_format =>
+            {
+                xy.extend(next_xy);
+                Ok(())
+            }
+            (_, next) => Err(next),
+        }
     }
 }
 
@@ -875,6 +1066,7 @@ impl CommandQueue {
             return Err(CommandQueueError::Closed);
         }
         let mut inner = self.inner.lock().expect("command queue mutex poisoned");
+        let barrier = command.coalescing_barrier();
         let depth_before = inner.len;
         let replacement_family = match &command {
             Command::SetProp { .. } => QueueReplacementFamily::SetProp,
@@ -887,10 +1079,16 @@ impl CommandQueue {
             Command::SetHistogramData { .. } => QueueReplacementFamily::Histogram,
             Command::SetScatterScalarBar { .. } => QueueReplacementFamily::ScatterScalarBar,
             Command::UpdateScatterActorPacked { .. } => QueueReplacementFamily::ScatterActor,
+            Command::UpdateExtensionDisplayList { .. } => {
+                QueueReplacementFamily::ExtensionDisplayList
+            }
+            Command::SetIconTheme { .. } => QueueReplacementFamily::IconTheme,
             _ => QueueReplacementFamily::Other,
         };
         let mut replacements = 0;
-        if let Command::ClearStylesheets { origin } = &command {
+        if barrier.is_some() {
+            inner.latest.clear();
+        } else if let Command::ClearStylesheets { origin } = &command {
             let keys = inner
                 .latest
                 .keys()
@@ -902,16 +1100,17 @@ impl CommandQueue {
                     replacements += 1;
                 }
             }
-        } else if let Some(key) = command_coalesce_key(&command) {
+        } else if let Some(key) = command.coalescing_key() {
             if let Some(previous) = inner.remove_key(&key) {
-                merge_replaced_command_flags(&mut command, &previous);
+                command.merge_replaced(&previous);
                 replacements = 1;
             }
         }
         debug_assert_eq!(replacements, depth_before.saturating_sub(inner.len));
-        let key = command_coalesce_key(&command);
+        let key = command.coalescing_key();
         inner.append(command, key);
         let depth = inner.len;
+        inner.stats.record_barrier(barrier);
         inner.stats.record_push(
             push_t0.elapsed().as_secs_f64() * 1000.0,
             depth,
@@ -2744,6 +2943,195 @@ mod tests {
     use super::*;
 
     #[test]
+    fn command_coalescing_contract_classifies_replaceable_and_lossless_commands() {
+        let property = Command::SetProp {
+            id: "status".to_string(),
+            prop: "text".to_string(),
+            value: CommandValue::Text("ready".to_string()),
+        };
+        assert_eq!(
+            property.coalescing_key(),
+            Some(CommandCoalescingKey::SetProp(
+                "status".to_string(),
+                "text".to_string()
+            ))
+        );
+        assert_eq!(
+            PropUpdate {
+                id: "status".to_string(),
+                prop: "text".to_string(),
+                value: CommandValue::Text("packet".to_string()),
+            }
+            .coalescing_key(),
+            CommandCoalescingKey::SetProp("status".to_string(), "text".to_string())
+        );
+
+        let coalesced_scatter = Command::SetScatterPointsPacked {
+            id: "scatter".to_string(),
+            xyz: vec![0; 12],
+            telemetry: None,
+            colormap: "viridis".to_string(),
+            payload_format: ScatterPayloadFormat::XyzF32V0,
+            fit: false,
+            coalesce: true,
+        };
+        assert_eq!(
+            coalesced_scatter.coalescing_key(),
+            Some(CommandCoalescingKey::ScatterPoints("scatter".to_string()))
+        );
+        assert_eq!(
+            Command::UpdateExtensionDisplayList {
+                id: "scope".to_string(),
+                display_list_json: "[]".to_string(),
+            }
+            .coalescing_key(),
+            Some(CommandCoalescingKey::ExtensionDisplayList(
+                "scope".to_string()
+            ))
+        );
+        assert_eq!(
+            Command::SetIconTheme {
+                theme: serde_json::json!({"search": "help"}),
+            }
+            .coalescing_key(),
+            Some(CommandCoalescingKey::IconTheme)
+        );
+
+        let mut lossless_scatter = coalesced_scatter.clone();
+        if let Command::SetScatterPointsPacked { coalesce, .. } = &mut lossless_scatter {
+            *coalesce = false;
+        }
+        let lossless_commands = [
+            Command::SetProps {
+                updates: vec![PropUpdate {
+                    id: "status".to_string(),
+                    prop: "text".to_string(),
+                    value: CommandValue::Text("packet".to_string()),
+                }],
+            },
+            lossless_scatter,
+            Command::AppendLinePlotPointsPacked {
+                id: "line".to_string(),
+                series: "value".to_string(),
+                xy: vec![0; 8],
+                max_points: None,
+                payload_format: LinePlotPayloadFormat::XyF32V0,
+            },
+            Command::ReplaceNode {
+                id: "status".to_string(),
+                node_json: "{}".to_string(),
+            },
+            Command::DebugSnapshot { request_id: 1 },
+        ];
+        assert!(lossless_commands
+            .iter()
+            .all(|command| command.coalescing_key().is_none()));
+        assert_eq!(
+            lossless_commands[3].coalescing_barrier(),
+            Some(CommandCoalescingBarrier::Structural)
+        );
+        assert_eq!(
+            lossless_commands[4].coalescing_barrier(),
+            Some(CommandCoalescingBarrier::Observation)
+        );
+        assert_eq!(
+            Command::DrainPythonTasks.coalescing_barrier(),
+            Some(CommandCoalescingBarrier::Callback)
+        );
+        assert!(lossless_commands[..3]
+            .iter()
+            .all(|command| command.coalescing_barrier().is_none()));
+    }
+
+    #[test]
+    fn command_coalescing_contract_merges_sticky_flags_only_with_matching_families() {
+        let mut latest_scatter = Command::SetScatterPointsPacked {
+            id: "scatter".to_string(),
+            xyz: vec![2; 12],
+            telemetry: None,
+            colormap: "turbo".to_string(),
+            payload_format: ScatterPayloadFormat::XyzF32V0,
+            fit: false,
+            coalesce: true,
+        };
+        let previous_scatter = Command::SetScatterPointsPacked {
+            id: "scatter".to_string(),
+            xyz: vec![1; 12],
+            telemetry: None,
+            colormap: "viridis".to_string(),
+            payload_format: ScatterPayloadFormat::XyzF32V0,
+            fit: true,
+            coalesce: true,
+        };
+        latest_scatter.merge_replaced(&previous_scatter);
+        assert!(matches!(
+            latest_scatter,
+            Command::SetScatterPointsPacked { fit: true, .. }
+        ));
+
+        let mut latest_histogram = Command::SetHistogramData {
+            id: "histogram".to_string(),
+            edges: vec![0.0, 1.0],
+            counts: vec![2.0],
+            input_count: 2,
+            finite_count: 2,
+            auto_fit: false,
+            coalesce: true,
+        };
+        let previous_histogram = Command::SetHistogramData {
+            id: "histogram".to_string(),
+            edges: vec![0.0, 1.0],
+            counts: vec![1.0],
+            input_count: 1,
+            finite_count: 1,
+            auto_fit: true,
+            coalesce: true,
+        };
+        latest_histogram.merge_replaced(&previous_histogram);
+        assert!(matches!(
+            latest_histogram,
+            Command::SetHistogramData { auto_fit: true, .. }
+        ));
+    }
+
+    #[test]
+    fn command_coalescing_contract_merges_only_compatible_adjacent_appends() {
+        let mut first = Command::AppendLinePlotPointsPacked {
+            id: "line".to_string(),
+            series: "temperature".to_string(),
+            xy: vec![1; 8],
+            max_points: Some(1024),
+            payload_format: LinePlotPayloadFormat::XyF32V0,
+        };
+        let second = Command::AppendLinePlotPointsPacked {
+            id: "line".to_string(),
+            series: "temperature".to_string(),
+            xy: vec![2; 16],
+            max_points: Some(1024),
+            payload_format: LinePlotPayloadFormat::XyF32V0,
+        };
+        assert!(first.try_merge_adjacent(second).is_ok());
+        assert!(matches!(
+            &first,
+            Command::AppendLinePlotPointsPacked { xy, .. }
+                if xy.len() == 24 && xy[..8] == [1; 8] && xy[8..] == [2; 16]
+        ));
+
+        let incompatible = Command::AppendLinePlotPointsPacked {
+            id: "line".to_string(),
+            series: "pressure".to_string(),
+            xy: vec![3; 8],
+            max_points: Some(1024),
+            payload_format: LinePlotPayloadFormat::XyF32V0,
+        };
+        assert!(first.try_merge_adjacent(incompatible).is_err());
+        assert!(matches!(
+            first,
+            Command::AppendLinePlotPointsPacked { xy, .. } if xy.len() == 24
+        ));
+    }
+
+    #[test]
     fn managed_image_resource_validation_rejects_unsafe_bridge_payloads() {
         let png = b"\x89PNG\r\n\x1a\npayload";
         assert!(validate_managed_image_resource("surface.tile", png, None).is_ok());
@@ -3052,7 +3440,7 @@ mod tests {
     }
 
     #[test]
-    fn queue_replacement_moves_latest_value_after_intervening_lossless_commands() {
+    fn queue_replacement_does_not_cross_an_observation_barrier() {
         let queue = CommandQueue::default();
         queue
             .push(Command::SetProp {
@@ -3081,14 +3469,103 @@ mod tests {
 
         let drained = queue.drain();
         assert!(matches!(
-            drained[0],
+            &drained[0],
+            Command::SetProp { id, value: CommandValue::Text(value), .. }
+                if id == "a" && value == "first"
+        ));
+        assert!(matches!(
+            drained[1],
             Command::DebugSnapshot { request_id: 17 }
         ));
-        assert!(matches!(&drained[1], Command::SetProp { id, .. } if id == "b"));
+        assert!(matches!(&drained[2], Command::SetProp { id, .. } if id == "b"));
         assert!(matches!(
-            &drained[2],
+            &drained[3],
             Command::SetProp { id, value: CommandValue::Text(value), .. }
                 if id == "a" && value == "final"
+        ));
+    }
+
+    #[test]
+    fn queue_replacement_does_not_cross_a_structural_barrier() {
+        let queue = CommandQueue::default();
+        queue
+            .push(Command::SetProp {
+                id: "status".to_string(),
+                prop: "text".to_string(),
+                value: CommandValue::Text("before".to_string()),
+            })
+            .unwrap();
+        queue
+            .push(Command::ReplaceNode {
+                id: "status".to_string(),
+                node_json: r#"{"id":"status","type":"label"}"#.to_string(),
+            })
+            .unwrap();
+        queue
+            .push(Command::SetProp {
+                id: "status".to_string(),
+                prop: "text".to_string(),
+                value: CommandValue::Text("after".to_string()),
+            })
+            .unwrap();
+
+        let drained = queue.drain();
+        assert_eq!(drained.len(), 3);
+        assert!(matches!(
+            &drained[0],
+            Command::SetProp { value: CommandValue::Text(value), .. } if value == "before"
+        ));
+        assert!(matches!(drained[1], Command::ReplaceNode { .. }));
+        assert!(matches!(
+            &drained[2],
+            Command::SetProp { value: CommandValue::Text(value), .. } if value == "after"
+        ));
+    }
+
+    #[test]
+    fn queue_uses_shared_keys_for_display_lists_and_icon_themes() {
+        let queue = CommandQueue::default();
+        queue
+            .push(Command::UpdateExtensionDisplayList {
+                id: "scope".to_string(),
+                display_list_json: r#"[{"cmd":"old"}]"#.to_string(),
+            })
+            .unwrap();
+        queue
+            .push(Command::SetIconTheme {
+                theme: serde_json::json!({"search": "help"}),
+            })
+            .unwrap();
+        queue
+            .push(Command::UpdateExtensionDisplayList {
+                id: "scope".to_string(),
+                display_list_json: r#"[{"cmd":"new"}]"#.to_string(),
+            })
+            .unwrap();
+        queue
+            .push(Command::SetIconTheme {
+                theme: serde_json::json!({"search": "warning"}),
+            })
+            .unwrap();
+
+        let snapshot = queue.debug_snapshot();
+        assert_eq!(snapshot["replacements"], 2);
+        assert_eq!(
+            snapshot["replacements_by_family"]["extension_display_list"],
+            1
+        );
+        assert_eq!(snapshot["replacements_by_family"]["icon_theme"], 1);
+
+        let drained = queue.drain();
+        assert_eq!(drained.len(), 2);
+        assert!(matches!(
+            &drained[0],
+            Command::UpdateExtensionDisplayList { display_list_json, .. }
+                if display_list_json.contains("new")
+        ));
+        assert!(matches!(
+            &drained[1],
+            Command::SetIconTheme { theme } if theme["search"] == "warning"
         ));
     }
 
@@ -3221,7 +3698,7 @@ mod tests {
     }
 
     #[test]
-    fn queue_coalesces_pending_scatter_updates_by_widget() {
+    fn queue_preserves_scatter_updates_across_callback_barrier() {
         let queue = CommandQueue::default();
 
         queue
@@ -3259,9 +3736,21 @@ mod tests {
             })
             .unwrap();
 
+        let snapshot = queue.debug_snapshot();
+        assert_eq!(snapshot["barrier_segments"]["total"], 1);
+        assert_eq!(snapshot["barrier_segments"]["by_class"]["callback"], 1);
         assert_eq!(
             queue.drain(),
             vec![
+                Command::SetScatterPointsPacked {
+                    id: "scatter".to_string(),
+                    xyz: vec![1; 12],
+                    telemetry: None,
+                    colormap: "viridis".to_string(),
+                    payload_format: ScatterPayloadFormat::XyzF32V0,
+                    fit: true,
+                    coalesce: true,
+                },
                 Command::DrainPythonTasks,
                 Command::SetScatterPointsPacked {
                     id: "other".to_string(),
@@ -3278,7 +3767,7 @@ mod tests {
                     telemetry: None,
                     colormap: "turbo".to_string(),
                     payload_format: ScatterPayloadFormat::XyzF32V0,
-                    fit: true,
+                    fit: false,
                     coalesce: true,
                 },
             ]
@@ -3318,7 +3807,7 @@ mod tests {
     }
 
     #[test]
-    fn queue_coalesces_pending_scatter_scalar_bars_by_widget() {
+    fn queue_preserves_scatter_scalar_bars_across_callback_barrier() {
         let queue = CommandQueue::default();
 
         queue
@@ -3348,6 +3837,15 @@ mod tests {
         assert_eq!(
             queue.drain(),
             vec![
+                Command::SetScatterScalarBar {
+                    id: "scatter".to_string(),
+                    visible: true,
+                    vmin: 0.0,
+                    vmax: 1.0,
+                    log_scale: false,
+                    colormap: "turbo".to_string(),
+                    title: Some("z".to_string()),
+                },
                 Command::DrainPythonTasks,
                 Command::SetScatterScalarBar {
                     id: "scatter".to_string(),
@@ -3384,7 +3882,7 @@ mod tests {
     }
 
     #[test]
-    fn queue_coalesces_scatter_updates_across_debug_snapshot() {
+    fn queue_preserves_scatter_updates_across_debug_snapshot() {
         let queue = CommandQueue::default();
 
         queue
@@ -3414,12 +3912,17 @@ mod tests {
             .unwrap();
 
         let commands = queue.drain();
-        assert_eq!(commands.len(), 2);
+        assert_eq!(commands.len(), 3);
         assert!(matches!(
-            commands[0],
+            &commands[0],
+            Command::SetScatterPointsPacked { xyz, colormap, .. }
+                if xyz == &vec![1; 12] && colormap == "viridis"
+        ));
+        assert!(matches!(
+            commands[1],
             Command::DebugSnapshot { request_id: 9 }
         ));
-        match &commands[1] {
+        match &commands[2] {
             Command::SetScatterPointsPacked { xyz, colormap, .. } => {
                 assert_eq!(xyz, &vec![2; 12]);
                 assert_eq!(colormap, "turbo");

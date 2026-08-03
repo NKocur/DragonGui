@@ -214,6 +214,7 @@ with dg.VLayout(class_="root"):
                 with dg.DragSource(
                     {"kind": "asset", "id": "sensor-a", "label": "Sensor A"},
                     drag_kind="asset",
+                    id="sensor-a-source",
                     class_="source-card asset",
                 ):
                     dg.Label("Sensor A", class_="source-title")
@@ -260,7 +261,11 @@ with dg.VLayout(class_="root"):
                 ):
                     dg.Label("Asset lane", class_="zone-title")
                     dg.Label("Accepts asset payloads only.", class_="caption")
-                    asset_result = dg.Label("No asset dropped", class_="drop-readout")
+                    asset_result = dg.Label(
+                        "No asset dropped",
+                        id="asset-drop-result",
+                        class_="drop-readout",
+                    )
 
                 with dg.DropTarget(
                     accept="metric",
