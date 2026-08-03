@@ -49,9 +49,10 @@ def _timings(values: list[float]) -> dict[str, float | int]:
     }
 
 
-def _rss_bytes() -> int | None:
+def _memory_bytes() -> dict[str, int | None]:
+    """Return current working-set and private/unique process memory when available."""
     if sys.platform == "win32":
-        class ProcessMemoryCounters(ctypes.Structure):
+        class ProcessMemoryCountersEx(ctypes.Structure):
             _fields_ = [
                 ("cb", ctypes.c_ulong),
                 ("page_fault_count", ctypes.c_ulong),
@@ -63,9 +64,10 @@ def _rss_bytes() -> int | None:
                 ("quota_non_paged_pool_usage", ctypes.c_size_t),
                 ("pagefile_usage", ctypes.c_size_t),
                 ("peak_pagefile_usage", ctypes.c_size_t),
+                ("private_usage", ctypes.c_size_t),
             ]
 
-        counters = ProcessMemoryCounters()
+        counters = ProcessMemoryCountersEx()
         counters.cb = ctypes.sizeof(counters)
         get_current_process = ctypes.windll.kernel32.GetCurrentProcess
         get_current_process.restype = ctypes.c_void_p
@@ -80,15 +82,37 @@ def _rss_bytes() -> int | None:
         if get_process_memory_info(
             process, ctypes.byref(counters), counters.cb
         ):
-            return int(counters.working_set_size)
-        return None
+            return {
+                "rss_bytes": int(counters.working_set_size),
+                "private_bytes": int(counters.private_usage),
+            }
+        return {"rss_bytes": None, "private_bytes": None}
+    try:
+        import psutil
+
+        process = psutil.Process()
+        rss = int(process.memory_info().rss)
+        full = process.memory_full_info()
+        private = getattr(full, "uss", None)
+        return {
+            "rss_bytes": rss,
+            "private_bytes": int(private) if private is not None else None,
+        }
+    except (ImportError, OSError):
+        pass
     try:
         import resource
 
         value = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
-        return value if sys.platform == "darwin" else value * 1024
+        rss = value if sys.platform == "darwin" else value * 1024
+        return {"rss_bytes": rss, "private_bytes": None}
     except (ImportError, OSError):
-        return None
+        return {"rss_bytes": None, "private_bytes": None}
+
+
+def _rss_bytes() -> int | None:
+    """Return current resident memory, preserving the existing benchmark helper API."""
+    return _memory_bytes()["rss_bytes"]
 
 
 def _pace(frame_started: float) -> None:

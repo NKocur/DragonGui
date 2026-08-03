@@ -145,6 +145,7 @@ def render(
     summary: dict[str, Any],
     failure: dict[str, Any] | None = None,
     baseline: dict[str, Any] | None = None,
+    baseline_label: str = "prior report",
     source_label: str = "artifacts/gui-live-dashboard-comparison",
 ) -> str:
     results = summary["results"]
@@ -154,8 +155,8 @@ def render(
     total_checks = sum(sum(int(v) for v in results[l][f]["validation"]["checks_per_sample"] if v is not None) for l in LOADS for f in FRAMEWORKS)
     baseline_section = ""
     if baseline is not None:
-        baseline_section = f'''<h2>Change from the July 31 report</h2>
-<div class="callout caution"><strong>Context, not a controlled code-only A/B:</strong> the prior report ran on different hardware and used DragonGUI's individual property transport, while this run uses the optimized batch transport. The fresh three-library rows above are the valid current-machine comparison. The deltas below answer how the published numbers changed, but hardware and method changes prevent attributing them solely to code.</div>
+        baseline_section = f'''<h2>Change from {escape(baseline_label)}</h2>
+<div class="callout caution"><strong>Engineering context, not a controlled code-only A/B:</strong> these are separate benchmark executions. Even when hardware, workload, and transport mode match, code revisions, dependency state, background activity, and ordinary run variance can affect the deltas. The fresh three-library rows above are the authoritative current comparison.</div>
 <section class="panel table-wrap"><table><thead><tr><th>Load</th><th>Framework</th><th>Prior Hz</th><th>Current Hz</th><th>Δ Hz</th><th>Δ %</th></tr></thead><tbody>{comparison_rows(results, baseline)}</tbody></table></section>'''
     failure_section = ""
     if failure is not None:
@@ -183,14 +184,14 @@ table{{width:100%;border-collapse:collapse;min-width:900px}} th,td{{padding:11px
 <p class="lede">A 60 Hz producer continuously replaces line, scatter, heatmap, and control data for 60 seconds. This tests steady-state responsiveness, overload behavior, memory, retained-state correctness, and queue health—not startup time.</p>
 <div class="meta"><span>Generated {escape(generated)}</span><span>Python 3.12</span><span>1 measured run per configuration</span><span>5 s warmup + 60 s measurement</span></div>
 <div class="kpis"><div class="kpi"><b>{fmt(high['dragongui']['tick_throughput_hz'])} Hz</b><span>DragonGUI high-load throughput</span></div><div class="kpi"><b>{fmt(high['dearpygui']['tick_throughput_hz'])} Hz</b><span>Dear PyGui high-load throughput</span></div><div class="kpi"><b>{fmt(high['pyqtgraph']['tick_throughput_hz'])} Hz</b><span>PyQtGraph high-load throughput</span></div><div class="kpi"><b>{total_checks}</b><span>correctness checks passed</span></div></div>
-<div class="callout"><strong>Headline:</strong> DragonGUI leads the fresh high-load comparison at {fmt(high['dragongui']['tick_throughput_hz'])} Hz, {fmt((high['dragongui']['tick_throughput_hz'] / high['dearpygui']['tick_throughput_hz'] - 1) * 100)}% ahead of Dear PyGui, while using {fmt((1 - high['dragongui']['rss_peak_bytes'] / high['dearpygui']['rss_peak_bytes']) * 100)}% less peak memory. Low and medium DragonGUI loads now sustain the 60 Hz target.</div>
+<div class="callout"><strong>Headline:</strong> DragonGUI leads the fresh high-load comparison at {fmt(high['dragongui']['tick_throughput_hz'])} Hz, {fmt((high['dragongui']['tick_throughput_hz'] / high['dearpygui']['tick_throughput_hz'] - 1) * 100)}% ahead of Dear PyGui, while using {fmt((1 - high['dragongui']['rss_peak_bytes'] / high['dearpygui']['rss_peak_bytes']) * 100)}% less reported peak memory. Low and medium DragonGUI loads now sustain approximately 60 Hz.</div>
 <h2>Comparative results</h2><div class="charts">
 {grouped_bars(results, 'tick_throughput_hz', 'Processed visualization ticks', 'ticks per second; higher is better', target=60)}
 {grouped_bars(results, 'measurement_dropped_ticks', 'Dropped or coalesced generations', 'scheduled ticks over 60 seconds; lower is better')}
 {grouped_bars(results, 'submit_p95_ms', 'Application update cost — p95', 'milliseconds spent replacing datasets and labels; lower is better')}
 {grouped_bars(results, 'frame_p95_ms', 'Render/event-loop work — p95', 'milliseconds; lower is better')}
 {grouped_bars(results, 'cpu_percent', 'Process CPU utilization', 'percent of one logical core; lower is better at equal throughput')}
-{grouped_bars(results, 'rss_peak_bytes', 'Peak resident memory', 'MiB; lower is better', divisor=2**20)}
+{grouped_bars(results, 'rss_peak_bytes', 'Reported peak resident memory', 'MiB; includes validation-snapshot overhead', divisor=2**20)}
 </div>
 <h2>Exact measurements</h2><section class="panel table-wrap"><table><thead><tr><th>Load</th><th>Framework</th><th>Hz</th><th>Dropped</th><th>Submit p95 ms</th><th>Frame p95 ms</th><th>CPU %</th><th>Peak MiB</th><th>Validation</th></tr></thead><tbody>{result_rows(results)}</tbody></table></section>
 {baseline_section}
@@ -198,10 +199,10 @@ table{{width:100%;border-collapse:collapse;min-width:900px}} th,td{{padding:11px
 <h2>Interpretation</h2><div class="findings">
 <div class="finding"><strong>DragonGUI’s GPU stage is not the main bottleneck.</strong><span>At high load, native frame work p95 was {fmt(high['dragongui']['frame_p95_ms'],2)} ms while command drain p95 was {fmt(high['dragongui']['native']['command_drain_p95_ms'],2)} ms. The dominant cost is applying Python-originated changes and rebuilding affected retained content.</span></div>
 <div class="finding"><strong>Coalescing makes overload bounded and correct.</strong><span>The recommended high-load run coalesced {fmt(high['dragongui']['native']['python_tasks_coalesced'],0)} obsolete tasks, held Python queue high-water to {fmt(high['dragongui']['native']['python_queue_high_water'],0)}, drained fully, and finished on the correct final tick.</span></div>
-<div class="finding"><strong>DragonGUI keeps substantially less high-load memory than Dear PyGui.</strong><span>Peak RSS was {mib(high['dragongui']['rss_peak_bytes'])} MiB versus {mib(high['dearpygui']['rss_peak_bytes'])} MiB, although PyQtGraph remained lowest at {mib(high['pyqtgraph']['rss_peak_bytes'])} MiB.</span></div>
+<div class="finding"><strong>DragonGUI’s reported peak is a conservative upper bound.</strong><span>Reported peak RSS was {mib(high['dragongui']['rss_peak_bytes'])} MiB versus {mib(high['dearpygui']['rss_peak_bytes'])} MiB. DragonGUI performs full retained-tree, style, layout, renderer, and runtime snapshots for its extra correctness checks; those transient diagnostic allocations are included in this peak.</span></div>
 <div class="finding"><strong>Batch transport and targeted invalidation moved the practical ceiling.</strong><span>DragonGUI sustains {fmt(results['medium']['dragongui']['tick_throughput_hz'])} Hz at medium load with frame-work p95 of {fmt(results['medium']['dragongui']['frame_p95_ms'],2)} ms. At high load, Python submission and command application—not GPU frame work—remain the limiting path.</span></div>
 </div>
-<h2>Method and fairness notes</h2><section class="panel"><p>Each framework displays the same deterministic data shapes and control counts. Low uses two 2k-point lines; medium uses four 10k-point lines; high uses six 50k-point lines plus a 50k-point scatter, a 128×128 heatmap, and 200 changing labels. Frameworks run in fresh processes. Synchronous event-loop adapters skip overdue scheduled generations; DragonGUI’s producer uses keyed latest-frame coalescing and submits each generation through the batch property-update path, which gives equivalent latest-state semantics with bounded queues.</p><p>Validation checks retained point counts, heatmap dimensions, final visible status, scheduled-tick accounting, and item existence. DragonGUI additionally checks native resources, renderer source counts, native retained text, layout diagnostics, and drained queues. All 99 checks passed. One repetition makes this an engineering baseline rather than a statistically conclusive ranking.</p></section>
+<h2>Method and fairness notes</h2><section class="panel"><p>Each framework displays the same deterministic data shapes and control counts. Low uses two 2k-point lines; medium uses four 10k-point lines; high uses six 50k-point lines plus a 50k-point scatter, a 128×128 heatmap, and 200 changing labels. Frameworks run in fresh processes. Synchronous event-loop adapters skip overdue scheduled generations; DragonGUI’s producer uses keyed latest-frame coalescing and submits each generation through the batch property-update path, which gives equivalent latest-state semantics with bounded queues.</p><p>Validation checks retained point counts, heatmap dimensions, final visible status, scheduled-tick accounting, and item existence. DragonGUI additionally checks native resources, renderer source counts, native retained text, layout diagnostics, and drained queues. Its full diagnostic snapshots temporarily allocate memory proportional to GUI complexity, so the cross-framework RSS peak is conservative for DragonGUI and should not be read as steady-state retained memory. All 99 checks passed. One repetition makes this an engineering baseline rather than a statistically conclusive ranking.</p></section>
 <footer>Sources: <code>benchmarks/gui_live_dashboard_case.py</code>, <code>benchmarks/run_gui_live_dashboard_matrix.py</code>, <a href="../{escape(source_label)}/summary.json">validated summary JSON</a>, and its <a href="../{escape(source_label)}/raw/">nine raw samples</a>.</footer>
 </main></body></html>'''
 
@@ -211,6 +212,7 @@ def main() -> int:
     parser.add_argument("--summary", type=Path, default=DEFAULT_SUMMARY)
     parser.add_argument("--uncoalesced-failure", type=Path, default=DEFAULT_FAILURE)
     parser.add_argument("--baseline-report", type=Path)
+    parser.add_argument("--baseline-label", default="prior report")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()
     summary = json.loads(args.summary.read_text(encoding="utf-8"))
@@ -221,7 +223,13 @@ def main() -> int:
     output = args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(
-        render(summary, failure, baseline, str(args.summary.resolve().parent.relative_to(ROOT))),
+        render(
+            summary,
+            failure,
+            baseline,
+            args.baseline_label,
+            str(args.summary.resolve().parent.relative_to(ROOT)),
+        ),
         encoding="utf-8",
     )
     print(f"Wrote {output}")

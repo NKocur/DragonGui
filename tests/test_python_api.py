@@ -3595,6 +3595,37 @@ def test_app_handle_warns_at_bounded_unkeyed_queue_growth_thresholds(
     assert handle._python_debug_snapshot()["unkeyed_tasks_pending"] == 0
 
 
+def test_unkeyed_queue_warning_cannot_prevent_native_drain_request(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(runtime_module, "_PYTHON_TASK_QUEUE_WARNING_THRESHOLD", 1)
+    handle = AppHandle()
+    calls: list[str] = []
+
+    class Sender:
+        def __init__(self) -> None:
+            self.drain_requests = 0
+
+        def enqueue_drain_python_tasks(self) -> None:
+            self.drain_requests += 1
+
+    sender = Sender()
+    handle._bind_native_sender(sender)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        with pytest.raises(RuntimeWarning, match="reached 1 pending callback"):
+            handle.call_soon_threadsafe(lambda: calls.append("ran"))
+
+    assert sender.drain_requests == 1
+    assert handle._python_debug_snapshot()["drain_requested"] is True
+
+    handle._drain_python_tasks()
+
+    assert calls == ["ran"]
+    assert handle._python_debug_snapshot()["drain_requested"] is False
+
+
 def test_app_handle_keyed_latest_state_queue_stays_bounded_without_warning(
     monkeypatch,
 ) -> None:

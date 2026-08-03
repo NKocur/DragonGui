@@ -766,8 +766,6 @@ class AppHandle:
                 scheduled.origin = collector.record_enqueue()
             except Exception:
                 pass
-        if queue_growth_warning is not None:
-            warnings.warn(queue_growth_warning, RuntimeWarning, stacklevel=2)
         if should_request_drain:
             try:
                 sender.enqueue_drain_python_tasks()
@@ -779,6 +777,8 @@ class AppHandle:
                 if closed or sender_closed:
                     raise RuntimeError("DragonGUI app handle is closed") from None
                 raise
+        if queue_growth_warning is not None:
+            warnings.warn(queue_growth_warning, RuntimeWarning, stacklevel=2)
 
     def enqueue_set_prop(self, widget_id: str, prop: str, value: object) -> None:
         if self._collect_update_batch_prop(widget_id, prop, value):

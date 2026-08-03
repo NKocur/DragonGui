@@ -27,7 +27,7 @@ from gui_benchmark_validation import (
     find_tree_node,
     layout_issue_count,
 )
-from gui_framework_case import _percentile, _rss_bytes, _timings
+from gui_framework_case import _memory_bytes, _percentile, _rss_bytes, _timings
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -123,6 +123,9 @@ class RunMetrics:
         self.frame_ms: list[float] = []
         self.schedule_lag_ms: list[float] = []
         self.rss_samples: list[int] = []
+        self.private_memory_samples: list[int] = []
+        self.measurement_rss_samples: list[int] = []
+        self.measurement_private_memory_samples: list[int] = []
         self.checkpoints: list[dict[str, Any]] = []
         self.measure_wall_start: float | None = None
         self.measure_wall_end: float | None = None
@@ -143,12 +146,30 @@ class RunMetrics:
         self.measurement_completed_at_window_end = self.measurement_completed_ticks
 
     def sample(self, tick: int, *, queue_depth: int | None = None) -> None:
-        rss = _rss_bytes()
+        memory = _memory_bytes()
+        rss = memory["rss_bytes"]
+        private = memory["private_bytes"]
         if rss is not None:
             self.rss_samples.append(rss)
+        if private is not None:
+            self.private_memory_samples.append(private)
+        phase = (
+            "warmup"
+            if tick < self.warmup_ticks
+            else "measurement"
+            if tick < self.total_ticks
+            else "post_measurement"
+        )
+        if phase == "measurement":
+            if rss is not None:
+                self.measurement_rss_samples.append(rss)
+            if private is not None:
+                self.measurement_private_memory_samples.append(private)
         self.checkpoints.append({
             "tick": tick,
+            "phase": phase,
             "rss_bytes": rss,
+            "private_bytes": private,
             "queue_depth": queue_depth,
             "completed_ticks": self.completed_ticks,
         })
@@ -158,6 +179,22 @@ class RunMetrics:
         cpu = max(0.0, (self.measure_cpu_end or 0.0) - (self.measure_cpu_start or 0.0))
         start_rss = self.rss_samples[0] if self.rss_samples else 0
         end_rss = self.rss_samples[-1] if self.rss_samples else 0
+        measurement_rss_start = (
+            self.measurement_rss_samples[0] if self.measurement_rss_samples else 0
+        )
+        measurement_rss_end = (
+            self.measurement_rss_samples[-1] if self.measurement_rss_samples else 0
+        )
+        measurement_private_start = (
+            self.measurement_private_memory_samples[0]
+            if self.measurement_private_memory_samples
+            else 0
+        )
+        measurement_private_end = (
+            self.measurement_private_memory_samples[-1]
+            if self.measurement_private_memory_samples
+            else 0
+        )
         return {
             "warmup_ticks": self.warmup_ticks,
             "measure_ticks": self.measure_ticks,
@@ -185,6 +222,29 @@ class RunMetrics:
             "rss_peak_bytes": max(self.rss_samples, default=0),
             "rss_growth_bytes": end_rss - start_rss,
             "rss_growth_bytes_per_minute": (end_rss - start_rss) / wall * 60.0,
+            "measurement_memory": {
+                "sample_count": len(self.measurement_rss_samples),
+                "rss_start_bytes": measurement_rss_start,
+                "rss_end_bytes": measurement_rss_end,
+                "rss_peak_bytes": max(self.measurement_rss_samples, default=0),
+                "rss_growth_bytes": measurement_rss_end - measurement_rss_start,
+                "rss_growth_bytes_per_minute": (
+                    (measurement_rss_end - measurement_rss_start) / wall * 60.0
+                ),
+                "private_sample_count": len(self.measurement_private_memory_samples),
+                "private_start_bytes": measurement_private_start,
+                "private_end_bytes": measurement_private_end,
+                "private_peak_bytes": max(
+                    self.measurement_private_memory_samples,
+                    default=0,
+                ),
+                "private_growth_bytes": (
+                    measurement_private_end - measurement_private_start
+                ),
+                "private_growth_bytes_per_minute": (
+                    (measurement_private_end - measurement_private_start) / wall * 60.0
+                ),
+            },
             "checkpoints": self.checkpoints,
         }
 
@@ -257,17 +317,28 @@ def run_dragongui(args: argparse.Namespace, config: LoadConfig) -> dict[str, Any
     ready_snapshot: dict[str, Any] = {}
     producer_done = threading.Event()
     drain_recovery_ms = 0.0
+    final_snapshot_memory: dict[str, Any] = {}
+    skip_live_snapshots = os.environ.get("DRAGONGUI_BENCHMARK_SKIP_LIVE_SNAPSHOTS") == "1"
 
     def producer() -> None:
-        nonlocal ready_snapshot, drain_recovery_ms
+        nonlocal ready_snapshot, drain_recovery_ms, final_snapshot_memory
         deadline = time.perf_counter() + 30.0
         while time.perf_counter() < deadline:
-            try:
-                ready_snapshot = app.debug_snapshot(timeout_ms=3000)
-            except (RuntimeError, TimeoutError):
-                ready_snapshot = {}
-            if (ready_snapshot.get("runtime") or {}).get("startup_readiness") == "application_frame_presented":
-                break
+            if skip_live_snapshots:
+                handle = getattr(app, "_handle", None)
+                try:
+                    if handle is not None and handle.latency_probe(timeout_ms=3000):
+                        time.sleep(0.5)
+                        break
+                except (RuntimeError, TimeoutError):
+                    pass
+            else:
+                try:
+                    ready_snapshot = app.debug_snapshot(timeout_ms=3000)
+                except (RuntimeError, TimeoutError):
+                    ready_snapshot = {}
+                if (ready_snapshot.get("runtime") or {}).get("startup_readiness") == "application_frame_presented":
+                    break
             time.sleep(0.01)
         next_deadline = time.perf_counter()
         for tick in range(metrics.total_ticks):
@@ -324,14 +395,29 @@ def run_dragongui(args: argparse.Namespace, config: LoadConfig) -> dict[str, Any
             if not handle._python_debug_snapshot().get("queued_tasks"):
                 break
             time.sleep(0.01)
-        while handle is not None and time.perf_counter() < settle_deadline:
+        rss_before_native_snapshot = _rss_bytes()
+        if skip_live_snapshots:
             try:
-                native_state = app.debug_snapshot(timeout_ms=3000).get("runtime") or {}
+                if handle is not None:
+                    handle.latency_probe(timeout_ms=3000)
             except (RuntimeError, TimeoutError):
-                native_state = {"command_queue_depth": 1}
-            if not native_state.get("command_queue_depth"):
-                break
-            time.sleep(0.01)
+                pass
+        else:
+            while handle is not None and time.perf_counter() < settle_deadline:
+                try:
+                    native_state = app.debug_snapshot(timeout_ms=3000).get("runtime") or {}
+                except (RuntimeError, TimeoutError):
+                    native_state = {"command_queue_depth": 1}
+                if not native_state.get("command_queue_depth"):
+                    break
+                time.sleep(0.01)
+        rss_after_native_snapshot = _rss_bytes()
+        final_snapshot_memory = {
+            "mode": "latency_probe" if skip_live_snapshots else "full_debug_snapshot",
+            "rss_before_bytes": rss_before_native_snapshot,
+            "rss_after_bytes": rss_after_native_snapshot,
+            "rss_delta_bytes": rss_after_native_snapshot - rss_before_native_snapshot,
+        }
         drain_recovery_ms = (time.perf_counter() - recovery_started) * 1000.0
         metrics.dropped_ticks = metrics.total_ticks - metrics.completed_ticks
         metrics.measurement_dropped_ticks = metrics.measure_ticks - metrics.measurement_completed_ticks
@@ -427,6 +513,7 @@ def run_dragongui(args: argparse.Namespace, config: LoadConfig) -> dict[str, Any
         "build_ms": build_ms,
         "run_wall_ms": run_wall_ms,
         "drain_recovery_ms": drain_recovery_ms,
+        "final_validation_snapshot_memory": final_snapshot_memory,
         "metrics": metrics.report(),
         "validation": validation.report(),
         "native": {

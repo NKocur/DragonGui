@@ -15,6 +15,7 @@ from gui_benchmark_validation import (  # noqa: E402
     find_tree_node,
 )
 from gui_update_pipeline_case import _locality_indices  # noqa: E402
+import gui_live_dashboard_case as live_dashboard_case  # noqa: E402
 from examples.cathode_ops_stress_demo import (  # noqa: E402
     _expected_first_lane_text,
     _find_node as find_cathode_node,
@@ -150,3 +151,49 @@ def test_update_pipeline_case_filter_rejects_unknown_selector() -> None:
 
     with pytest.raises(ValueError, match="unknown --case"):
         _filter_cases(cases, ["missing:20"])
+
+
+def test_live_dashboard_memory_metrics_exclude_warmup_and_post_validation(
+    monkeypatch,
+) -> None:
+    samples = iter(
+        [
+            {"rss_bytes": 10, "private_bytes": 7},
+            {"rss_bytes": 20, "private_bytes": 12},
+            {"rss_bytes": 30, "private_bytes": 17},
+            {"rss_bytes": 40, "private_bytes": 22},
+        ]
+    )
+    monkeypatch.setattr(live_dashboard_case, "_memory_bytes", lambda: next(samples))
+    metrics = live_dashboard_case.RunMetrics(warmup_ticks=60, measure_ticks=120)
+    metrics.measure_wall_start = 1.0
+    metrics.measure_wall_end = 61.0
+
+    for tick in (0, 60, 120, 180):
+        metrics.sample(tick)
+
+    report = metrics.report()
+
+    assert report["rss_start_bytes"] == 10
+    assert report["rss_end_bytes"] == 40
+    assert report["rss_peak_bytes"] == 40
+    assert report["measurement_memory"] == {
+        "sample_count": 2,
+        "rss_start_bytes": 20,
+        "rss_end_bytes": 30,
+        "rss_peak_bytes": 30,
+        "rss_growth_bytes": 10,
+        "rss_growth_bytes_per_minute": 10.0,
+        "private_sample_count": 2,
+        "private_start_bytes": 12,
+        "private_end_bytes": 17,
+        "private_peak_bytes": 17,
+        "private_growth_bytes": 5,
+        "private_growth_bytes_per_minute": 5.0,
+    }
+    assert [checkpoint["phase"] for checkpoint in report["checkpoints"]] == [
+        "warmup",
+        "measurement",
+        "measurement",
+        "post_measurement",
+    ]

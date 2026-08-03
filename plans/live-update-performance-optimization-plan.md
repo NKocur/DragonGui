@@ -3178,3 +3178,72 @@ target came from another machine. The authoritative next sequence remains:
 3. Run the 60-minute high-load release soak.
 4. Generate the final release report and remove temporary legacy/candidate
    switches.
+
+## August 3 memory-metric correction and snapshot-free soak
+
+The August 3 framework rerun initially reported 393–394 MiB high-load
+DragonGUI peak RSS. Investigation found two benchmark effects rather than a
+live retained-resource leak:
+
+1. `gui_live_dashboard_case.py` prepends the repository Python package unless
+   `DRAGONGUI_BENCH_PYTHON_PATH` is set. The first matrix therefore combined
+   the current Python layer with the older checked-out native extension. A
+   corrected run explicitly used the fresh release runtime; the extension
+   SHA-256 was
+   `8f200d628b44529e116d29e700f28b8cbac8a210d05a9c9bd9a89b844630736e`.
+2. The legacy RSS series included full `debug_snapshot()` calls used for
+   readiness and final validation. A controlled high-load probe measured a
+   68.5 MiB RSS increase around the final full snapshot. The equivalent
+   lightweight ordering probe added effectively zero memory. Full-snapshot
+   steady RSS was 324.3 MiB; the otherwise equivalent lightweight-probe run
+   held 298.9 MiB.
+
+The benchmark now records measurement-window memory separately from warmup
+and post-measurement validation. It reports current working-set RSS and Windows
+private commit, preserves the legacy all-sample fields, records checkpoint
+phase, and exposes validation-snapshot RSS delta independently. A deterministic
+unit test proves warmup and post-validation samples cannot enter the new
+measurement fields.
+
+Five fresh high-load processes then ran with a five-second warmup, 60-second
+measurement, the verified release wheel, batch property transport, keyed
+latest-frame coalescing, and lightweight live probes. All 115 correctness
+checks passed; Python queue high-water was one and both queues ended at zero.
+
+| Run | Throughput | RSS peak | RSS delta | Private delta |
+|---|---:|---:|---:|---:|
+| 1 | 45.03 Hz | 297.9 MiB | +1.2 MiB | +0.68 MiB |
+| 2 | 44.90 Hz | 298.4 MiB | +2.0 MiB | +1.20 MiB |
+| 3 | 44.83 Hz | 298.2 MiB | +2.3 MiB | +1.50 MiB |
+| 4 | 44.77 Hz | 298.2 MiB | +1.4 MiB | +0.72 MiB |
+| 5 | 45.15 Hz | 298.0 MiB | +1.6 MiB | +0.72 MiB |
+
+Median throughput was 44.90 Hz, median measurement RSS peak was 298.2 MiB,
+median RSS growth was 1.57 MiB, and median private-commit growth was 0.72 MiB.
+The five one-minute RSS regression slopes ranged from +0.52 to +2.08 MiB/min,
+which required a longer control rather than an immediate leak conclusion.
+
+One fresh five-minute high-load process completed at 44.693 Hz with 23/23
+checks passing and bounded/drained queues. Across 300 measurement samples, RSS
+changed from 296.18 to 300.42 MiB (+4.25 MiB) and private commit changed from
+995.81 to 999.90 MiB (+4.09 MiB). Whole-run regression slopes were +0.46
+MiB/min RSS and +0.43 MiB/min private commit; second-half slopes were +0.45 and
++0.58 MiB/min respectively. Final retained resource counts remained fixed.
+
+The final snapshot showed the bounded layout-text cache at 8,450 entries with
+a 16,384-entry limit after 334 capacity clears. The glyph atlas had trimmed
+17,234 times and retained only 29 text entries. Combined with zero queue growth
+and fixed renderer resource counts, the remaining low drift is consistent with
+bounded text-cache/glyph-atlas allocator churn, not accumulating GUI objects.
+If the measured +0.46 MiB/min slope persisted it would still amount to roughly
+28 MiB/hour, so the existing 60-minute Phase 7 release soak remains necessary
+before release closure.
+
+Artifacts:
+
+```text
+artifacts/gui-live-dashboard-comparison-2026-08-03-v1/full-corrected/summary.json
+artifacts/gui-live-dashboard-memory-soak-2026-08-03-v1/summary.json
+artifacts/gui-live-dashboard-memory-soak-2026-08-03-5min-v1/summary.json
+plans/gui-live-dashboard-performance-report-2026-08-03.html
+```

@@ -12,7 +12,7 @@ place while the app runs:
 
     "variables"   :root custom-property table (theme tokens + live editor)
     "structure"   layout/identity rules, authored once against var(--tf-*)
-    "appearance"  the active theme's cosmetic sheet
+    "appearance"  the active theme's cosmetic sheetsa
     "overrides"   an optional sheet that is added and removed at runtime
     "extreme"     the deliberately hostile sheet ("extreme mode")
 

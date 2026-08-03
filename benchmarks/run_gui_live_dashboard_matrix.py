@@ -60,6 +60,31 @@ def _aggregate(reports: list[dict[str, Any]]) -> dict[str, Any]:
         "rss_peak_bytes": ("metrics", "rss_peak_bytes"),
         "rss_growth_bytes": ("metrics", "rss_growth_bytes"),
         "rss_growth_bytes_per_minute": ("metrics", "rss_growth_bytes_per_minute"),
+        "measurement_rss_start_bytes": ("metrics", "measurement_memory", "rss_start_bytes"),
+        "measurement_rss_end_bytes": ("metrics", "measurement_memory", "rss_end_bytes"),
+        "measurement_rss_peak_bytes": ("metrics", "measurement_memory", "rss_peak_bytes"),
+        "measurement_rss_growth_bytes": ("metrics", "measurement_memory", "rss_growth_bytes"),
+        "measurement_rss_growth_bytes_per_minute": (
+            "metrics", "measurement_memory", "rss_growth_bytes_per_minute"
+        ),
+        "measurement_private_start_bytes": (
+            "metrics", "measurement_memory", "private_start_bytes"
+        ),
+        "measurement_private_end_bytes": (
+            "metrics", "measurement_memory", "private_end_bytes"
+        ),
+        "measurement_private_peak_bytes": (
+            "metrics", "measurement_memory", "private_peak_bytes"
+        ),
+        "measurement_private_growth_bytes": (
+            "metrics", "measurement_memory", "private_growth_bytes"
+        ),
+        "measurement_private_growth_bytes_per_minute": (
+            "metrics", "measurement_memory", "private_growth_bytes_per_minute"
+        ),
+        "validation_snapshot_rss_delta_bytes": (
+            "final_validation_snapshot_memory", "rss_delta_bytes"
+        ),
         "line_updates": ("metrics", "line_updates"),
         "scatter_updates": ("metrics", "scatter_updates"),
         "heat_updates": ("metrics", "heat_updates"),
