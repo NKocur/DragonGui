@@ -3,13 +3,13 @@
 A Python application toolkit for GPU-native data tools.
 
 Python describes the application. Rust owns the hot path: windowing, input,
-layout, text, rendering, GPU widgets, and retained widget state. Python never
-runs in the frame loop.
+layout, text, rendering, GPU widgets, and retained widget state. The native
+renderer does not call Python on every frame.
 
-**Status:** pre-alpha. The native backend, the full widget set (including
-charts, virtualized tables, a node-graph editor, and an embedded terminal), the
-reactive component system, the live-update pipeline, CSS styling, and the GPU
-data widgets are functional. The API is not yet stable.
+**Status:** pre-alpha. Core widgets, charts, virtualized tables, the optional
+embedded terminal, reactive components, live updates, CSS styling, and GPU data
+widgets are functional. APIs may change. `NodeGraph` is experimental and **not
+ready for application or production use**; see [Experimental APIs](#experimental-apis).
 
 ## Quick Look
 
@@ -22,15 +22,19 @@ app.stylesheet("""
     Button:hover   { background: accent_mix_20; }
 """)
 
-win = dg.Window("My Tool", width=1200, height=800)
+points = {
+    "x": [-1.0, 0.0, 1.0],
+    "y": [0.2, 0.8, 0.3],
+    "z": [0.0, 0.6, 1.0],
+}
 
-with dg.HLayout():
-    with dg.Panel("Controls", class_="controls"):
-        col = dg.Dropdown(items=["x", "y", "z"], value="x")
-        dg.Slider(0.5, min=0, max=1)
-        dg.Button("Plot", on_click=lambda: scatter.set_points(df, x=col.value))
+with dg.Window("My Tool", width=1200, height=800) as win:
+    with dg.FlexLayout(direction="row", gap=12, style={"padding": 12}):
+        with dg.Panel("Controls", class_="controls"):
+            palette = dg.Dropdown(["viridis", "plasma", "turbo"], value="viridis")
+            dg.Button("Apply", on_click=lambda: scatter.set_colormap(palette.value))
 
-    scatter = dg.Scatter3D(df, x="x", y="y", z="z")
+        scatter = dg.Scatter3D(points, x="x", y="y", z="z", grid=True)
 
 app.run(win)
 ```
@@ -38,7 +42,7 @@ app.run(win)
 ## What It Does
 
 - **Native rendering** with `wgpu` through a Rust backend built on `winit`,
-  `taffy`, and `glyphon`. Python never runs in the frame loop.
+  `taffy`, and `glyphon`; rendering and retained widget state remain native.
 - **80+ widgets** — layout containers, buttons, text/number/date-time inputs,
   sliders, dropdowns, checkboxes, radios, toggles, trees, menus, modals, tabs,
   pages, navigation, breadcrumbs, a command palette, color pickers, images,
@@ -46,9 +50,9 @@ app.run(win)
   drag-and-drop, and a custom-drawing `PaintWidget`.
 - **Charts and data widgets** — GPU `Scatter3D`, `ScatterPlot2D`, `LinePlot`,
   `Histogram`, `BarChart`, `Heatmap`, `PieChart`, a virtualized `DataFrameTable`,
-  and an `HtmlReport` webview.
-- **Node-graph editor** and an embedded **Terminal**, plus multi-agent session
-  helpers and a thread monitor.
+  an `HtmlReport` webview, and telemetry-oriented `LimitsBar` indicators.
+- An optional embedded **Terminal**, multi-agent session helpers, and a thread
+  monitor. `NodeGraph` exists as an experimental preview only.
 - **CSS styling** with type, class, id, attribute, pseudo-state, pseudo-function
   (`:not()`, `:is()`, `:has()`, `:nth-child()`), and widget-part (`::thumb`,
   `::stepper`, `::badge`, etc.) selectors, custom variables, `@media`,
@@ -69,7 +73,7 @@ app.run(win)
 
 | Category | Widgets |
 | --- | --- |
-| Layout & shell | `Window`, `Body`, `AppShell`, `HLayout`, `VLayout`, `Panel`, `ScrollArea`, `GridLayout`, `FlowLayout`, `Sidebar`, `StatusBar`, `Toolbar`, `ToolbarSeparator`, `Splitter`, `Pane`, `Separator`, `Spacer` |
+| Layout & shell | `Window`, `Body`, `AppShell`, `HLayout`, `VLayout`, `FlexLayout`, `Panel`, `ScrollArea`, `GridLayout`, `FlowLayout`, `WorkbenchLayout`, `WorkbenchMain`, `Sidebar`, `StatusBar`, `Toolbar`, `ToolbarSeparator`, `Splitter`, `Pane`, `Separator`, `Spacer` |
 | Navigation | `Tabs`, `Tab`, `Pages`, `Page`, `NavItem`, `MenuBar`, `Menu`, `MenuItem`, `ContextMenu`, `Breadcrumbs`, `CommandPalette`, `SearchBox` |
 | Containers & overlays | `Collapsible`, `Modal`, `Tooltip`, `PropertyGrid`, `Property` |
 | Buttons | `Button`, `SmallButton`, `IconButton`, `ImageButton`, `ArrowButton` |
@@ -80,8 +84,8 @@ app.run(win)
 | Trees | `TreeView`, `TreeNode` |
 | Charts & plots | `Scatter3D`, `ScatterPlot2D`, `LinePlot`, `Histogram`, `BarChart`, `Heatmap`, `PieChart` |
 | Tables & reports | `DataFrameTable`, `HtmlReport` |
-| Drag & drop | `DragSource`, `DropTarget`, `DropZone` |
-| Custom & advanced | `PaintWidget`, `ExtensionWidget`, `NodeGraph`, `Terminal` |
+| Drag & drop | `DragSource`, `DropTarget`, `DropZone`, `DragVector` |
+| Custom & advanced | `PaintWidget`, `ExtensionWidget`, `Terminal`; experimental `NodeGraph` |
 | Overlays & utilities | `alert()`, `confirm()`, `toast()`, `FileDialog`, `Theme`, `ThreadMonitor` |
 
 ## 3D Scatter
@@ -90,10 +94,12 @@ app.run(win)
 data exploration.
 
 **Creating a plot:**
+
 ```python
+points = {"px": [0.0, 1.0], "py": [0.2, 0.8], "pz": [0.4, 0.6]}
 scatter = dg.Scatter3D(
-    df, x="px", y="py", z="pz",
-    colormap="viridis",   # or scalars=df["intensity"]
+    points, x="px", y="py", z="pz",
+    colormap="viridis",
     point_size=3.0,
     grid=True,
     on_pick=lambda hit: print(hit.index),
@@ -101,12 +107,15 @@ scatter = dg.Scatter3D(
 ```
 
 **Updating live:**
+
 ```python
-scatter.set_points(new_df, x="px", y="py", z="pz")
+new_points = {"px": [0.1, 1.1], "py": [0.3, 0.9], "pz": [0.5, 0.7]}
+scatter.set_points(new_points, x="px", y="py", z="pz")
 scatter.set_colormap("plasma")
 ```
 
 **Chrome elements:**
+
 ```python
 scatter.show_grid(True)
 scatter.show_grid_planes(major=True, minor=True)
@@ -118,32 +127,51 @@ scatter.set_background(0.05, 0.05, 0.08)
 ```
 
 **3D annotations:**
+
 ```python
-scatter.add_label("origin", 0, 0, 0, "O", r=1, g=1, b=0, size=14)
-scatter.add_lines("bbox_top", segments=[[x0,y0,z1, x1,y0,z1, ...]], r=1, g=0.5, b=0)
-scatter.add_box("hull", xmin, xmax, ymin, ymax, zmin, zmax, r=0.3, g=0.8, b=1.0)
+label_handle = scatter.add_label((0.0, 0.0, 0.0), "Origin", color=(1.0, 1.0, 0.0))
+line_handle = scatter.add_lines(
+    [[0.0, 0.0, 0.0, 1.0, 1.0, 1.0]],
+    color=(1.0, 0.5, 0.0),
+)
+box_handle = scatter.add_box(
+    (-1.0, -1.0, -1.0, 1.0, 1.0, 1.0),  # xmin, ymin, zmin, xmax, ymax, zmax
+    color=(0.3, 0.8, 1.0),
+)
 ```
 
 **Multiple independent point layers (actors):**
+
 ```python
-scatter.add_points("layer_b", df_b, x="x", y="y", z="z", colormap="plasma")
-scatter.update_actor("layer_b", df_new, x="x", y="y", z="z")
-scatter.remove_actor("layer_b")
+layer = scatter.add_points(points_b, x="x", y="y", z="z", colormap="plasma")
+scatter.update_actor(layer, points_new, x="x", y="y", z="z")
+scatter.remove_actor(layer)
 ```
 
 **Real-time frame streaming:**
+
 ```python
-payloads = [scatter.prepare_points(df, x, y, z) for df in frames]
+payloads = [
+    scatter.prepare_points(frame, x="x", y="y", z="z")
+    for frame in frames
+]
 stream = scatter.stream_prepared_frames(payloads, interval_ms=40, loop=True)
 stream.start()
 # ... later:
 stream.stop()
-print(stream.metrics)  # ScatterStreamMetrics(produced, submitted, ui_callbacks, errors)
+print(stream.metrics)  # production, submission, callback, and error counters
 ```
 
 **Selection and hover:**
+
 ```python
-scatter = dg.Scatter3D(df, ..., on_pick=lambda hit: print(hit.index, hit.point))
+scatter = dg.Scatter3D(
+    points,
+    x="x",
+    y="y",
+    z="z",
+    on_pick=lambda hit: print(hit.index, hit.point),
+)
 # After interaction:
 hits = scatter.selected            # list[ScatterHit]
 indices = scatter.selected_indices # list[int]
@@ -181,6 +209,14 @@ app.run(Counter(initial=5))
   `.set(v)` writes and triggers a diff+patch cycle.
 - `ctx.app` — access `AppHandle` (toast, `call_soon_threadsafe`, etc.) while live.
 
+## Experimental APIs
+
+`NodeGraph` and its runtime/binding helpers are incomplete previews. They are
+exposed for development and internal probes, but are **not ready for usage in
+applications or production code**. Their behavior, serialization, and public
+API may change or be removed without compatibility guarantees. The built-in
+manual repeats this warning on every NodeGraph-related entry.
+
 ## CSS Styling
 
 ```python
@@ -207,7 +243,9 @@ app.stylesheet("""
     NumberInput::stepper { background: surface_alt; }
     Checkbox::box      { border-radius: 4px; }
     Tabs::tab:hover    { color: accent; }
-    ProgressBar::fill  { background: linear-gradient(...); }
+    ProgressBar::fill  {
+        background: linear-gradient(90deg, #38bdf8 0%, #8b5cf6 100%);
+    }
 
     /* Effects: gradients, shadows, outlines */
     Panel.card        { background: linear-gradient(135deg, #1a1a2e, #0d0d1a); }
@@ -254,22 +292,37 @@ Theme tokens available as CSS values: `background`, `surface`, `surface_alt`,
 `text`, `muted_text`, `accent`, `border`, `danger`, `warning`, `success`,
 `focus`, `disabled` — plus computed mix variants (e.g. `accent_mix_20`).
 
+## Layout Essentials
+
+DragonGUI uses native flex/grid layout. For application shells, prefer
+`AppShell` with `Body`, or `WorkbenchLayout` with `WorkbenchMain`, so fixed
+chrome and flexible content receive explicit roles. Use `gap` for spacing
+between siblings and `padding` for space inside a container.
+
+Give each scrollable region one clear `ScrollArea` owner. Flexible descendants
+that must shrink should use `min_width: 0` and/or `min_height: 0`; otherwise
+their intrinsic content size can force overflow. The
+[layout guide](./docs/layout.md) covers sizing, clipping, responsive grids, and
+diagnostic patterns.
+
 ## Live Updates
 
 ```python
 # From callbacks (main thread)
-slider = dg.Slider(0.5, on_change=lambda v: label.set_props(text=f"{v:.2f}"))
+label = dg.Label("0.50")
+slider = dg.Slider(0.5, on_change=lambda value: label.set_value(f"{value:.2f}"))
 
 # From background threads
 import threading
+import time
+
 def worker():
-    while True:
-        data = fetch_data()
+    for step in range(101):
         app.call_soon_threadsafe(
-            lambda d=data: scatter.set_points(d),
-            coalesce_key="readme.scatter.latest",
+            lambda value=step / 100: progress.set_value(value),
+            coalesce_key="readme.progress.latest",
         )
-        time.sleep(1.0)
+        time.sleep(0.05)
 
 threading.Thread(target=worker, daemon=True).start()
 ```
@@ -277,6 +330,32 @@ threading.Thread(target=worker, daemon=True).start()
 Reuse a stable `coalesce_key` for replaceable snapshots so slow rendering skips
 obsolete pending state. Omit the key for lossless events and append-only plot or
 log streams, where every callback must remain FIFO.
+
+Group related changes into one visual update when they must appear together:
+
+```python
+with app.update_batch():
+    progress.set_value(0.72)
+    limits.set_value(72.0)
+    status.set_value("Nominal")
+```
+
+`LimitsBar` is designed for telemetry displays. The thresholds must remain in
+ascending order; omitted thresholds default to 10%, 25%, 75%, and 90% of the
+configured domain.
+
+```python
+limits = dg.LimitsBar(
+    62.0,
+    min=0.0,
+    max=100.0,
+    red_low=10.0,
+    yellow_low=25.0,
+    yellow_high=75.0,
+    red_high=90.0,
+)
+limits.set_value(68.0)
+```
 
 **Toasts:**
 ```python
@@ -288,17 +367,35 @@ handle.dismiss()
 
 Toast positions: `top-right`, `top-left`, `bottom-right`, `bottom-left`
 
+## Built-in Help
+
+The installed package includes a searchable manual generated and audited
+against the public API:
+
+```python
+import dragongui as dg
+
+print(dg.help())
+print(dg.help.reference.widgets.limits_bar())
+print(dg.help.search("scatter streaming"))
+print(dg.help.find_symbol("NumberInput"))
+```
+
+Sections are callable (`dg.help("widgets.plots")`) and can also be exported as
+structured data with `dg.help.to_dict()`. Treat the NodeGraph warnings in this
+manual as authoritative.
+
 ## Repository Layout
 
 ```
-python/dragongui/          Python package
+python/dragongui/          Python package and built-in help manual
 native/src/                Rust native extension (PyO3 + maturin)
-tests/                     Python test suite (API, components, VDOM, diagnostics)
-examples/                  Flagship demos + node-graph probes
+tests/                     Python and integration tests
+examples/                  Current demos and experimental NodeGraph probes
 examples/css_feature_probes/  Focused, one-feature-per-file probes
 examples/older/            Legacy single-feature demos and tools
 plans/                     Implementation plans and roadmap
-docs/                      CSS, widget, and layout reference documentation
+docs/                      Markdown and Sphinx documentation
 ```
 
 The Rust native extension carries its own unit-test suite in addition to the
@@ -306,40 +403,49 @@ Python tests above.
 
 ## Development
 
-Run an example from the source tree without installing:
+Create and activate a virtual environment, then install the project in editable
+mode. Building the native extension requires a Rust toolchain.
 
 ```powershell
-.\start.bat
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e ".[dev]"
 ```
 
-Install in editable mode:
+On macOS or Linux, activate with `source .venv/bin/activate` instead. Run a
+current example after installation:
 
 ```bash
-pip install -e ".[dev]"
+python examples/responsive_app_template.py
 ```
 
-Build the native extension:
+For an explicit native rebuild during development, run this **inside the active
+virtual environment**:
 
 ```bash
-maturin develop --manifest-path native/Cargo.toml
+python -m maturin develop --manifest-path native/Cargo.toml
 ```
 
 Run tests:
 
 ```bash
 python -m pytest
+python -m pytest tests/test_python_api.py -k builtin_help
 ```
 
-Build a release wheel (Windows/MSYS2):
+Build a release wheel for the current host:
 
 ```bash
-maturin build --release --manifest-path native/Cargo.toml --out dist --target x86_64-pc-windows-gnu
+python -m maturin build --release --manifest-path native/Cargo.toml --out dist
 ```
+
+Confirm which backend the interpreter loaded with
+`python -c "import dragongui as dg; print(dg.backend_info())"`.
 
 ## Examples
 
-Run any example from the source tree without installing (see
-[Development](#development)).
+Run any current example after the editable install described in
+[Development](#development).
 
 **Flagship demos** (`examples/`):
 
@@ -349,25 +455,31 @@ Run any example from the source tree without installing (see
 | `aurora_command_center_demo.py` | Sleek responsive command center used to stress layout, styling, diagnostics, and visual-audit states |
 | `nexus_studio_stress_demo.py` | Five-workspace flagship stress demo with dense dashboards, plots, tables, workflows, controls, diagnostics, overlays, and responsive audit states |
 | `cathode_ops_stress_demo.py` | Six-workspace vintage-CRT stress demo: scanline/phosphor CSS with three palettes, custom `PaintWidget` scope and core map, a load-bank page, and live worker-thread updates |
-| `all_features_v3_demo.py` | Full app: scatter, tables, charts, streaming, overlays, chrome, theming, and CSS |
-| `node_graph_editor_probe.py` | Node-graph editor widget |
-| `node_graph_binding_playground_probe.py` | Binding node-graph outputs to live widgets |
+| `theme_forge_stress_demo.py` | Large multi-theme CSS, layout, paint, chrome, and live-update stress application |
+| `client_window_chrome_demo.py` | Client-decorated window behavior and chrome styling |
+| `icon_theme_demo.py` | Icon theme registration and widget icon rendering |
+| `live_update_batch_demo.py` | Batched and coalesced live telemetry updates |
+| `live_update_producer_safety_probe.py` | Producer-thread safety and queue-pressure behavior |
 
-**Feature probes** (`examples/css_feature_probes/`) — 70+ focused,
+**Feature probes** (`examples/css_feature_probes/`) — 80+ focused,
 one-feature-per-file programs used for visual verification. A sampling:
 
 | Area | Probes |
 | --- | --- |
-| Widgets | `core_widgets_probe`, `form_controls_probe`, `tree_view_probe`, `toggle_switch_probe`, `radio_group_probe`, `date_time_inputs_probe`, `command_palette_probe`, `breadcrumbs_probe`, `toolbar_probe` |
+| Widgets | `core_widgets_probe`, `form_controls_probe`, `limits_bar_probe`, `tree_view_probe`, `toggle_switch_probe`, `radio_group_probe`, `date_time_inputs_probe`, `command_palette_probe`, `breadcrumbs_probe`, `toolbar_probe` |
 | Charts & data | `bar_chart_probe`, `histogram_probe`, `heatmap_probe`, `pie_chart_probe`, `line_plot_probe`, `scatter3d_probe`, `scatter_plot_2d_probe`, `data_table_upgrades_probe`, `html_report_probe` |
 | CSS features | `gradients_probe`, `border_outline_shadow_probe`, `transitions_transforms_probe`, `animations_probe`, `backdrop_filter_probe`, `container_queries_probe`, `supports_probe`, `font_face_probe`, `selectors_probe`, `typography_probe` |
 | Layout | `layout_containers_probe`, `layout_grid_masonry_probe`, `responsive_layout_probe`, `overflow_scrollbar_probe`, `positioning_zindex_probe`, `splitter_probe` |
 | Custom drawing | `paint_widget_events_probe`, `paint_widget_sparkline_probe`, `custom_composite_widget_probe` |
 
 **Legacy demos and tools** (`examples/older/`) — earlier demos and tools,
-including `all_features_professional_demo.py`, scatter/table tools, live-update
-tools, CSS theme galleries, component demos, a terminal wrapper, the `meridian`
-application demo, and more.
+including `all_features_v3_demo.py`, `all_features_professional_demo.py`,
+scatter/table tools, live-update tools, CSS theme galleries, component demos, a
+terminal wrapper, the `meridian` application demo, and more.
+
+**Experimental NodeGraph probes** (`examples/node_graph_*.py`) exercise
+unfinished APIs for library development only. They are not application
+templates; see [Experimental APIs](#experimental-apis).
 
 ## Architecture
 
@@ -397,13 +509,18 @@ Python widgets / components
 ## Requirements
 
 - Python >= 3.12
-- Rust toolchain (for building the native extension)
-- Windows, macOS, or Linux with GPU support
+- A Rust toolchain when building from source (not when installing a wheel)
+- Windows, macOS, or Linux with a GPU backend supported by `wgpu`
+
+CI runs the Python suite on Linux, compile-checks the Rust backend on Windows,
+macOS, and Linux, and performs native wheel/import smoke tests on Windows and
+macOS (including a short macOS window-render smoke test).
 
 Optional extras: `pip install "dragongui[dataframe]"` for `pandas`/`polars`
 DataFrame integration, `[terminal]` for the embedded terminal (`pywinpty` on
 Windows), `[dev]` for build/test tooling, and `[docs]` for the Sphinx docs.
-`numpy` is used by some colormap helpers.
+Some plotting and colormap conversion paths use `numpy`; install it directly or
+through an extra that provides it when those paths are needed.
 
 ## License
 
@@ -417,4 +534,5 @@ are included in [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 - [docs/css-capabilities-reference.md](./docs/css-capabilities-reference.md) — full CSS feature list
 - [docs/layout.md](./docs/layout.md) — layout system and taffy integration
 - [docs/library-overview.md](./docs/library-overview.md) — architecture deep-dive
+- [docs/sphinx/index.md](./docs/sphinx/index.md) — structured user guide source
 - [plans/](./plans/) — implementation roadmap
