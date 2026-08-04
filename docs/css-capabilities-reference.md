@@ -1107,6 +1107,7 @@ Global generated-content hooks: `::before`, `::after` (text renderer).
 | `Heatmap` | `:hover`, `:active`, `:focus`, `:disabled` | `cell` (paint), `grid` (paint), `hover` (paint), `scalar-bar` (paint), `label` (text) |
 | `IconButton` | `:hover`, `:active`, `:focus`, `:disabled` | `icon` (paint) |
 | `LED` | `:hover`, `:active`, `:focus`, `:disabled` | `dot` (paint), `glow` (paint), `highlight` (paint) |
+| `LimitsBar` | `:hover`, `:active`, `:focus`, `:disabled` | `green` (paint), `indicator` (paint), `red-high` (paint), `red-low` (paint), `track` (paint), `yellow-high` (paint), `yellow-low` (paint) |
 | `LoadingSpinner` | `:hover`, `:active`, `:focus`, `:disabled` | `arc` (paint), `track` (paint), `label` (text) |
 | `LogView` | `:hover`, `:active`, `:focus`, `:disabled` | `debug` (text), `error` (text), `info` (text), `line` (text), `warning` (text) |
 | `Menu` | `:hover`, `:active`, `:focus`, `:disabled`, `:open`, `:expanded`, `:collapsed` | `item` (paint), `item-disabled` (paint), `item-hover` (paint), `menu` (paint) |

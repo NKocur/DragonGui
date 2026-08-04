@@ -229,7 +229,7 @@ fn can_use_targeted_deferred_rebuild(
     has_targets: bool,
     structure_generation_matches: bool,
 ) -> bool {
-    matches!(dirty, Dirty::Text)
+    matches!(dirty, Dirty::Text | Dirty::Visual)
         && !text_requires_full
         && !visual_requires_full
         && has_targets
@@ -2021,6 +2021,9 @@ struct CommandTextRebuildStats {
     fallback_batches: u64,
     stale_generation_fallback_batches: u64,
     rebuilt_roots: u64,
+    ineligible_dirty_batches: u64,
+    full_required_batches: u64,
+    missing_targets_batches: u64,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -2064,6 +2067,11 @@ impl CommandTextRebuildStats {
             "fallback_batches": self.fallback_batches,
             "stale_generation_fallback_batches": self.stale_generation_fallback_batches,
             "rebuilt_roots": self.rebuilt_roots,
+            "rejected_batches": {
+                "ineligible_dirty": self.ineligible_dirty_batches,
+                "full_required": self.full_required_batches,
+                "missing_targets": self.missing_targets_batches,
+            },
             "max_roots_per_batch": MAX_TARGETED_TEXT_ROOTS_PER_BATCH,
         })
     }
@@ -3186,6 +3194,7 @@ fn widget_kind_name(kind: &WidgetKind) -> &'static str {
         WidgetKind::NumberInput => "number_input",
         WidgetKind::DragNumber => "drag_number",
         WidgetKind::ProgressBar => "progress_bar",
+        WidgetKind::LimitsBar => "limits_bar",
         WidgetKind::LoadingSpinner => "loading_spinner",
         WidgetKind::TextInput => "text_input",
         WidgetKind::TextArea => "text_area",
@@ -6064,6 +6073,33 @@ fn set_widget_loading_spinner_prop(
         }
         (_, _) => None,
     }
+}
+
+fn set_widget_limits_bar_prop(node: &mut WidgetNode, id: &str, prop: &str, value: f32) -> bool {
+    let Some(target) = find_widget_mut(node, id) else {
+        return false;
+    };
+    if target.kind != WidgetKind::LimitsBar || !value.is_finite() {
+        return false;
+    }
+    let slot = match prop {
+        "value" => &mut target.props.value,
+        "min" => &mut target.props.min,
+        "max" => &mut target.props.max,
+        "red_low" => &mut target.props.red_low,
+        "yellow_low" => &mut target.props.yellow_low,
+        "yellow_high" => &mut target.props.yellow_high,
+        "red_high" => &mut target.props.red_high,
+        _ => return false,
+    };
+    *slot = Some(value);
+    if let Some(number) = serde_json::Number::from_f64(value as f64) {
+        target
+            .props
+            .raw_props
+            .insert(prop.to_string(), Value::Number(number));
+    }
+    true
 }
 
 fn set_widget_level_prop(node: &mut WidgetNode, id: &str, level: String) -> bool {
@@ -9151,9 +9187,23 @@ mod style_patch_tests {
     }
 
     #[test]
-    fn untargeted_visual_work_forces_a_full_mixed_batch_rebuild() {
+    fn targeted_visual_work_uses_the_deferred_partial_rebuild_path() {
+        assert!(can_use_targeted_deferred_rebuild(
+            Dirty::Visual,
+            false,
+            false,
+            true,
+            true,
+        ));
         assert!(!can_use_targeted_deferred_rebuild(
-            Dirty::Text,
+            Dirty::Visual,
+            false,
+            false,
+            false,
+            true,
+        ));
+        assert!(!can_use_targeted_deferred_rebuild(
+            Dirty::Visual,
             false,
             true,
             true,
@@ -9163,6 +9213,17 @@ mod style_patch_tests {
             Dirty::Visual,
             false,
             false,
+            true,
+            false,
+        ));
+    }
+
+    #[test]
+    fn untargeted_visual_work_forces_a_full_mixed_batch_rebuild() {
+        assert!(!can_use_targeted_deferred_rebuild(
+            Dirty::Text,
+            false,
+            true,
             true,
             true,
         ));
@@ -9183,6 +9244,9 @@ mod style_patch_tests {
             fallback_batches: 1,
             stale_generation_fallback_batches: 1,
             rebuilt_roots: 3,
+            ineligible_dirty_batches: 2,
+            full_required_batches: 3,
+            missing_targets_batches: 4,
         };
 
         let snapshot = stats.json_value();
@@ -9200,6 +9264,9 @@ mod style_patch_tests {
         assert_eq!(snapshot["fallback_batches"], 1);
         assert_eq!(snapshot["stale_generation_fallback_batches"], 1);
         assert_eq!(snapshot["rebuilt_roots"], 3);
+        assert_eq!(snapshot["rejected_batches"]["ineligible_dirty"], 2);
+        assert_eq!(snapshot["rejected_batches"]["full_required"], 3);
+        assert_eq!(snapshot["rejected_batches"]["missing_targets"], 4);
         assert_eq!(
             snapshot["max_roots_per_batch"],
             MAX_TARGETED_TEXT_ROOTS_PER_BATCH
@@ -11294,6 +11361,53 @@ mod style_patch_tests {
         assert!(set_widget_checked_prop(&mut root, "enabled", true));
         let checkbox = find_widget_mut(&mut root, "enabled").unwrap();
         assert_eq!(checkbox.props.checked, Some(true));
+    }
+
+    #[test]
+    fn set_widget_limits_bar_prop_updates_retained_unclamped_value_and_threshold() {
+        let mut root = document::parse_widget_node(&json!({
+            "id": "window",
+            "type": "window",
+            "props": {},
+            "children": [{
+                "id": "temperature",
+                "type": "limits_bar",
+                "props": {
+                    "value": 42.0,
+                    "min": 0.0,
+                    "max": 100.0,
+                    "red_low": 10.0,
+                    "yellow_low": 25.0,
+                    "yellow_high": 75.0,
+                    "red_high": 90.0
+                }
+            }]
+        }))
+        .unwrap();
+
+        assert!(set_widget_limits_bar_prop(
+            &mut root,
+            "temperature",
+            "value",
+            125.0
+        ));
+        assert!(set_widget_limits_bar_prop(
+            &mut root,
+            "temperature",
+            "yellow_high",
+            80.0
+        ));
+        let bar = find_widget(&root, "temperature").unwrap();
+        assert_eq!(bar.props.value, Some(125.0));
+        assert_eq!(bar.props.yellow_high, Some(80.0));
+        assert_eq!(bar.props.raw_props["value"], 125.0);
+        assert_eq!(bar.props.raw_props["yellow_high"], 80.0);
+        assert!(!set_widget_limits_bar_prop(
+            &mut root,
+            "temperature",
+            "value",
+            f32::NAN
+        ));
     }
 
     #[test]
@@ -16287,6 +16401,14 @@ impl WgpuState {
                 state.try_set_float(id, v)?;
                 Some(Dirty::Visual)
             }
+            (
+                WidgetKind::LimitsBar,
+                "value" | "min" | "max" | "red_low" | "yellow_low" | "yellow_high" | "red_high",
+                CommandValue::Float(v),
+            ) => {
+                let tree = self.widget_tree.as_mut()?;
+                set_widget_limits_bar_prop(tree, id, prop, v).then_some(Dirty::Visual)
+            }
             (WidgetKind::Dropdown, "value", CommandValue::Text(v)) => {
                 state.set_dropdown_value(id, &v)?;
                 let decision = invalidation_mode.apply(LiveTextInvalidationDecision {
@@ -18762,6 +18884,28 @@ impl WgpuState {
             has_targets,
             true,
         );
+        if !targeted_without_generation_guard {
+            if !matches!(dirty, Dirty::Text | Dirty::Visual) {
+                self.command_text_rebuild_stats.ineligible_dirty_batches = self
+                    .command_text_rebuild_stats
+                    .ineligible_dirty_batches
+                    .saturating_add(1);
+            }
+            if batch.targets.retained_visual_requires_full
+                || batch.targets.primitive_paint_requires_full
+            {
+                self.command_text_rebuild_stats.full_required_batches = self
+                    .command_text_rebuild_stats
+                    .full_required_batches
+                    .saturating_add(1);
+            }
+            if !has_targets {
+                self.command_text_rebuild_stats.missing_targets_batches = self
+                    .command_text_rebuild_stats
+                    .missing_targets_batches
+                    .saturating_add(1);
+            }
+        }
         if targeted_without_generation_guard {
             self.command_text_rebuild_stats.attempted_batches = self
                 .command_text_rebuild_stats
@@ -18783,6 +18927,30 @@ impl WgpuState {
             let visual_roots = batch.targets.take_visual_roots();
             let table_text_targets = std::mem::take(&mut batch.targets.table_text_roots);
             let overlay_text = batch.targets.overlay_text;
+            if matches!(dirty, Dirty::Visual) {
+                if batch.targets.scatter_style_sync {
+                    self.sync_scatter_style_overrides();
+                }
+                self.dirty_rebuild_stats.record_execution(Dirty::Visual);
+                if self.rebuild_targeted_primitives(&visual_roots, &HashSet::new(), false) {
+                    self.verify_targeted_rebuild_against_full();
+                    self.command_text_rebuild_stats.completed_batches = self
+                        .command_text_rebuild_stats
+                        .completed_batches
+                        .saturating_add(1);
+                    self.command_text_rebuild_stats.rebuilt_roots = self
+                        .command_text_rebuild_stats
+                        .rebuilt_roots
+                        .saturating_add(visual_roots.len() as u64);
+                    return true;
+                }
+                self.command_text_rebuild_stats.fallback_batches = self
+                    .command_text_rebuild_stats
+                    .fallback_batches
+                    .saturating_add(1);
+                self.rebuild_primitives();
+                return true;
+            }
             let roots = if visual_roots.is_empty() {
                 Some(HashSet::new())
             } else {

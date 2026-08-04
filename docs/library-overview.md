@@ -172,6 +172,7 @@ updates instead of rebuilding the whole app.
 | `NumberInput` | Editable numeric input with min/max/step and `on_change`. |
 | `Slider` | Numeric drag control with range and `on_change`. |
 | `ProgressBar` | Non-interactive progress indicator with live `set_value`. |
+| `LimitsBar` | Non-interactive telemetry limits display with configurable alarm zones and a pegged live position marker. |
 | `Dropdown` | Select one value from a list. |
 | `Checkbox` | Boolean toggle. |
 | `ColorPicker` | Composite RGB/RGBA picker with slider channels, swatch preview, and optional `set_value(..., notify=True)`. |

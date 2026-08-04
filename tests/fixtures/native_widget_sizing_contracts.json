@@ -76,6 +76,14 @@
       "min_height": "auto"
     },
     {
+      "widgets": ["LimitsBar"],
+      "role": "responsive-indicator",
+      "grow": 0.0,
+      "shrink": 1.0,
+      "min_width": "auto",
+      "min_height": "auto"
+    },
+    {
       "widgets": ["Checkbox"],
       "role": "intrinsic-control",
       "grow": 0.0,

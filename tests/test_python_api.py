@@ -242,8 +242,19 @@ def test_builtin_help_manual_exposes_nested_sections() -> None:
     batching_help = dg.help.live_updates.batching()
     assert "Batched Property Updates" in batching_help
     assert "with app.update_batch():" in batching_help
+    assert "limits.set_value(snapshot.telemetry_value)" in batching_help
+    assert "targeted retained-paint updates" in batching_help
     assert "last value wins" in batching_help
     assert "There is no atomic rollback" in batching_help
+    limits_help = dg.help.reference.widgets.limits_bar()
+    assert "ordered alarm zones and a live position marker" in limits_help
+    assert limits_help.count("ordered alarm zones and a live position marker") == 1
+    assert "Omitted thresholds default to 10%, 25%, 75%, and 90%" in limits_help
+    assert "`yellow_low < value < yellow_high`" in limits_help
+    assert "Any omitted argument retains its current value" in limits_help
+    assert "LimitsBar.telemetry::indicator" in limits_help
+    assert "eight complete CSS treatments" in limits_help
+    assert "Public widget reference for `LimitsBar`." not in limits_help
     assert "`update_batch()`" in dg.help.app_model.app()
     assert dg.help.search("thread safe updates")[0]["path"] == "live_updates.threads"
     assert "Dashboard Recipe" in dg.help.recipes.dashboard()
@@ -2637,6 +2648,88 @@ def test_progress_bar_set_value_updates_live_native_value_and_label() -> None:
         ("progress", "value", 0.42),
         ("progress", "label", "42%"),
     ]
+
+
+def test_limits_bar_serializes_defaults_states_and_out_of_range_values() -> None:
+    app = dg.App()
+    win = dg.Window("Limits")
+    limits = dg.LimitsBar(125, min=0, max=100, id="temperature", parent=win)
+
+    serialized = app.document(win)["window"]["children"][0]
+
+    assert serialized["type"] == "limits_bar"
+    assert serialized["props"] == {
+        "value": 125.0,
+        "min": 0.0,
+        "max": 100.0,
+        "red_low": 10.0,
+        "yellow_low": 25.0,
+        "yellow_high": 75.0,
+        "red_high": 90.0,
+        "disabled": False,
+    }
+    assert limits.value == 125.0
+
+    expected_states = [
+        (-1, "red-low"),
+        (10, "red-low"),
+        (10.1, "yellow-low"),
+        (25.1, "green"),
+        (75, "yellow-high"),
+        (90, "red-high"),
+    ]
+    for value, expected in expected_states:
+        limits.set_value(value)
+        assert limits.limits_state == expected
+
+
+def test_limits_bar_validates_and_updates_live_value_and_limits() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.props: list[tuple[str, str, object]] = []
+
+        def enqueue_set_prop(self, widget_id: str, prop: str, value: object) -> None:
+            self.props.append((widget_id, prop, value))
+
+        def close(self) -> None:
+            pass
+
+    with pytest.raises(ValueError, match="max"):
+        dg.LimitsBar(min=1, max=1, parent=None)
+    with pytest.raises(ValueError, match="must satisfy"):
+        dg.LimitsBar(red_low=30, yellow_low=20, parent=None)
+    with pytest.raises(ValueError, match="finite"):
+        dg.LimitsBar(value=float("nan"), parent=None)
+
+    limits = dg.LimitsBar(
+        50,
+        min=-100,
+        red_low=-80,
+        yellow_low=-50,
+        yellow_high=60,
+        red_high=90,
+        max=100,
+        id="limits",
+        parent=None,
+    )
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+    limits._bind_live(handle.widget_handle(limits.id))
+
+    limits.set_value(72)
+    limits.set_limits(yellow_high=65, red_high=95)
+
+    assert sender.props == [
+        ("limits", "value", 72.0),
+        ("limits", "yellow_high", 65.0),
+        ("limits", "red_high", 95.0),
+    ]
+    assert limits.limits_state == "yellow-high"
+
+    with pytest.raises(ValueError, match="must satisfy"):
+        limits.set_limits(yellow_low=99)
+    assert limits.yellow_low == -50.0
 
 
 def test_loading_spinner_serializes_validates_and_updates_live_props() -> None:

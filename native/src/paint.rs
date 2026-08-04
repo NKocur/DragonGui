@@ -155,7 +155,7 @@ pub(crate) fn native_widget_paint_fallback(
             thumb_color: Some(theme.accent),
             ..NativePaintFallback::default()
         },
-        ProgressBar => NativePaintFallback {
+        ProgressBar | LimitsBar => NativePaintFallback {
             background: Some(mix(theme.surface, theme.surface_alt, 0.60)),
             border_color: Some(theme.border),
             border_width: Some(1.0),
@@ -267,6 +267,15 @@ pub(crate) fn native_widget_paint_fallback_parts(kind: WidgetKind) -> &'static [
         Slider => &["track", "fill", "thumb"],
         RangeSlider => &["track", "range", "thumb-min", "thumb-max"],
         ProgressBar => &["track", "fill"],
+        LimitsBar => &[
+            "track",
+            "red-low",
+            "yellow-low",
+            "green",
+            "yellow-high",
+            "red-high",
+            "indicator",
+        ],
         LoadingSpinner => &["track", "arc"],
         Checkbox => &["row", "box"],
         ToggleSwitch => &["row", "track", "thumb"],
@@ -398,6 +407,55 @@ pub(crate) fn native_widget_part_paint_fallback_with_selection(
             } else {
                 theme.accent
             }),
+            ..NativePaintFallback::default()
+        },
+        (LimitsBar, "track") => NativePaintFallback {
+            background: Some(if disabled {
+                mix(theme.surface_alt, theme.disabled, 0.24)
+            } else {
+                mix(theme.surface, theme.surface_alt, 0.60)
+            }),
+            border_color: Some(if disabled {
+                mix(theme.border, theme.disabled, 0.45)
+            } else {
+                theme.border
+            }),
+            border_width: Some(1.0),
+            border_radius: Some(theme.radius),
+            ..NativePaintFallback::default()
+        },
+        (LimitsBar, "red-low" | "red-high") => NativePaintFallback {
+            background: Some(if disabled {
+                theme.disabled
+            } else {
+                theme.danger
+            }),
+            ..NativePaintFallback::default()
+        },
+        (LimitsBar, "yellow-low" | "yellow-high") => NativePaintFallback {
+            background: Some(if disabled {
+                theme.disabled
+            } else {
+                theme.warning
+            }),
+            ..NativePaintFallback::default()
+        },
+        (LimitsBar, "green") => NativePaintFallback {
+            background: Some(if disabled {
+                theme.disabled
+            } else {
+                theme.success
+            }),
+            ..NativePaintFallback::default()
+        },
+        (LimitsBar, "indicator") => NativePaintFallback {
+            background: Some(if disabled { theme.disabled } else { theme.text }),
+            border_color: Some(if disabled {
+                theme.border
+            } else {
+                theme.surface
+            }),
+            border_width: Some(1.0),
             ..NativePaintFallback::default()
         },
         (LoadingSpinner, "track") => NativePaintFallback {

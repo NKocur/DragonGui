@@ -5488,6 +5488,155 @@ class ProgressBar(Widget):
         }
 
 
+class LimitsBar(Widget):
+    """Read-only telemetry value positioned across red/yellow/green limits zones.
+
+    Values outside ``min``/``max`` are preserved while the visual indicator is
+    pegged to the corresponding end. Omitted thresholds default to 10%, 25%,
+    75%, and 90% of the configured range. The bar is shrink-safe when placed
+    beside fixed labels or controls in a horizontal layout.
+    """
+
+    kind = "limits_bar"
+
+    def __init__(
+        self,
+        value: float = 0,
+        *,
+        min: float = 0,
+        max: float = 100,
+        red_low: float | None = None,
+        yellow_low: float | None = None,
+        yellow_high: float | None = None,
+        red_high: float | None = None,
+        disabled: bool = False,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        min_value = self._finite("min", min)
+        max_value = self._finite("max", max)
+        if max_value <= min_value:
+            raise ValueError("LimitsBar max must be greater than min")
+        span = max_value - min_value
+        resolved = (
+            min_value + span * 0.10 if red_low is None else self._finite("red_low", red_low),
+            (
+                min_value + span * 0.25
+                if yellow_low is None
+                else self._finite("yellow_low", yellow_low)
+            ),
+            (
+                min_value + span * 0.75
+                if yellow_high is None
+                else self._finite("yellow_high", yellow_high)
+            ),
+            min_value + span * 0.90 if red_high is None else self._finite("red_high", red_high),
+        )
+        self._validate_limits(min_value, *resolved, max_value)
+        self.value = self._finite("value", value)
+        self.min = min_value
+        self.max = max_value
+        self.red_low, self.yellow_low, self.yellow_high, self.red_high = resolved
+        self.disabled = bool(disabled)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    @staticmethod
+    def _finite(name: str, value: float) -> float:
+        result = float(value)
+        if not math.isfinite(result):
+            raise ValueError(f"LimitsBar {name} must be finite")
+        return result
+
+    @staticmethod
+    def _validate_limits(
+        min_value: float,
+        red_low: float,
+        yellow_low: float,
+        yellow_high: float,
+        red_high: float,
+        max_value: float,
+    ) -> None:
+        if not min_value <= red_low <= yellow_low <= yellow_high <= red_high <= max_value:
+            raise ValueError(
+                "LimitsBar limits must satisfy "
+                "min <= red_low <= yellow_low <= yellow_high <= red_high <= max"
+            )
+
+    @property
+    def limits_state(self) -> str:
+        if self.value <= self.red_low:
+            return "red-low"
+        if self.value <= self.yellow_low:
+            return "yellow-low"
+        if self.value >= self.red_high:
+            return "red-high"
+        if self.value >= self.yellow_high:
+            return "yellow-high"
+        return "green"
+
+    def set_value(self, value: float) -> None:
+        self.value = self._finite("value", value)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("value", self.value)
+
+    def set_limits(
+        self,
+        *,
+        min: float | None = None,
+        red_low: float | None = None,
+        yellow_low: float | None = None,
+        yellow_high: float | None = None,
+        red_high: float | None = None,
+        max: float | None = None,
+    ) -> None:
+        next_values = {
+            "min": self.min if min is None else self._finite("min", min),
+            "red_low": self.red_low if red_low is None else self._finite("red_low", red_low),
+            "yellow_low": (
+                self.yellow_low
+                if yellow_low is None
+                else self._finite("yellow_low", yellow_low)
+            ),
+            "yellow_high": (
+                self.yellow_high
+                if yellow_high is None
+                else self._finite("yellow_high", yellow_high)
+            ),
+            "red_high": self.red_high if red_high is None else self._finite("red_high", red_high),
+            "max": self.max if max is None else self._finite("max", max),
+        }
+        self._validate_limits(
+            next_values["min"],
+            next_values["red_low"],
+            next_values["yellow_low"],
+            next_values["yellow_high"],
+            next_values["red_high"],
+            next_values["max"],
+        )
+        changed = [name for name, value in next_values.items() if value != getattr(self, name)]
+        for name, value in next_values.items():
+            setattr(self, name, value)
+        if (handle := self._live()) is not None:
+            for name in changed:
+                handle.enqueue_set_prop(name, next_values[name])
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "value": self.value,
+            "min": self.min,
+            "max": self.max,
+            "red_low": self.red_low,
+            "yellow_low": self.yellow_low,
+            "yellow_high": self.yellow_high,
+            "red_high": self.red_high,
+            "disabled": self.disabled,
+        }
+
+
 class LoadingSpinner(Widget):
     kind = "loading_spinner"
 

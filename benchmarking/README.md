@@ -73,3 +73,29 @@ python benchmarking\scatter_dynamic_camera_benchmark.py --points 65000 --camera-
 The static v4 benchmark can show cache hits after the camera stops. This dynamic
 benchmark forces camera changes at a paced interval and reports aggregate scatter
 render timing plus cache hit rate.
+
+## LimitsBar Streaming Stress Test
+
+Use the telemetry-indicator benchmark to stream deterministic values into 100
+`LimitsBar` widgets at 30 Hz. The five-column grid keeps all 100 widgets in the
+painted viewport, and `--static-status` isolates the bars from unrelated status
+text invalidation:
+
+```powershell
+python benchmarks\gui_telemetry_indicator_case.py --mode limits --count 100 --warmup-seconds 2 --measure-seconds 6 --update-mode batch --static-status --limits-columns 5 --output artifacts\limits-bar-stress-100-visible.json
+```
+
+The report validates the first and last values in both Python and the native
+retained tree, verifies that all scheduled ticks completed, confirms that the
+command queue drained, and requires zero layout diagnostics. Compare against
+individual property commands with:
+
+```powershell
+python benchmarks\gui_telemetry_indicator_case.py --mode limits --count 100 --warmup-seconds 2 --measure-seconds 6 --update-mode individual --static-status --limits-columns 5 --output artifacts\limits-bar-stress-100-individual-visible.json
+```
+
+Read `process_cpu_percent_one_core`, `submit_ms`, `measurement_memory`, native
+command-drain timing, frame `work`/`total` timing, and renderer retained-rebuild
+counters together. A high full-rebuild count during `--static-status` indicates
+that visual-only widget changes are rebuilding more of the retained scene than
+necessary.

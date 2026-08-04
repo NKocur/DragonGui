@@ -1473,6 +1473,86 @@ CSS:
 - Type selector: `ProgressBar`.
 - Parts: `track`, `fill`, `label`.
 
+### `LimitsBar`
+
+Constructor:
+
+```python
+dg.LimitsBar(value=0, min=0, max=100, red_low=None, yellow_low=None, yellow_high=None, red_high=None, disabled=False, id=None, key=None, class_=None, style=None, tooltip=None, parent=...)
+```
+
+Options:
+
+| Option | Notes |
+| --- | --- |
+| `value` | Current telemetry value. It may lie outside the display domain. |
+| `min`, `max` | Finite display endpoints; `max` must be greater than `min`. |
+| `red_low` | Low red-to-yellow boundary. Defaults to 10% of the domain. |
+| `yellow_low` | Low yellow-to-green boundary. Defaults to 25%. |
+| `yellow_high` | High green-to-yellow boundary. Defaults to 75%. |
+| `red_high` | High yellow-to-red boundary. Defaults to 90%. |
+| `disabled` | Uses the disabled visual state. |
+
+Thresholds must satisfy `min <= red_low <= yellow_low <= yellow_high <= red_high <= max`.
+The `limits_state` property reports `red-low`, `yellow-low`, `green`,
+`yellow-high`, or `red-high`. Values beyond the domain are retained while the
+visual indicator pegs to the nearest end.
+The default flex policy allows a percentage-sized bar to shrink into the space
+remaining beside fixed labels or controls instead of overflowing its row.
+
+Live methods:
+
+- `set_value(value)` preserves the finite telemetry value even when it lies
+  outside the display domain; the marker alone is pegged.
+- `set_limits(min=..., red_low=..., yellow_low=..., yellow_high=..., red_high=..., max=...)`
+  validates the complete resulting ordering. Omitted arguments retain their
+  current values.
+
+Exact `limits_state` boundaries:
+
+| State | Condition |
+| --- | --- |
+| `red-low` | `value <= red_low` |
+| `yellow-low` | `red_low < value <= yellow_low` |
+| `green` | `yellow_low < value < yellow_high` |
+| `yellow-high` | `yellow_high <= value < red_high` |
+| `red-high` | `value >= red_high` |
+
+For a telemetry frame that updates many bars, put the setters inside one
+`app.update_batch()` context. This sends one property packet and allows native
+targeted retained-paint updates.
+
+CSS:
+
+- Type selector: `LimitsBar`.
+- Parts: `track`, `red-low`, `yellow-low`, `green`, `yellow-high`, `red-high`,
+  `indicator`.
+
+```css
+LimitsBar.telemetry { height: 18px; }
+LimitsBar.telemetry::track {
+    background: #18202b;
+    border: 1px solid #526173;
+    border-radius: 6px;
+}
+LimitsBar.telemetry::red-low,
+LimitsBar.telemetry::red-high { background: #e0525e; }
+LimitsBar.telemetry::yellow-low,
+LimitsBar.telemetry::yellow-high { background: #e7b84b; }
+LimitsBar.telemetry::green { background: #42bd83; }
+LimitsBar.telemetry::indicator {
+    width: 5px;
+    height: 14px;
+    background: white;
+    border: 1px solid #10151d;
+    border-radius: 2px;
+}
+```
+
+See `examples/css_feature_probes/limits_bar_probe.py` for eight complete CSS
+treatments, all five alarm states, endpoint pegging, custom thresholds, and
+live updates.
+
 ### `Dropdown`
 
 Constructor:
@@ -1900,6 +1980,7 @@ Global generated-content hooks: `::before`, `::after` (text renderer).
 | `Heatmap` | `:hover`, `:active`, `:focus`, `:disabled` | `cell` (paint), `grid` (paint), `hover` (paint), `scalar-bar` (paint), `label` (text) |
 | `IconButton` | `:hover`, `:active`, `:focus`, `:disabled` | `icon` (paint) |
 | `LED` | `:hover`, `:active`, `:focus`, `:disabled` | `dot` (paint), `glow` (paint), `highlight` (paint) |
+| `LimitsBar` | `:hover`, `:active`, `:focus`, `:disabled` | `green` (paint), `indicator` (paint), `red-high` (paint), `red-low` (paint), `track` (paint), `yellow-high` (paint), `yellow-low` (paint) |
 | `LoadingSpinner` | `:hover`, `:active`, `:focus`, `:disabled` | `arc` (paint), `track` (paint), `label` (text) |
 | `LogView` | `:hover`, `:active`, `:focus`, `:disabled` | `debug` (text), `error` (text), `info` (text), `line` (text), `warning` (text) |
 | `Menu` | `:hover`, `:active`, `:focus`, `:disabled`, `:open`, `:expanded`, `:collapsed` | `item` (paint), `item-disabled` (paint), `item-hover` (paint), `menu` (paint) |

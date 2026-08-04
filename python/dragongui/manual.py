@@ -257,6 +257,7 @@ _CONTROL_WIDGETS = (
     "Slider",
     "RangeSlider",
     "ProgressBar",
+    "LimitsBar",
     "LoadingSpinner",
     "NumberInput",
     "DragNumber",
@@ -438,6 +439,7 @@ _SECTION_NAME_OVERRIDES = {
     "ImageButton": "image_button",
     "LED": "led",
     "LinePlot": "line_plot",
+    "LimitsBar": "limits_bar",
     "LoadingSpinner": "loading_spinner",
     "MenuBar": "menu_bar",
     "MenuItem": "menu_item",
@@ -521,6 +523,7 @@ _SYMBOL_NOTES = {
     "Dropdown": "Single-selection menu control.",
     "DataFrameTable": "Tabular data viewer with sort, selection, and live frame replacement support.",
     "LinePlot": "2D time-series and streaming line plot.",
+    "LimitsBar": "Read-only telemetry display with ordered alarm zones and a live position marker.",
     "Scatter3D": "3D point cloud widget with packed data paths, camera controls, and live updates.",
     "ScatterPlot2D": "2D point cloud widget for dense scalar/color plots.",
     "Heatmap": "Matrix visualization with scalar color and optional cell labels.",
@@ -688,6 +691,7 @@ _LIVE_METHOD_FAMILIES: dict[str, tuple[str, ...]] = {
     "Dropdown": ("set_value",),
     "DataFrameTable": ("set_frame",),
     "LinePlot": ("set_data", "append_points", "clear", "fit"),
+    "LimitsBar": ("set_value", "set_limits"),
     "Scatter3D": (
         "set_points",
         "set_prepared_points",
@@ -702,6 +706,51 @@ _LIVE_METHOD_FAMILIES: dict[str, tuple[str, ...]] = {
 }
 
 _REFERENCE_DETAILS = {
+    "LimitsBar": """
+`LimitsBar` maps one finite telemetry value across five ordered alarm zones.
+When thresholds are omitted they default to 10%, 25%, 75%, and 90% of the
+configured domain. Values outside `min`/`max` remain available through
+`value`; only the painted marker is pegged to the nearest endpoint.
+
+State boundaries are exact:
+
+- `red-low`: `value <= red_low`
+- `yellow-low`: `red_low < value <= yellow_low`
+- `green`: `yellow_low < value < yellow_high`
+- `yellow-high`: `yellow_high <= value < red_high`
+- `red-high`: `value >= red_high`
+
+`set_limits(...)` validates the complete resulting ordering. Any omitted argument retains its current value.
+For streaming dashboards, group many
+`set_value(...)` calls inside `app.update_batch()` so visual changes are sent
+as one property packet and can use targeted retained-paint updates.
+
+Style the surface and zones independently:
+
+```css
+LimitsBar.telemetry { height: 18px; }
+LimitsBar.telemetry::track {
+    background: #18202b;
+    border: 1px solid #526173;
+    border-radius: 6px;
+}
+LimitsBar.telemetry::red-low,
+LimitsBar.telemetry::red-high { background: #e0525e; }
+LimitsBar.telemetry::yellow-low,
+LimitsBar.telemetry::yellow-high { background: #e7b84b; }
+LimitsBar.telemetry::green { background: #42bd83; }
+LimitsBar.telemetry::indicator {
+    width: 5px;
+    height: 14px;
+    background: white;
+    border: 1px solid #10151d;
+    border-radius: 2px;
+}
+```
+
+The linked probe contains eight complete CSS treatments plus live limit and
+out-of-range demonstrations.
+""",
     "Window": """
 `Window(..., decorations="native")` uses the platform titlebar.
 `decorations="client"` builds retained DragonGUI titlebar nodes so the chrome
@@ -1094,6 +1143,12 @@ _PARAMETER_NOTES = {
         "`value` is a `(low, high)` pair.",
         "`min`, `max`, and `step` define the track and keyboard increments.",
     ),
+    "LimitsBar": (
+        "`value`, `min`, `max`, and every threshold must be finite; values may lie outside the display domain.",
+        "Omitted thresholds default to 10%, 25%, 75%, and 90% of the domain.",
+        "Thresholds must satisfy `min <= red_low <= yellow_low <= yellow_high <= red_high <= max`.",
+        "`disabled=True` exposes the `:disabled` visual state; the widget is always read-only.",
+    ),
     "TextInput": (
         "`value` is the editable text.",
         "`placeholder` is shown when empty.",
@@ -1246,6 +1301,7 @@ _EXAMPLE_METADATA: dict[str, dict[str, tuple[str, ...]]] = {
     "LogView": {"probes": ("examples/css_feature_probes/log_view_probe.py",)},
     "LoadingSpinner": {"probes": ("examples/css_feature_probes/loading_spinner_probe.py",)},
     "ProgressBar": {"examples": ("examples/nexus_studio_stress_demo.py",)},
+    "LimitsBar": {"probes": ("examples/css_feature_probes/limits_bar_probe.py",)},
     "DataFrameTable": {
         "probes": (
             "examples/css_feature_probes/data_table_upgrades_probe.py",
@@ -1528,8 +1584,6 @@ def _reference_leaf(
         "",
         "Signature:",
         f"`{signature}`",
-        "",
-        summary,
     ]
     if symbol in _NODE_GRAPH_SYMBOLS:
         lines[0:0] = [_NODE_GRAPH_READINESS_WARNING, ""]
@@ -3165,14 +3219,15 @@ as `prepare_points`, `set_prepared_points`, `create_live_frame`, or
         "Feedback Widgets",
         "Status indicators and non-blocking user feedback.",
         """
-Use `Badge`, `Tag`, `LED`, `ProgressBar`, `LoadingSpinner`, `LogView`,
+Use `Badge`, `Tag`, `LED`, `ProgressBar`, `LimitsBar`, `LoadingSpinner`, `LogView`,
 `Tooltip`, `Modal`, and `toast` for feedback.
 
 Use semantic levels (`neutral`, `info`, `success`, `warning`, `danger`,
 `error`) where available so themes can control color.
 
 Use `LoadingSpinner(spinning=True)` for indeterminate work, `ProgressBar` for
-known progress, `toast` for transient feedback, and `LogView` for persistent
+known progress, and `LimitsBar` for a telemetry value against low/high alarm
+thresholds. Use `toast` for transient feedback and `LogView` for persistent
 operational records.
 """,
     )
@@ -3285,6 +3340,8 @@ Common parts:
 - `Slider::track`, `fill`, `thumb`
 - `RangeSlider::track`, `range`, `thumb-min`, `thumb-max`, `label`
 - `ProgressBar::track`, `fill`, `label`
+- `LimitsBar::track`, `red-low`, `yellow-low`, `green`, `yellow-high`,
+  `red-high`, `indicator`
 - `LoadingSpinner::track`, `arc`, `label`
 - `Heatmap::cell`, `grid`, `hover`, `scalar-bar`, `label`
 - `BarChart::label`, `value-label`
@@ -3522,6 +3579,7 @@ Use:
 - `Badge.set_value(value)`, `Badge.set_level(level)`
 - `LED.set_state(state)`, `LED.set_on(bool)`, `LED.set_color(color)`
 - `ProgressBar.set_value(value)`
+- `LimitsBar.set_value(value)`, `LimitsBar.set_limits(...)`
 - `Modal.show()`, `Modal.close()`
 """,
     )
@@ -3602,6 +3660,7 @@ def apply_snapshot(snapshot):
     with app.update_batch():
         status.set_value(snapshot.status)
         progress.set_value(snapshot.progress)
+        limits.set_value(snapshot.telemetry_value)
         badge.set_value(snapshot.mode)
         badge.set_level(snapshot.level)
 
@@ -3630,7 +3689,9 @@ Semantics:
   after it has returned, raises `RuntimeError`.
 
 Batch complete latest-state frames, especially dashboards with many labels,
-badges, progress values, or styles. Keep lossless append/event streams separate,
+badges, progress values, `LimitsBar` indicators, or styles. Batched visual-only
+setters can use targeted retained-paint updates instead of rebuilding unrelated
+widget primitives. Keep lossless append/event streams separate,
 and continue using dedicated packed methods such as `LinePlot.set_data(...)`,
 `Scatter3D.set_prepared_points(...)`, and `DataFrameTable.set_frame(...)` for
 large data resources.
@@ -3734,6 +3795,9 @@ Rules:
   component count.
 - `ProgressBar` values are clamped to its min/max range; low values should not
   rely on negative padding or overflowing rounded fills.
+- `LimitsBar` values must be finite but are intentionally not clamped; the
+  marker pegs at the nearest end. Its finite thresholds must remain ordered as
+  `min <= red_low <= yellow_low <= yellow_high <= red_high <= max`.
 """,
     )
     validation_choices = _section(
@@ -4040,6 +4104,8 @@ Performance guidance:
   `enqueue_prepared_points`, `create_live_frame`, LOD, and auto quality.
 - For `LinePlot`, use `append_points` or prepared series payloads.
 - Use `DataFrameTable.set_frame` instead of replacing surrounding layout.
+- Group one telemetry frame of ordinary setters, including many `LimitsBar`
+  values, inside `app.update_batch()`.
 - Avoid nested unconstrained scroll containers.
 - Use `app.debug_snapshot()` and benchmark probes to inspect frame timings.
 """,

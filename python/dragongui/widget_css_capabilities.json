@@ -299,6 +299,14 @@
       "parts": {"paint": ["track", "fill"], "text": ["label"]}
     },
     {
+      "public_type": "LimitsBar",
+      "native_kind": "limits_bar",
+      "python_kind": "limits_bar",
+      "css_type_chain": ["LimitsBar", "Widget"],
+      "states_profile": "interactive",
+      "parts": {"paint": ["track", "red-low", "yellow-low", "green", "yellow-high", "red-high", "indicator"]}
+    },
+    {
       "public_type": "LoadingSpinner",
       "native_kind": "loading_spinner",
       "python_kind": "loading_spinner",

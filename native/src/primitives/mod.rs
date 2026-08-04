@@ -13344,6 +13344,171 @@ fn emit_rects_inner(
                 }
             }
 
+            WidgetKind::LimitsBar => {
+                let track_visual = part_visual_for(node, state, "track");
+                let track_fallback = widget_part_paint_fallback(node, "track", theme, state);
+                let track_border_w = track_visual
+                    .border_width
+                    .map(|width| width.max(0.0) * sf)
+                    .or(track_fallback.border_width.map(|width| width.max(0.0) * sf))
+                    .unwrap_or(border_w);
+                let track_radii = visual_radii_with_fallback(&track_visual, radii, sf);
+                emit_bordered_rect_radii(
+                    out,
+                    [x, y, w, h],
+                    resolve_color(&track_visual.border_color, theme)
+                        .map(|color| apply_opacity(color, track_visual.opacity.or(visual.opacity)))
+                        .or(styled_border)
+                        .or(track_fallback.border_color)
+                        .unwrap_or(theme.border),
+                    resolve_color(&track_visual.background, theme)
+                        .map(|color| apply_opacity(color, track_visual.opacity.or(visual.opacity)))
+                        .or(styled_bg)
+                        .or(track_fallback.background)
+                        .unwrap_or(theme.surface_alt),
+                    track_radii,
+                    track_border_w,
+                );
+
+                let inset = (track_border_w + 2.0 * sf).max(track_border_w);
+                let inner = inset_rect([x, y, w, h], inset);
+                let min = node.props.min.unwrap_or(0.0);
+                let max = node.props.max.unwrap_or(100.0);
+                let (domain_min, domain_max) = if min.is_finite() && max.is_finite() && max > min {
+                    (min, max)
+                } else {
+                    (0.0, 100.0)
+                };
+                let span = domain_max - domain_min;
+                let fraction = |value: f32| ((value - domain_min) / span).clamp(0.0, 1.0);
+                let mut stops = [
+                    0.0,
+                    fraction(node.props.red_low.unwrap_or(domain_min + span * 0.10)),
+                    fraction(node.props.yellow_low.unwrap_or(domain_min + span * 0.25)),
+                    fraction(node.props.yellow_high.unwrap_or(domain_min + span * 0.75)),
+                    fraction(node.props.red_high.unwrap_or(domain_min + span * 0.90)),
+                    1.0,
+                ];
+                for index in 1..stops.len() {
+                    stops[index] = stops[index].max(stops[index - 1]);
+                }
+                let segment_parts = ["red-low", "yellow-low", "green", "yellow-high", "red-high"];
+                let inner_radius = [
+                    (track_radii[0] - inset).max(0.0),
+                    (track_radii[1] - inset).max(0.0),
+                    (track_radii[2] - inset).max(0.0),
+                    (track_radii[3] - inset).max(0.0),
+                ];
+                for (index, part) in segment_parts.iter().enumerate() {
+                    let segment_w = inner[2] * (stops[index + 1] - stops[index]);
+                    if segment_w <= 0.01 {
+                        continue;
+                    }
+                    let segment_visual = part_visual_for(node, state, part);
+                    let segment_fallback = widget_part_paint_fallback(node, part, theme, state);
+                    let segment_radii = if index == 0 {
+                        [inner_radius[0], 0.0, 0.0, inner_radius[3]]
+                    } else if index == segment_parts.len() - 1 {
+                        [0.0, inner_radius[1], inner_radius[2], 0.0]
+                    } else {
+                        [0.0; 4]
+                    };
+                    let segment_border_w = segment_visual
+                        .border_width
+                        .map(|width| width.max(0.0) * sf)
+                        .or(segment_fallback
+                            .border_width
+                            .map(|width| width.max(0.0) * sf))
+                        .unwrap_or(0.0);
+                    let segment_fill = resolve_color(&segment_visual.background, theme)
+                        .or_else(|| resolve_color(&segment_visual.foreground, theme))
+                        .map(|color| {
+                            apply_opacity(color, segment_visual.opacity.or(visual.opacity))
+                        })
+                        .or(segment_fallback.background)
+                        .unwrap_or(theme.disabled);
+                    emit_bordered_rect_radii(
+                        out,
+                        [
+                            inner[0] + inner[2] * stops[index],
+                            inner[1],
+                            segment_w,
+                            inner[3],
+                        ],
+                        resolve_color(&segment_visual.border_color, theme)
+                            .map(|color| {
+                                apply_opacity(color, segment_visual.opacity.or(visual.opacity))
+                            })
+                            .or(segment_fallback.border_color)
+                            .unwrap_or(segment_fill),
+                        segment_fill,
+                        visual_radii_with_fallback(&segment_visual, segment_radii, sf),
+                        segment_border_w,
+                    );
+                }
+
+                let indicator_visual = part_visual_for(node, state, "indicator");
+                let indicator_fallback =
+                    widget_part_paint_fallback(node, "indicator", theme, state);
+                let indicator_style = node.style.parts.parts.get("indicator");
+                let indicator_w = indicator_style
+                    .and_then(|style| style.layout.width)
+                    .map(|width| width.max(1.0) * sf)
+                    .unwrap_or(8.0 * sf)
+                    .min(inner[2]);
+                let indicator_h = indicator_style
+                    .and_then(|style| style.layout.height)
+                    .map(|height| height.max(1.0) * sf)
+                    .unwrap_or(5.0 * sf)
+                    .min(inner[3]);
+                let indicator_color = resolve_color(&indicator_visual.background, theme)
+                    .or_else(|| resolve_color(&indicator_visual.foreground, theme))
+                    .map(|color| apply_opacity(color, indicator_visual.opacity.or(visual.opacity)))
+                    .or(indicator_fallback.background)
+                    .unwrap_or(theme.text);
+                let indicator_border = resolve_color(&indicator_visual.border_color, theme)
+                    .map(|color| apply_opacity(color, indicator_visual.opacity.or(visual.opacity)))
+                    .or(indicator_fallback.border_color)
+                    .unwrap_or(theme.surface);
+                let indicator_border_w = indicator_visual
+                    .border_width
+                    .map(|width| width.max(0.0) * sf)
+                    .or(indicator_fallback
+                        .border_width
+                        .map(|width| width.max(0.0) * sf))
+                    .unwrap_or(1.0 * sf)
+                    .min(indicator_w * 0.25);
+                let value_t = fraction(node.props.value.unwrap_or(domain_min));
+                let indicator_x = inner[0] + inner[2] * value_t;
+                let line_w = (2.0 * sf).min(indicator_w).max(1.0);
+                out.push(inst(
+                    [
+                        indicator_x - (line_w + indicator_border_w * 2.0) * 0.5,
+                        inner[1],
+                        line_w + indicator_border_w * 2.0,
+                        inner[3],
+                    ],
+                    indicator_border,
+                    0.0,
+                ));
+                out.push(inst(
+                    [indicator_x - line_w * 0.5, inner[1], line_w, inner[3]],
+                    indicator_color,
+                    0.0,
+                ));
+                out.push(inst_rounded_triangle(
+                    [
+                        indicator_x - indicator_w * 0.5,
+                        inner[1],
+                        indicator_w,
+                        indicator_h,
+                    ],
+                    indicator_color,
+                    false,
+                    indicator_visual.border_radius.unwrap_or(1.0).max(0.0) * sf,
+                ));
+            }
+
             WidgetKind::LoadingSpinner => {
                 let disabled = state.is_disabled(&node.id);
                 let size_lp = loading_spinner_size_lp(node);
@@ -16291,6 +16456,82 @@ mod tests {
             fill.paint
         );
         assert_eq!(fill.params[3], 5.0);
+    }
+
+    #[test]
+    fn limits_bar_emits_threshold_segments_and_centered_indicator() {
+        let mut bar = node("limits", WidgetKind::LimitsBar);
+        bar.props.value = Some(50.0);
+        bar.props.min = Some(0.0);
+        bar.props.max = Some(100.0);
+        bar.props.red_low = Some(10.0);
+        bar.props.yellow_low = Some(25.0);
+        bar.props.yellow_high = Some(75.0);
+        bar.props.red_high = Some(90.0);
+        let parts = [
+            ("red-low", [1.0, 0.0, 0.0, 1.0]),
+            ("yellow-low", [1.0, 1.0, 0.0, 1.0]),
+            ("green", [0.0, 1.0, 0.0, 1.0]),
+            ("yellow-high", [1.0, 0.5, 0.0, 1.0]),
+            ("red-high", [1.0, 0.0, 1.0, 1.0]),
+            ("indicator", [0.0, 0.0, 1.0, 1.0]),
+        ];
+        for (part, color) in parts {
+            bar.style.parts.parts.insert(
+                part.to_string(),
+                PartStyle {
+                    visual: VisualStyle {
+                        background: Some(ColorRef::Rgba(color)),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            );
+        }
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            bar.id.clone(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 200.0,
+                h: 20.0,
+            },
+        );
+        let state = WidgetState::from_tree(&bar);
+        let mut out = Vec::new();
+        emit_rects(
+            &bar,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &state,
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let expected = [
+            ([1.0, 0.0, 0.0, 1.0], 3.0, 19.4),
+            ([1.0, 1.0, 0.0, 1.0], 22.4, 29.1),
+            ([0.0, 1.0, 0.0, 1.0], 51.5, 97.0),
+            ([1.0, 0.5, 0.0, 1.0], 148.5, 29.1),
+            ([1.0, 0.0, 1.0, 1.0], 177.6, 19.4),
+        ];
+        for (color, expected_x, expected_w) in expected {
+            let segment = out
+                .iter()
+                .find(|instance| instance.color == color)
+                .expect("limits segment primitive");
+            assert!((segment.rect[0] - expected_x).abs() < 0.01);
+            assert!((segment.rect[2] - expected_w).abs() < 0.01);
+        }
+        let indicator_line = out
+            .iter()
+            .filter(|instance| instance.color == [0.0, 0.0, 1.0, 1.0])
+            .max_by(|left, right| left.rect[3].total_cmp(&right.rect[3]))
+            .expect("limits indicator primitive");
+        assert_eq!(indicator_line.rect, [99.0, 3.0, 2.0, 14.0]);
     }
 
     fn table_primitive_bench_fixture() -> (WidgetNode, LayoutResult, WidgetState, usize) {

@@ -3703,6 +3703,7 @@ fn widget_kind_name(kind: WidgetKind) -> &'static str {
         WidgetKind::NumberInput => "number_input",
         WidgetKind::DragNumber => "drag_number",
         WidgetKind::ProgressBar => "progress_bar",
+        WidgetKind::LimitsBar => "limits_bar",
         WidgetKind::LoadingSpinner => "loading_spinner",
         WidgetKind::TextInput => "text_input",
         WidgetKind::TextArea => "text_area",

@@ -83,3 +83,4 @@ Suggested order:
 52. `custom_composite_widget_probe.py` - V5 composite widget state/keys plus the native ExtensionWidget layout/CSS foundation.
 53. `paint_widget_sparkline_probe.py` - V5 PaintWidget display-list primitives, theme-token colors, scaling, and sparkline rendering.
 54. `paint_widget_events_probe.py` - V5 PaintWidget click hit-testing, callback routing, live repaint, and ordinary-widget updates.
+55. `limits_bar_probe.py` - telemetry limit zones, low/high alarm states, out-of-range marker pegging, custom thresholds, live value updates, and an eight-treatment CSS style gallery covering every painted part.

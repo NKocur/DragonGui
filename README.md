@@ -76,7 +76,7 @@ app.run(win)
 | Text & code input | `TextInput`, `TextArea`, `NumberInput`, `DragNumber`, `CodeEditor`, `LogView` |
 | Date & time | `DateInput`, `TimeInput`, `DateTimeInput` |
 | Selection controls | `Slider`, `RangeSlider`, `Dropdown`, `Checkbox`, `RadioButton`, `RadioGroup`, `ToggleSwitch`, `Selectable`, `SelectableList`, `ColorPicker` |
-| Display | `Label`, `Badge`, `Tag`, `LED`, `Image`, `ProgressBar`, `LoadingSpinner` |
+| Display | `Label`, `Badge`, `Tag`, `LED`, `Image`, `ProgressBar`, `LimitsBar`, `LoadingSpinner` |
 | Trees | `TreeView`, `TreeNode` |
 | Charts & plots | `Scatter3D`, `ScatterPlot2D`, `LinePlot`, `Histogram`, `BarChart`, `Heatmap`, `PieChart` |
 | Tables & reports | `DataFrameTable`, `HtmlReport` |

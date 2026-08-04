@@ -290,11 +290,12 @@ def test_indicator_decomposition_counts_actual_property_fanout() -> None:
     expected = {
         "labels": 321,
         "progress": 321,
+        "limits": 321,
         "leds": 641,
         "combined": 1_281,
     }
 
-    assert indicator_case.COUNTS == (24, 72, 160, 320)
+    assert indicator_case.COUNTS == (24, 72, 100, 160, 320)
     for mode, properties in expected.items():
         config = indicator_case.IndicatorConfig(320, mode)
         assert config.properties_per_tick == properties

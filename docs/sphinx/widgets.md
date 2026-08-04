@@ -6,7 +6,7 @@ extension points.
 ## Common Controls
 
 - Text and status: `Label`, `Badge`, `Tag`, `LED`, `StatusBar`, `ProgressBar`,
-  `LoadingSpinner`.
+  `LimitsBar`, `LoadingSpinner`.
 - Buttons: `Button`, `SmallButton`, `IconButton`, `ImageButton`,
   `ArrowButton`.
 - Choices: `Checkbox`, `RadioButton`, `RadioGroup`, `ToggleSwitch`,
@@ -35,6 +35,13 @@ back to `more`; `BUILTIN_ICONS` and `ICON_ALIASES` expose the current catalog.
 Use `IconResource` and `IconStroke` with `App.set_icon_theme()` to replace
 monochrome geometry before startup or live while retaining CSS tint and
 layout. Live `IconButton.set_icon()` changes use the same retained registry.
+
+`LimitsBar` is the read-only telemetry limits display. It preserves finite
+out-of-domain values while pegging its marker, exposes five exact states through
+`limits_state`, and supports live `set_value(...)` and partial `set_limits(...)`
+updates. Style `track`, the five alarm-zone parts, and `indicator` independently;
+the complete API, state boundaries, CSS example, and probe link are in
+[Widgets Reference](../widgets-reference.md#limitsbar).
 
 ## Data And Visualization
 

@@ -195,6 +195,7 @@ pub(crate) fn resolved_widget_geometry_fallback(
         | WidgetKind::Slider
         | WidgetKind::RangeSlider
         | WidgetKind::ProgressBar
+        | WidgetKind::LimitsBar
         | WidgetKind::TextInput => {
             fallback.height = Some(control_height);
         }
@@ -1668,6 +1669,14 @@ fn style_for_with_viewport(
         | WidgetKind::ProgressBar
         | WidgetKind::TextInput => Style {
             flex_shrink: 0.0,
+            ..Default::default()
+        },
+
+        // Telemetry limit bars are frequently placed after a fixed readout
+        // label. Let percentage-sized bars yield the label/gap allocation
+        // instead of escaping their row or painting beneath a scrollbar.
+        WidgetKind::LimitsBar => Style {
+            flex_shrink: 1.0,
             ..Default::default()
         },
 
@@ -3609,6 +3618,7 @@ fn intrinsic_leaf_width(node: &WidgetNode, theme: &Theme) -> Option<f32> {
         }
         WidgetKind::Slider | WidgetKind::RangeSlider => Some(140.0),
         WidgetKind::ProgressBar => Some(160.0),
+        WidgetKind::LimitsBar => Some(200.0),
         WidgetKind::LoadingSpinner => {
             let size = loading_spinner_size_lp(node);
             let text_w = text_w.unwrap_or(0.0);
@@ -3647,6 +3657,7 @@ fn intrinsic_leaf_min_width(node: &WidgetNode, theme: &Theme) -> f32 {
         WidgetKind::NavItem | WidgetKind::Tab => 32.0,
         WidgetKind::Slider | WidgetKind::RangeSlider => 80.0,
         WidgetKind::ProgressBar => 80.0,
+        WidgetKind::LimitsBar => 120.0,
         WidgetKind::LoadingSpinner => loading_spinner_size_lp(node),
         _ => 0.0,
     }
@@ -3692,6 +3703,7 @@ pub(crate) fn debug_semantic_minimum_lp(node: &WidgetNode, theme: &Theme) -> (f3
         | WidgetKind::Slider
         | WidgetKind::RangeSlider
         | WidgetKind::ProgressBar
+        | WidgetKind::LimitsBar
         | WidgetKind::TextInput => node_control_height_lp(node, theme),
         _ => fallback.min_height.unwrap_or(0.0),
     };
@@ -10452,6 +10464,49 @@ mod tests {
         assert!(
             grid.x + grid.w > row.x + row.w + 0.5,
             "explicit flex_shrink: 0 should retain the intentional overflow escape hatch: row={row:?} grid={grid:?}"
+        );
+    }
+
+    #[test]
+    fn percentage_limits_bar_shrinks_beside_fixed_row_label() {
+        let mut label = node("readout", WidgetKind::Label, NodeProps::default(), vec![]);
+        label.style.layout.width = Some(190.0);
+        label.style.layout.flex_shrink = Some(0.0);
+
+        let mut bar = node(
+            "limits",
+            WidgetKind::LimitsBar,
+            NodeProps::default(),
+            vec![],
+        );
+        bar.style.layout.width_value = Some(LayoutLength::Percent(100.0));
+
+        let mut row = node(
+            "row",
+            WidgetKind::HLayout,
+            NodeProps::default(),
+            vec![label, bar],
+        );
+        row.style.layout.width = Some(600.0);
+        row.style.layout.gap = Some(12.0);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![row],
+        );
+
+        let layout = compute_layout(&root, 640.0, 180.0, 1.0, &Theme::dark(), None);
+        let row = layout.rects.get("row").unwrap();
+        let bar = layout.rects.get("limits").unwrap();
+
+        assert!(
+            bar.x + bar.w <= row.x + row.w + 0.5,
+            "limits bar should consume the remaining row width: row={row:?} bar={bar:?}"
+        );
+        assert!(
+            bar.w >= 120.0,
+            "bar should retain its semantic minimum: {bar:?}"
         );
     }
 

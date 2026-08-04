@@ -20,8 +20,8 @@ from gui_telemetry_viewer_case import TARGET_HZ, TARGET_S, TelemetryData
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MODES = ("labels", "progress", "leds", "combined")
-COUNTS = (24, 72, 160, 320)
+MODES = ("labels", "progress", "limits", "leds", "combined")
+COUNTS = (24, 72, 100, 160, 320)
 
 
 @dataclass(frozen=True)
@@ -34,6 +34,7 @@ class IndicatorConfig:
         per_indicator = {
             "labels": 1,
             "progress": 1,
+            "limits": 1,
             "leds": 2,
             "combined": 4,
         }[self.mode]
@@ -58,7 +59,46 @@ def run_case(args: argparse.Namespace, config: IndicatorConfig) -> dict[str, Any
     )
     labels: list[Any] = []
     bars: list[Any] = []
+    limits_bars: list[Any] = []
     leds: list[Any] = []
+
+    def build_indicator_rows() -> None:
+        for index in range(config.count):
+            value, text, healthy = TelemetryData.indicator(index, 0)
+            with dg.HLayout(style={"height": 22, "gap": 5, "align_items": "center"}):
+                if config.mode in {"leds", "combined"}:
+                    leds.append(dg.LED(healthy, size=9, id=f"indicator-led-{index}"))
+                if config.mode in {"labels", "combined"}:
+                    labels.append(
+                        dg.Label(
+                            text,
+                            wrap=False,
+                            id=f"indicator-label-{index}",
+                            style={"width": 150},
+                        )
+                    )
+                if config.mode in {"progress", "combined"}:
+                    bars.append(
+                        dg.ProgressBar(
+                            value / 100.0,
+                            id=f"indicator-progress-{index}",
+                            style={"width": 220, "height": 9},
+                        )
+                    )
+                if config.mode == "limits":
+                    limits_bars.append(
+                        dg.LimitsBar(
+                            value,
+                            min=0,
+                            red_low=10,
+                            yellow_low=25,
+                            yellow_high=75,
+                            red_high=90,
+                            id=f"indicator-limits-{index}",
+                            style={"width": "100%", "height": 14},
+                        )
+                    )
+
     build_started = time.perf_counter()
     with dg.VLayout(style={"height": "100%", "padding": 6, "gap": 6}):
         with dg.HLayout(style={"height": 28, "gap": 10, "align_items": "center"}):
@@ -68,28 +108,11 @@ def run_case(args: argparse.Namespace, config: IndicatorConfig) -> dict[str, Any
             axis="y",
             style={"flex_grow": 1, "min_height": 0, "height": "100%", "gap": 2, "padding": 4},
         ):
-            for index in range(config.count):
-                value, text, healthy = TelemetryData.indicator(index, 0)
-                with dg.HLayout(style={"height": 22, "gap": 5, "align_items": "center"}):
-                    if config.mode in {"leds", "combined"}:
-                        leds.append(dg.LED(healthy, size=9, id=f"indicator-led-{index}"))
-                    if config.mode in {"labels", "combined"}:
-                        labels.append(
-                            dg.Label(
-                                text,
-                                wrap=False,
-                                id=f"indicator-label-{index}",
-                                style={"width": 150},
-                            )
-                        )
-                    if config.mode in {"progress", "combined"}:
-                        bars.append(
-                            dg.ProgressBar(
-                                value / 100.0,
-                                id=f"indicator-progress-{index}",
-                                style={"width": 220, "height": 9},
-                            )
-                        )
+            if config.mode == "limits":
+                with dg.GridLayout(columns=args.limits_columns, gap=2, style={"width": "100%"}):
+                    build_indicator_rows()
+            else:
+                build_indicator_rows()
     build_ms = (time.perf_counter() - build_started) * 1000.0
 
     producer_done = threading.Event()
@@ -118,13 +141,16 @@ def run_case(args: argparse.Namespace, config: IndicatorConfig) -> dict[str, Any
                 started = time.perf_counter()
                 update_context = app.update_batch() if args.update_mode == "batch" else nullcontext()
                 with update_context:
-                    status.set_value(f"tick {tick}")
+                    if not args.static_status or tick == metrics.total_ticks - 1:
+                        status.set_value(f"tick {tick}")
                     for index in range(config.count):
                         value, text, healthy = TelemetryData.indicator(index, tick)
                         if labels:
                             labels[index].set_value(text)
                         if bars:
                             bars[index].set_value(value / 100.0)
+                        if limits_bars:
+                            limits_bars[index].set_value(value)
                         if leds:
                             leds[index].set_on(healthy)
                 # This is offered API work, not necessarily native traffic:
@@ -176,6 +202,7 @@ def run_case(args: argparse.Namespace, config: IndicatorConfig) -> dict[str, Any
     gpu = snapshot.get("gpu") or {}
     runtime = snapshot.get("runtime") or {}
     renderer = gpu.get("renderer") or {}
+    framework = gpu.get("framework") or {}
     final_tick = metrics.total_ticks - 1
     _first_value, first_text, first_healthy = TelemetryData.indicator(0, final_tick)
     last_value, last_text, last_healthy = TelemetryData.indicator(config.count - 1, final_tick)
@@ -191,11 +218,54 @@ def run_case(args: argparse.Namespace, config: IndicatorConfig) -> dict[str, Any
         validation.equal("last label final value", labels[-1].text, last_text, source="Python widget state")
     if bars:
         validation.equal("last progress final value", round(float(bars[-1].value), 4), round(last_value / 100.0, 4), source="Python widget state")
+    if limits_bars:
+        validation.equal(
+            "first limits bar final value",
+            round(float(limits_bars[0].value), 4),
+            round(_first_value, 4),
+            source="Python widget state",
+        )
+        validation.equal(
+            "last limits bar final value",
+            round(float(limits_bars[-1].value), 4),
+            round(last_value, 4),
+            source="Python widget state",
+        )
+        native_first_limits = find_tree_node(gpu.get("tree"), limits_bars[0].id)
+        native_last_limits = find_tree_node(gpu.get("tree"), limits_bars[-1].id)
+        validation.equal(
+            "native first limits bar final value",
+            round(float((native_first_limits or {}).get("props", {}).get("value", -1)), 4),
+            round(_first_value, 4),
+            source="native retained tree",
+        )
+        validation.equal(
+            "native last limits bar final value",
+            round(float((native_last_limits or {}).get("props", {}).get("value", -1)), 4),
+            round(last_value, 4),
+            source="native retained tree",
+        )
     if leds:
         validation.equal("first LED final state", leds[0].on, first_healthy, source="Python widget state")
         validation.equal("last LED final state", leds[-1].on, last_healthy, source="Python widget state")
     validation.equal("command queue drained", runtime.get("command_queue_depth"), 0, source="native runtime snapshot")
     validation.equal("layout remained clean", layout_issue_count(snapshot), 0, source="native layout diagnostics")
+    retained_rebuilds = ((renderer.get("primitives") or {}).get("retained_rebuilds") or {})
+    if limits_bars and args.update_mode == "batch" and args.static_status:
+        validation.require(
+            "visual-only limits frames used targeted primitive rebuilds",
+            int(retained_rebuilds.get("partial_base_completed") or 0),
+            lambda observed: observed >= max(metrics.completed_ticks - 1, 0),
+            f">={max(metrics.completed_ticks - 1, 0)}",
+            source="native retained primitive diagnostics",
+        )
+        rejected = ((framework.get("command_text_rebuilds") or {}).get("rejected_batches") or {})
+        validation.equal(
+            "eligible limits batches were not rejected from targeted rebuilding",
+            sum(int(value or 0) for value in rejected.values()),
+            0,
+            source="native deferred rebuild diagnostics",
+        )
     native_sends = (runtime.get("python") or {}).get("native_sends") or {}
     native_batches = native_sends.get("batches") or {}
     if args.update_mode == "batch":
@@ -222,6 +292,8 @@ def run_case(args: argparse.Namespace, config: IndicatorConfig) -> dict[str, Any
         "count": config.count,
         "target_hz": TARGET_HZ,
         "update_mode": args.update_mode,
+        "static_status": args.static_status,
+        "limits_columns": args.limits_columns if config.mode == "limits" else None,
         "properties_per_tick": config.properties_per_tick,
         "native_properties_per_completed_tick": (
             float(((native_batches.get("updates_submitted") or 0) / metrics.completed_ticks))
@@ -241,6 +313,8 @@ def run_case(args: argparse.Namespace, config: IndicatorConfig) -> dict[str, Any
                 "command_queue": runtime.get("command_queue"),
                 "command_drain": runtime.get("command_drain"),
                 "command_drain_yields": runtime.get("command_drain_yields"),
+                "dirty_rebuilds": framework.get("dirty_rebuilds"),
+                "command_text_rebuilds": framework.get("command_text_rebuilds"),
                 "python": runtime.get("python"),
             },
             "renderer": {
@@ -260,8 +334,21 @@ def main() -> int:
     parser.add_argument("--warmup-seconds", type=float, default=2.0)
     parser.add_argument("--measure-seconds", type=float, default=8.0)
     parser.add_argument("--update-mode", choices=("individual", "batch"), default="batch")
+    parser.add_argument(
+        "--static-status",
+        action="store_true",
+        help="Update the status label only on the final tick to isolate indicator paint work.",
+    )
+    parser.add_argument(
+        "--limits-columns",
+        type=int,
+        default=5,
+        help="Grid columns for LimitsBar mode; five keeps 100 bars visible at once.",
+    )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
+    if args.limits_columns < 1:
+        parser.error("--limits-columns must be at least 1")
     report = run_case(args, IndicatorConfig(args.count, args.mode))
     payload = json.dumps(report, indent=2, sort_keys=True)
     if args.output:

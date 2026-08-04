@@ -1101,5 +1101,16 @@
     ],
     "manual": false,
     "notes": "Regression: the panel-parts probe stays inset within its card and its accent/header/body paints remain clipped to the rounded probe surface."
+  },
+  {
+    "id": "limits-bar",
+    "name": "Limits Bar Telemetry States",
+    "script": "examples/css_feature_probes/limits_bar_probe.py",
+    "category": "widgets",
+    "features": ["LimitsBar", "limit zones", "indicator pegging", "live values", "CSS parts", "disabled state", "CSS style gallery"],
+    "sizes": [[920, 820], [520, 820]],
+    "scales": [1.0, 1.5],
+    "manual": false,
+    "notes": "Verify all five zones, both pegged endpoints, custom thresholds, marker contrast, equal row geometry, and eight visibly distinct CSS treatments: neon, pastel, industrial, minimal, high contrast, monochrome, ice glass, and retro terminal."
   }
 ]

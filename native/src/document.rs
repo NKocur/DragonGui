@@ -1231,6 +1231,7 @@ pub enum WidgetKind {
     NumberInput,
     DragNumber,
     ProgressBar,
+    LimitsBar,
     LoadingSpinner,
     TextInput,
     TextArea,
@@ -1300,6 +1301,7 @@ pub(crate) const ALL_WIDGET_KINDS: &[WidgetKind] = &[
     WidgetKind::NumberInput,
     WidgetKind::DragNumber,
     WidgetKind::ProgressBar,
+    WidgetKind::LimitsBar,
     WidgetKind::LoadingSpinner,
     WidgetKind::TextInput,
     WidgetKind::TextArea,
@@ -1370,6 +1372,7 @@ impl WidgetKind {
             "number_input" => WidgetKind::NumberInput,
             "drag_number" => WidgetKind::DragNumber,
             "progress_bar" => WidgetKind::ProgressBar,
+            "limits_bar" => WidgetKind::LimitsBar,
             "loading_spinner" => WidgetKind::LoadingSpinner,
             "text_input" => WidgetKind::TextInput,
             "text_area" => WidgetKind::TextArea,
@@ -1473,6 +1476,14 @@ pub struct NodeProps {
     pub min: Option<f32>,
     /// Slider maximum value.
     pub max: Option<f32>,
+    /// LimitsBar lower red-to-yellow boundary.
+    pub red_low: Option<f32>,
+    /// LimitsBar lower yellow-to-green boundary.
+    pub yellow_low: Option<f32>,
+    /// LimitsBar upper green-to-yellow boundary.
+    pub yellow_high: Option<f32>,
+    /// LimitsBar upper yellow-to-red boundary.
+    pub red_high: Option<f32>,
     /// Slider keyboard step.
     pub step: Option<f32>,
     /// Display text for Label and Button widgets; label for Checkbox/ToggleSwitch.
@@ -1850,6 +1861,26 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         .map(|v| v as f32);
     let min = props.get("min").and_then(|v| v.as_f64()).map(|v| v as f32);
     let max = props.get("max").and_then(|v| v.as_f64()).map(|v| v as f32);
+    let red_low = props
+        .get("red_low")
+        .and_then(|v| v.as_f64())
+        .filter(|v| v.is_finite())
+        .map(|v| v as f32);
+    let yellow_low = props
+        .get("yellow_low")
+        .and_then(|v| v.as_f64())
+        .filter(|v| v.is_finite())
+        .map(|v| v as f32);
+    let yellow_high = props
+        .get("yellow_high")
+        .and_then(|v| v.as_f64())
+        .filter(|v| v.is_finite())
+        .map(|v| v as f32);
+    let red_high = props
+        .get("red_high")
+        .and_then(|v| v.as_f64())
+        .filter(|v| v.is_finite())
+        .map(|v| v as f32);
     let step = props.get("step").and_then(|v| v.as_f64()).map(|v| v as f32);
     let badge = props
         .get("badge")
@@ -2484,6 +2515,10 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         value_max,
         min,
         max,
+        red_low,
+        yellow_low,
+        yellow_high,
+        red_high,
         step,
         text,
         badge,
