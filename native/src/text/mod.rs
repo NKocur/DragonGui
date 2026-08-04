@@ -428,6 +428,26 @@ fn scalar_bar_title_bounds(clip: TextBounds, screen_x: f32, scale: f32) -> TextB
     )
 }
 
+fn scatter_axis_center_bounds(
+    clip: TextBounds,
+    screen_x: f32,
+    screen_y: f32,
+    line_height: f32,
+    is_title: bool,
+    scale: f32,
+) -> TextBounds {
+    let width = if is_title { 200.0 } else { 120.0 } * scale;
+    intersect_text_bounds(
+        clip,
+        TextBounds {
+            left: (screen_x - width * 0.5).floor() as i32,
+            top: (screen_y - line_height * 0.5).floor() as i32,
+            right: (screen_x + width * 0.5).ceil() as i32,
+            bottom: (screen_y + line_height * 0.5).ceil() as i32,
+        },
+    )
+}
+
 fn single_line_text_defaults_to_ellipsis(kind: WidgetKind) -> bool {
     matches!(
         kind,
@@ -1187,6 +1207,24 @@ impl TextRendererDg {
         let mut label_clip = clip;
         let (text_align, left, top) = match anchor {
             "top-left" => (TextAlign::Left, screen_x, screen_y),
+            "scatter-axis-center" => {
+                // Grid projection supplies the center of the tick/title label.
+                // Constrain centering to a small local box; centering against the
+                // full scatter clip shifts labels toward the middle of the plot.
+                label_clip = scatter_axis_center_bounds(
+                    clip,
+                    screen_x,
+                    screen_y,
+                    line_height,
+                    is_title,
+                    scale,
+                );
+                (
+                    TextAlign::Center,
+                    label_clip.left as f32,
+                    screen_y - line_height * 0.5,
+                )
+            }
             "scalar-bar-title" => {
                 // Give the title the full plot width, minus a small inset, and
                 // right-align it over the scalar bar/tick region. This keeps long
@@ -6888,6 +6926,23 @@ mod tests {
         assert_eq!(bounds.top, clip.top);
         assert_eq!(bounds.bottom, clip.bottom);
         assert_eq!(options.text_overflow, Some(TextOverflow::Ellipsis));
+    }
+
+    #[test]
+    fn scatter_axis_tick_centers_in_local_box_not_full_plot_clip() {
+        let plot_clip = TextBounds {
+            left: 20,
+            top: 30,
+            right: 620,
+            bottom: 430,
+        };
+        let bounds = scatter_axis_center_bounds(plot_clip, 180.0, 350.0, 14.0, false, 1.0);
+
+        assert_eq!(bounds.left, 120);
+        assert_eq!(bounds.right, 240);
+        assert_eq!(bounds.top, 343);
+        assert_eq!(bounds.bottom, 357);
+        assert_eq!((bounds.left + bounds.right) / 2, 180);
     }
 
     #[test]

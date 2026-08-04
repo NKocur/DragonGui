@@ -701,7 +701,12 @@ fn scatter_label_char_count(text: &str) -> usize {
 
 fn scatter_label_rect(local_x: f32, local_y: f32, text: &str, is_title: bool) -> [f32; 4] {
     let size = estimate_scatter_label_size(text, is_title);
-    [local_x, local_y, local_x + size.x, local_y + size.y]
+    [
+        local_x - size.x * 0.5,
+        local_y - size.y * 0.5,
+        local_x + size.x * 0.5,
+        local_y + size.y * 0.5,
+    ]
 }
 
 fn scatter_rects_overlap(a: [f32; 4], b: [f32; 4], gap: f32) -> bool {
@@ -1141,6 +1146,15 @@ fn scatter_layout_rect(
             scissor_bottom.saturating_sub(scissor_y),
         ],
     }
+}
+
+fn scatter_scissor_bounds(offset: [u32; 2], size: [u32; 2]) -> [f32; 4] {
+    [
+        offset[0] as f32,
+        offset[1] as f32,
+        offset[0].saturating_add(size[0]) as f32,
+        offset[1].saturating_add(size[1]) as f32,
+    ]
 }
 
 // ---------------------------------------------------------------------------
@@ -2362,15 +2376,14 @@ impl ScatterWidget {
         }
     }
 
-    /// Returns the viewport bounds as [left, top, right, bottom] in physical pixels.
-    /// Used to clip overlay text labels to the scatter region.
+    /// Returns the visible scissor bounds as [left, top, right, bottom] in physical pixels.
+    ///
+    /// Overlay text is rendered by the window-level text compositor rather than
+    /// the scatter render pass, so it must receive the same scroll-aware clip as
+    /// the scatter geometry. Returning the full viewport here lets scalar-bar and
+    /// axis labels paint through a clipped scroll-panel boundary.
     pub fn viewport_clip(&self) -> [f32; 4] {
-        [
-            self.offset[0],
-            self.offset[1],
-            self.offset[0] + self.width as f32,
-            self.offset[1] + self.height as f32,
-        ]
+        scatter_scissor_bounds(self.scissor_offset, self.scissor_size)
     }
 
     /// True when the scatter has a non-empty visible viewport.
@@ -2880,7 +2893,7 @@ impl ScatterWidget {
                     is_title: false,
                     color: None,
                     font_size: None,
-                    anchor: "top-left".into(),
+                    anchor: "scatter-axis-center".into(),
                 });
             }
         }
@@ -2905,7 +2918,7 @@ impl ScatterWidget {
                 is_title: title.is_title,
                 color: None,
                 font_size: None,
-                anchor: "top-left".into(),
+                anchor: "scatter-axis-center".into(),
             });
         }
         // Mark where grid-axis labels end; refresh_overlays() will truncate here before appending.
@@ -4493,6 +4506,22 @@ mod tests {
         assert_eq!(rect.height, 180);
         assert_eq!(rect.scissor_offset, [20, 96]);
         assert_eq!(rect.scissor_size, [300, 72]);
+        assert_eq!(
+            scatter_scissor_bounds(rect.scissor_offset, rect.scissor_size),
+            [20.0, 96.0, 320.0, 168.0]
+        );
+    }
+
+    #[test]
+    fn projected_axis_label_rect_is_centered_on_its_tick_relative_anchor() {
+        let size = estimate_scatter_label_size("-12.50", false);
+        let rect = scatter_label_rect(140.0, 90.0, "-12.50", false);
+
+        const TOLERANCE: f32 = 0.001;
+        assert!(((rect[0] + rect[2]) * 0.5 - 140.0).abs() < TOLERANCE);
+        assert!(((rect[1] + rect[3]) * 0.5 - 90.0).abs() < TOLERANCE);
+        assert!((rect[2] - rect[0] - size.x).abs() < TOLERANCE);
+        assert!((rect[3] - rect[1] - size.y).abs() < TOLERANCE);
     }
 
     #[test]
