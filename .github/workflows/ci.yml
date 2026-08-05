@@ -21,8 +21,8 @@ jobs:
       matrix:
         python-version: ["3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install test tools
@@ -45,8 +45,8 @@ jobs:
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         id: python
         with:
           python-version: "3.12"
@@ -80,7 +80,7 @@ jobs:
       checks: write
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -92,4 +92,4 @@ jobs:
         run: |
           cargo fetch --locked --manifest-path native/Cargo.toml
           cargo about generate --frozen --fail --config about.toml --manifest-path native/Cargo.toml about.hbs --output-file /tmp/THIRD_PARTY_RUST_NOTICES.md
-          cmp THIRD_PARTY_RUST_NOTICES.md /tmp/THIRD_PARTY_RUST_NOTICES.md
+          diff --strip-trailing-cr --unified THIRD_PARTY_RUST_NOTICES.md /tmp/THIRD_PARTY_RUST_NOTICES.md
