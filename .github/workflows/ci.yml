@@ -90,5 +90,6 @@ jobs:
         run: cargo install cargo-about --version 0.9.1 --locked --features cli
       - name: Verify generated Rust notices
         run: |
-          cargo about generate --config about.toml --manifest-path native/Cargo.toml about.hbs --output-file /tmp/THIRD_PARTY_RUST_NOTICES.md
+          cargo fetch --locked --manifest-path native/Cargo.toml
+          cargo about generate --frozen --fail --config about.toml --manifest-path native/Cargo.toml about.hbs --output-file /tmp/THIRD_PARTY_RUST_NOTICES.md
           cmp THIRD_PARTY_RUST_NOTICES.md /tmp/THIRD_PARTY_RUST_NOTICES.md

@@ -12,7 +12,8 @@ supported Windows, Linux, and macOS targets is in
 the checked-in `about.toml` policy and `about.hbs` template:
 
 ```text
-cargo about generate --locked --fail --manifest-path native/Cargo.toml about.hbs --output-file THIRD_PARTY_RUST_NOTICES.md
+cargo fetch --locked --manifest-path native/Cargo.toml
+cargo about generate --frozen --fail --manifest-path native/Cargo.toml about.hbs --output-file THIRD_PARTY_RUST_NOTICES.md
 ```
 
 The report includes package names, exact versions, upstream repositories,

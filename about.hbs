@@ -3,7 +3,8 @@
 This file is generated from `native/Cargo.lock` with:
 
 ```text
-cargo about generate --locked --fail --manifest-path native/Cargo.toml about.hbs
+cargo fetch --locked --manifest-path native/Cargo.toml
+cargo about generate --frozen --fail --manifest-path native/Cargo.toml about.hbs
 ```
 
 The licenses below apply to the listed third-party packages, not to DragonGUI
