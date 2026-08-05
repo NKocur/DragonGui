@@ -2488,7 +2488,7 @@ impl NativeCommandSender {
         use base64::{engine::general_purpose::STANDARD, Engine};
         let timeout = Duration::from_millis(timeout_ms);
         let json_str = py
-            .allow_threads(|| self.bridge.request_window_screenshot(timeout))
+            .detach(|| self.bridge.request_window_screenshot(timeout))
             .map_err(|e| PyRuntimeError::new_err(format!("window screenshot failed: {e:?}")))?;
         let v: serde_json::Value = serde_json::from_str(&json_str)
             .map_err(|e| PyRuntimeError::new_err(format!("window screenshot JSON invalid: {e}")))?;
@@ -2797,7 +2797,7 @@ impl NativeCommandSender {
 
     #[pyo3(signature = (timeout_ms=1000))]
     fn debug_snapshot(&self, py: Python<'_>, timeout_ms: u64) -> PyResult<String> {
-        py.allow_threads(|| {
+        py.detach(|| {
             self.bridge
                 .request_debug_snapshot(Duration::from_millis(timeout_ms))
         })
@@ -2813,7 +2813,7 @@ impl NativeCommandSender {
 
     #[pyo3(signature = (timeout_ms=1000))]
     fn latency_probe(&self, py: Python<'_>, timeout_ms: u64) -> PyResult<()> {
-        py.allow_threads(|| {
+        py.detach(|| {
             self.bridge
                 .request_latency_probe(Duration::from_millis(timeout_ms))
         })

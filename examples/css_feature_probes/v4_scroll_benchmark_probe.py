@@ -262,7 +262,8 @@ with win:
             dg.Button("Stop", on_click=stop_scroll_benchmark)
             dg.Button("Top", on_click=lambda: scroll_area.scroll_to(y=0))
 
-        with dg.ScrollArea(axis="y", id=SCROLL_ID, class_="bench-scroll"):
+        scroll_area = dg.ScrollArea(axis="y", id=SCROLL_ID, class_="bench-scroll")
+        with scroll_area:
             with dg.GridLayout(columns=2, min_column_width=430, masonry=True, class_="cards"):
                 with dg.Panel("Controls", class_="card"):
                     with dg.Toolbar():

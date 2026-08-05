@@ -23348,7 +23348,7 @@ impl DragonApp {
             Command::DrainPythonTasks => {
                 let mut outcome = "applied";
                 if let Some(handle) = &self.python_runtime {
-                    Python::with_gil(|py| {
+                    Python::attach(|py| {
                         if let Err(err) = handle.call_method0(py, "_drain_python_tasks") {
                             err.print(py);
                             outcome = "python_error";
@@ -26192,7 +26192,7 @@ impl DragonApp {
         if let Some(cb) = self.change_cbs.get(id) {
             cb(value);
         } else if let Some(handle) = &self.python_runtime {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let result = match value {
                     ChangeValue::Bool(v) => {
                         handle.call_method1(py, "_invoke_change_callback", (id, v))
@@ -26215,7 +26215,7 @@ impl DragonApp {
         if let Some(cb) = self.click_cbs.get(id) {
             cb();
         } else if let Some(handle) = &self.python_runtime {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 if let Err(err) = handle.call_method1(py, "_invoke_click_callback", (id,)) {
                     err.print(py);
                 }

@@ -1,21 +1,20 @@
 from __future__ import annotations
 
 import inspect
-from importlib import metadata as importlib_metadata
 import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
 
 _HELP_SCHEMA_VERSION = 1
-_LIBRARY_VERSION_FALLBACK = "0.1.0"
+_LIBRARY_VERSION_FALLBACK = "1.0.0"
 
 
 def _library_version() -> str:
-    try:
-        return importlib_metadata.version("dragongui")
-    except importlib_metadata.PackageNotFoundError:
-        return _LIBRARY_VERSION_FALLBACK
+    # This module is imported from the source tree during development, where an
+    # older installed distribution may also exist. The release checker keeps
+    # this package-owned value synchronized with project metadata.
+    return _LIBRARY_VERSION_FALLBACK
 
 
 def _norm(name: str) -> str:

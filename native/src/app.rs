@@ -46,14 +46,14 @@ pub fn run_app_impl(
 
     // Wrap Python callables into thread-safe closures.  The closures capture
     // `Py<PyAny>` (which is Send) and re-acquire the GIL when called from
-    // inside `py.allow_threads`.
+    // inside `py.detach`.
     let click_cbs: HashMap<String, Box<dyn Fn() + Send>> = click_callbacks
         .iter()
         .filter_map(|(k, v)| {
             let id = k.extract::<String>().ok()?;
             let cb: Py<PyAny> = v.unbind();
             let f: Box<dyn Fn() + Send> = Box::new(move || {
-                Python::with_gil(|py| {
+                Python::attach(|py| {
                     if let Err(err) = cb.call0(py) {
                         err.print(py);
                     }
@@ -69,7 +69,7 @@ pub fn run_app_impl(
             let id = k.extract::<String>().ok()?;
             let cb: Py<PyAny> = v.unbind();
             let f: Box<dyn Fn(ChangeValue) + Send> = Box::new(move |val: ChangeValue| {
-                Python::with_gil(|py| {
+                Python::attach(|py| {
                     let result = match val {
                         ChangeValue::Bool(b) => cb.call1(py, (b,)),
                         ChangeValue::Float(f) => cb.call1(py, (f,)),
@@ -118,7 +118,7 @@ pub fn run_app_impl(
         loading_screen,
     };
 
-    let run_result = py.allow_threads(|| run_event_loop(spec))?;
+    let run_result = py.detach(|| run_event_loop(spec))?;
 
     let result = PyDict::new(py);
     result.set_item("status", "ok")?;

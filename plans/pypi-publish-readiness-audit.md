@@ -1,29 +1,31 @@
 # PyPI Publish Readiness Audit
 
-**Project:** DragonGui  
-**Audited version:** `0.1.0`  
-**Audit date:** July 27, 2026  
-**Current verdict:** **Not ready to publish**
+**Project:** DragonGui
+**Audited version:** `1.0.0`
+**Audit date:** August 5, 2026
+**Current verdict:** **Ready for TestPyPI; production requires external setup and green release CI**
 
 ## Executive Summary
 
-DragonGui can produce a Windows ABI3 wheel and a source distribution, and the
-packaged native application successfully passed an import and GUI smoke test.
-The available Python and Rust test suites also pass.
+DragonGui 1.0.0 can produce a Windows ABI3 wheel and a source distribution.
+Both artifacts pass metadata checks, clean installation, native import, and an
+independent sdist rebuild. The available Python and Rust test suites also pass.
 
-The project should not be uploaded to PyPI yet. The published artifacts currently
-contain contradictory licensing information, placeholder third-party notices,
-and a machine-specific Cargo configuration. The repository also lacks a clean,
-repeatable, cross-platform release process.
+The repository-level release blockers found by this audit have been addressed:
+DragonGui is consistently MIT licensed, complete generated Rust and bundled
+asset notices are present, machine-specific Cargo configuration was removed,
+generated test caches were untracked, and project URLs were corrected. The
+release workflow now builds Windows, manylinux, macOS Intel, and macOS Apple
+Silicon wheels, tests the ABI3 wheels on Python 3.12 and 3.13, validates the
+sdist, supports TestPyPI, and publishes through PyPI Trusted Publishing.
 
-The highest-priority work is:
+The remaining release-owner work is:
 
-1. Resolve the project's actual license.
-2. Generate and review complete third-party dependency notices.
-3. Remove developer-specific build configuration from published sources.
-4. Clean generated test artifacts out of version control.
-5. Establish reproducible Windows, macOS, Linux, Python 3.12, and Python 3.13
-   release validation.
+1. Configure the `testpypi` and protected `pypi` GitHub environments.
+2. Register `.github/workflows/release.yml` as a Trusted Publisher on both
+   package indexes.
+3. Run the TestPyPI workflow and require the full cross-platform matrix to pass
+   before creating `v1.0.0`.
 
 ---
 
@@ -34,20 +36,21 @@ The highest-priority work is:
 The following checks passed during the audit:
 
 - A fresh Windows release wheel built successfully:
-  `dragongui-0.1.0-cp312-abi3-win_amd64.whl`.
-- A fresh `dragongui-0.1.0.tar.gz` source distribution built successfully.
+  `dragongui-1.0.0-cp312-abi3-win_amd64.whl`.
+- A fresh `dragongui-1.0.0.tar.gz` source distribution built successfully and
+  rebuilt a native wheel in an isolated PEP 517 build.
 - The wheel archive passed ZIP integrity validation.
 - DragonGui imported successfully from an independently extracted wheel.
-- `dragongui.__version__` reported `0.1.0`.
+- `dragongui.__version__` reported `1.0.0`.
 - The extracted package detected and loaded the native backend.
 - A packaged GUI/WGPU smoke test completed successfully.
 - The packaged help/manual lookup worked.
-- Rust test result: **756 passed, 12 ignored, 0 failed**.
-- Python fallback test result: **513 passed**.
+- Rust test result: **945 passed, 13 ignored, 0 failed**.
+- Python fallback test result: **586 passed**.
 - No obvious committed passwords, access tokens, credentials, or private-key
   patterns were found in tracked source files.
 - The Python package, native crate, and Python `__version__` currently agree on
-  version `0.1.0`.
+  version `1.0.0`.
 
 ### Validation Limitations
 
@@ -67,38 +70,27 @@ These issues should be resolved before any production PyPI upload.
 
 ### P0.1 — Contradictory Project License
 
-**Status:** Open  
-**Risk:** Legal and distribution blocker
+**Status:** Resolved August 5, 2026
+**Risk:** Closed; third-party compliance remains tracked separately in P0.2
 
-The repository does not consistently identify DragonGui's license:
+DragonGui's copyright holders selected MIT for the project. The root `LICENSE`
+was restored to the project's original MIT text, `pyproject.toml` now uses the
+SPDX expression `license = "MIT"`, and the deprecated license classifier was
+removed. `native/Cargo.toml`, the README, and `THIRD_PARTY_NOTICES.md` also
+identify DragonGui as MIT.
 
-- The root `LICENSE` file contains the complete GNU General Public License,
-  version 2.
-- `pyproject.toml` uses the MIT license classifier.
-- `native/Cargo.toml` declares `license = "MIT"`.
-- The README says the project is MIT licensed.
-- `THIRD_PARTY_NOTICES.md` says DragonGui's source is MIT licensed.
-
-The generated wheel reproduces this contradiction: its package metadata
-advertises MIT while the bundled license file contains GPLv2.
+The MPL-2.0 licenses of the unmodified `lightningcss` and `cssparser` Cargo
+dependencies do not change DragonGui's project license. Their attribution,
+license text, and source-availability obligations remain part of P0.2.
 
 #### Required Work
 
-1. Determine which license the copyright holders intend to use.
-2. Confirm that all contributors and incorporated source permit that choice.
-3. Replace the root `LICENSE` file if MIT is intended, or update all MIT
-   declarations if GPLv2 is intended.
-4. Synchronize:
-   - `LICENSE`
-   - `pyproject.toml`
-   - `native/Cargo.toml`
-   - `README.md`
-   - `THIRD_PARTY_NOTICES.md`
-   - documentation pages that mention licensing
-5. Prefer a modern SPDX license expression in project metadata after the
-   intended license is confirmed.
-6. Rebuild the wheel and sdist, then inspect their license metadata and bundled
-   license files.
+Completed:
+
+1. Restored the root MIT license text.
+2. Synchronized the Python and Rust project metadata, README, and notices.
+3. Adopted a modern SPDX license expression in Python project metadata.
+4. Regenerated and inspected sdist metadata and the bundled project license.
 
 #### Acceptance Criteria
 
@@ -109,31 +101,30 @@ advertises MIT while the bundled license file contains GPLv2.
 
 ---
 
-### P0.2 — Third-Party Notices Are a Placeholder
+### P0.2 — Third-Party Notices
 
-**Status:** Open  
-**Risk:** Legal compliance blocker
+**Status:** Resolved August 5, 2026
+**Risk:** Closed; notices must remain reproducible as dependencies change
 
-`THIRD_PARTY_NOTICES.md` currently contains instructions for generating notices
-instead of the actual dependency license report. This placeholder is included
-in both release artifact formats.
-
-The wheel contains a Maturin-generated CycloneDX SBOM, which is useful, but the
-project's documented release policy explicitly requires reviewed third-party
-license notices. An SBOM alone does not replace those notices.
+`THIRD_PARTY_NOTICES.md` now records the bundled xterm.js 5.5.0 assets, source
+location, attribution, and MIT text. `THIRD_PARTY_RUST_NOTICES.md` is generated
+from the locked dependency graph with `cargo-about`; it covers 454 third-party packages
+across the supported platform targets and includes exact versions, upstream
+repositories, attributions, and full detected license texts. The checked-in
+`about.toml` policy accepts the reviewed license set and generation uses
+`--locked --fail` so unresolved or unaccepted licenses fail the command.
 
 #### Required Work
 
-1. Install and configure an appropriate Rust license-reporting tool, such as
-   `cargo-about`.
-2. Generate the complete dependency license report from `native/Cargo.lock`.
-3. Review unknown, copyleft, source-available, or manually specified licenses.
-4. Include required license texts and attribution.
-5. Account for bundled JavaScript terminal assets and any other non-Cargo
-   third-party content.
-6. Decide whether Python optional dependencies need notices in the distribution
-   or documentation.
-7. Add an automated CI check that fails when notices are stale or incomplete.
+Completed:
+
+1. Added a reproducible `cargo-about` policy and report template.
+2. Generated the complete report from `native/Cargo.lock`.
+3. Included full texts for the accepted license set, including MPL-2.0.
+4. Documented xterm.js and FitAddon source availability and MIT attribution.
+5. Configured maturin to ship both notice files in wheels and sdists.
+
+The generation command still needs to become an enforced CI freshness check.
 
 #### Acceptance Criteria
 
@@ -147,18 +138,18 @@ license notices. An SBOM alone does not replace those notices.
 
 ### P0.3 — Machine-Specific Cargo Configuration Ships in the Sdist
 
-**Status:** Open  
-**Risk:** Source-install and cross-platform build blocker
+**Status:** Resolved August 5, 2026
+**Risk:** Closed; cross-platform sdist installation remains a release gate
 
-`native/.cargo/config.toml` hardcodes:
+`native/.cargo/config.toml` previously hardcoded:
 
 ```toml
 [env]
 PYO3_PYTHON = "C:\\msys64\\mingw64\\bin\\python.exe"
 ```
 
-This path is specific to one Windows/MSYS2 development environment, does not
-exist on a normal user's machine, and is included in the source distribution.
+The committed configuration file has been removed. CI already selects its
+interpreter explicitly with `PYO3_PYTHON`.
 
 During the audit, a clean native check without an explicit override failed
 because PyO3 selected Python 3.9. The crate requires at least Python 3.12 due to
@@ -185,15 +176,12 @@ but users and downstream builders should not have to depend on that behavior.
 
 ### P0.4 — Release Must Come From a Clean Repository State
 
-**Status:** Open  
-**Risk:** Reproducibility and release-integrity blocker
+**Status:** Resolved August 5, 2026
+**Risk:** Closed; release automation must enforce a clean checkout
 
-The repository tracks approximately 215 files under `.test-cache`, including
-installed package files, wheel metadata, SBOM data, and test runtime artifacts.
-The worktree also contains numerous tracked cache-file deletions.
-
-`pyproject.toml` configures pytest to use `.test-cache`, but `.gitignore` ignores
-`.pytest_cache` rather than `.test-cache`.
+All 316 generated files under `.test-cache` were removed from Git's index while
+the local cache contents were preserved. `.test-cache/` is now ignored, matching
+the pytest cache configuration.
 
 Generated test installations should not be source-controlled or allowed to
 affect the release commit.
@@ -220,9 +208,9 @@ affect the release commit.
 
 ### P1.1 — Incorrect Project URLs
 
-**Status:** Open
+**Status:** Resolved August 5, 2026
 
-`pyproject.toml` points to:
+`pyproject.toml` previously pointed to:
 
 ```text
 https://github.com/dragonframe/dragongui
@@ -234,7 +222,8 @@ The repository's configured Git remote is:
 https://github.com/NKocur/DragonGui.git
 ```
 
-Incorrect links would appear directly on the PyPI project page.
+Homepage, Source, and Issues metadata now use the repository's current public
+location under `https://github.com/NKocur/DragonGui`.
 
 #### Required Work
 
@@ -249,12 +238,13 @@ Incorrect links would appear directly on the PyPI project page.
 
 ---
 
-### P1.2 — No Dedicated Publishing Workflow
+### P1.2 — Dedicated Publishing Workflow
 
-**Status:** Open
+**Status:** Implemented August 5, 2026; Trusted Publisher setup remains external
 
-The repository has CI but no tag-driven release workflow, TestPyPI workflow,
-PyPI Trusted Publishing configuration, signing, or artifact attestation.
+`.github/workflows/release.yml` provides tag-driven production publishing,
+manual TestPyPI staging, protected environments, OIDC Trusted Publishing,
+validated artifacts, checksums, and GitHub release attachments.
 
 Manual publishing is possible, but it is harder to reproduce and easier to
 perform from an incorrect or dirty workspace.
@@ -278,12 +268,12 @@ perform from an incorrect or dirty workspace.
 
 ---
 
-### P1.3 — Incomplete Platform Wheel Coverage
+### P1.3 — Platform Wheel Coverage
 
-**Status:** Open
+**Status:** Implemented; first cross-platform workflow run pending
 
-The README advertises Windows, macOS, and Linux. CI builds and imports wheels on
-Windows and macOS, but no Linux wheel is built or exercised.
+The release matrix builds Windows x86-64, manylinux2014 x86-64, macOS Intel,
+and macOS Apple Silicon wheels and clean-installs each artifact.
 
 If platform wheels are unavailable, pip may fall back to the source
 distribution. DragonGui's Rust and GPU dependencies make source installation a
@@ -308,13 +298,12 @@ substantially more demanding user experience.
 
 ---
 
-### P1.4 — Supported Python Matrix Is Not Fully Tested
+### P1.4 — Supported Python Matrix
 
-**Status:** Open
+**Status:** Implemented; first workflow run pending
 
-The package advertises Python 3.12 and 3.13. CI currently exercises Python tests
-only on 3.12, and the local full-suite audit used the fallback backend under
-Python 3.11 because pytest was unavailable in the local Python 3.12 environment.
+CI runs the Python suite on 3.12 and 3.13, and the release workflow installs
+each ABI3 platform wheel under both supported versions.
 
 The native extension correctly uses `abi3-py312`, which should allow a single
 wheel per platform to support Python 3.12 and later. That compatibility still
@@ -334,14 +323,14 @@ needs direct testing.
 
 ---
 
-### P1.5 — Sdist Installation Is Not a CI Release Gate
+### P1.5 — Sdist Installation Release Gate
 
-**Status:** Open
+**Status:** Resolved August 5, 2026
 
-The sdist was generated and could rebuild a wheel during the audit, but CI does
-not validate this workflow. Maturin also emitted a suspicious message stating
-that a root `Cargo.toml` did not exist while producing the sdist, even though
-the artifact was ultimately produced.
+The release workflow rebuilds and installs a native wheel exclusively from the
+sdist. This was also validated locally. Maturin still prints a harmless root
+manifest probe before honoring `native/Cargo.toml`; artifact creation and the
+independent PEP 517 rebuild both succeed.
 
 #### Required Work
 
@@ -361,9 +350,9 @@ the artifact was ultimately produced.
 
 ## P2: Quality and Documentation Improvements
 
-### P2.1 — Rust Formatting Check Fails
+### P2.1 — Rust Formatting
 
-**Status:** Open
+**Status:** Resolved August 5, 2026
 
 `cargo fmt --check` reports formatting differences in multiple native source
 files, including layout, primitives, runtime, and scatter code.
@@ -379,9 +368,9 @@ files, including layout, primitives, runtime, and scatter code.
 
 ---
 
-### P2.2 — No Established Clippy Baseline
+### P2.2 — Clippy Baseline
 
-**Status:** Open
+**Status:** Correctness baseline established August 5, 2026
 
 Running:
 
@@ -411,9 +400,9 @@ scoped allowances. The project still needs an intentional lint policy.
 
 ---
 
-### P2.3 — Ruff Is Configured but Not Enforced
+### P2.3 — Ruff Correctness Baseline
 
-**Status:** Open
+**Status:** Enforced August 5, 2026
 
 Ruff is listed in the development dependencies and configured in
 `pyproject.toml`, but CI does not run it. Ruff was unavailable in the audit
@@ -431,9 +420,9 @@ environment, so the current source was not independently verified.
 
 ---
 
-### P2.4 — Missing Package Validation and Dependency Audits
+### P2.4 — Package Validation and Dependency Audits
 
-**Status:** Open
+**Status:** Implemented; first CI advisory scan pending
 
 The release process does not currently run:
 
@@ -457,9 +446,9 @@ The release process does not currently run:
 
 ---
 
-### P2.5 — README Needs an End-User Installation Section
+### P2.5 — End-User Installation Documentation
 
-**Status:** Open
+**Status:** Resolved August 5, 2026
 
 The README explains editable development installation but does not prominently
 show ordinary PyPI installation:
@@ -549,12 +538,13 @@ refer to nested probe examples that are not present.
 
 ---
 
-### P2.8 — Release Notes and Versioned Tags Are Missing
+### P2.8 — Release Notes and Versioned Tags
 
-**Status:** Open
+**Status:** Documentation resolved; `v1.0.0` tag pending final release
 
-There is no changelog or dedicated release checklist. The repository has a
-`DragonGui` tag but no semantic version tag for `0.1.0`.
+`CHANGELOG.md` contains the 1.0.0 notes and `RELEASING.md` documents the staged
+and production procedures. The immutable `v1.0.0` tag is intentionally deferred
+until TestPyPI and the complete release matrix pass.
 
 #### Required Work
 
@@ -617,26 +607,26 @@ The eventual release workflow should perform these stages in order:
 
 ### Legal
 
-- [ ] DragonGui's intended license is confirmed.
-- [ ] All license declarations agree.
-- [ ] Third-party notices contain actual reviewed dependency data.
-- [ ] Bundled JavaScript and native assets have complete attribution.
-- [ ] License-policy CI passes.
+- [x] DragonGui's intended license is confirmed.
+- [x] All license declarations agree.
+- [x] Third-party notices contain actual reviewed dependency data.
+- [x] Bundled JavaScript and native assets have complete attribution.
+- [ ] License-policy CI passes on GitHub.
 
 ### Repository
 
-- [ ] `.test-cache/` is untracked and ignored.
-- [ ] Running tests leaves the worktree clean.
+- [x] `.test-cache/` is untracked and ignored.
+- [x] Running tests leaves the tracked worktree state unchanged.
 - [ ] The release commit is reviewed.
-- [ ] The release tag matches version `0.1.0`.
-- [ ] Repository and issue URLs are correct and public.
+- [ ] The release tag matches version `1.0.0`.
+- [x] Repository and issue URLs are correct and public.
 
 ### Packaging
 
-- [ ] No developer-specific absolute paths ship in the sdist.
-- [ ] `twine check` passes for the wheel and sdist.
-- [ ] The sdist rebuild test passes.
-- [ ] Windows wheel passes clean installation and smoke tests.
+- [x] No developer-specific absolute paths ship in the sdist.
+- [x] `twine check` passes for the wheel and sdist.
+- [x] The sdist rebuild test passes locally and is a release gate.
+- [x] Windows wheel passes clean installation and smoke tests.
 - [ ] macOS wheel passes clean installation and smoke tests.
 - [ ] Linux wheel passes clean installation and smoke tests.
 - [ ] Native binary dependencies have been inspected.
@@ -645,20 +635,20 @@ The eventual release workflow should perform these stages in order:
 ### Quality
 
 - [ ] Python tests pass under supported Python versions.
-- [ ] Rust tests pass.
-- [ ] Ruff passes.
-- [ ] Rustfmt passes.
-- [ ] The agreed Clippy policy passes.
-- [ ] Dependency vulnerability checks pass.
+- [x] Rust tests pass.
+- [x] Ruff correctness baseline passes.
+- [x] Rustfmt passes.
+- [x] The agreed Clippy correctness policy passes.
+- [x] Dependency vulnerability check passes with zero known vulnerabilities.
 
 ### Documentation
 
-- [ ] README contains ordinary PyPI installation instructions.
-- [ ] Source-build requirements are documented separately.
-- [ ] Supported platforms and Python versions are accurate.
-- [ ] Optional extras are documented.
+- [x] README contains ordinary PyPI installation instructions.
+- [x] Source-build requirements are documented separately.
+- [x] Supported platforms and Python versions are accurate.
+- [x] Optional extras are documented.
 - [ ] A minimal first application is verified.
-- [ ] Changelog or release notes are complete.
+- [x] Changelog or release notes are complete.
 
 ### Publishing
 
@@ -672,9 +662,8 @@ The eventual release workflow should perform these stages in order:
 
 ## Release Decision
 
-DragonGui should remain in **no-go** status until all P0 issues are closed.
-
-After the P0 issues are fixed, the project can move to a TestPyPI release
-candidate. Production PyPI publishing should occur only after the platform
-wheel matrix, supported Python versions, artifact validation, and clean
-installation tests are complete.
+All repository P0 issues are closed. DragonGui 1.0.0 is ready for a TestPyPI
+release candidate. Production remains a no-go until Trusted Publishing and the
+protected GitHub environments are configured and the complete release workflow
+passes on Windows, Linux, macOS Intel, macOS Apple Silicon, Python 3.12, and
+Python 3.13.

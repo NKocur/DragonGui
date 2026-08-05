@@ -1,10 +1,11 @@
 [package]
 name = "dragongui-native"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 description = "Rust native backend for DragonGUI."
 license = "MIT"
-repository = "https://github.com/dragonframe/dragongui"
+repository = "https://github.com/NKocur/DragonGui"
+publish = false
 exclude = [
     ".pytest_cache/**",
     ".test-cache/**",
@@ -18,7 +19,7 @@ name = "_dragongui"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.23", features = ["abi3-py312"] }
+pyo3 = { version = "0.29", features = ["abi3-py312"] }
 winit = "0.30"
 wgpu = "29"
 glam = "0.28"
@@ -34,7 +35,7 @@ pollster = "0.4"
 glyphon = "0.11.0"
 rfd = "0.15.4"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
-lightningcss = "=1.0.0-alpha.71"
+lightningcss = { version = "=1.0.0-alpha.71", default-features = false }
 cssparser = "0.33"
 smallvec = "1"
 

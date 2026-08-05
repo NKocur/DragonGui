@@ -87,7 +87,7 @@ fn open_file_dialog(
     title: Option<String>,
     filters: Option<Vec<(String, Vec<String>)>>,
 ) -> PyResult<Option<String>> {
-    let path = py.allow_threads(|| {
+    let path = py.detach(|| {
         let dialog = apply_dialog_options(FileDialog::new(), title.as_deref(), filters.as_deref());
         dialog.pick_file()
     });
@@ -100,7 +100,7 @@ fn open_files_dialog(
     title: Option<String>,
     filters: Option<Vec<(String, Vec<String>)>>,
 ) -> PyResult<Option<Vec<String>>> {
-    let paths = py.allow_threads(|| {
+    let paths = py.detach(|| {
         let dialog = apply_dialog_options(FileDialog::new(), title.as_deref(), filters.as_deref());
         dialog.pick_files()
     });
@@ -118,7 +118,7 @@ fn save_file_dialog(
     title: Option<String>,
     filters: Option<Vec<(String, Vec<String>)>>,
 ) -> PyResult<Option<String>> {
-    let path = py.allow_threads(|| {
+    let path = py.detach(|| {
         let dialog = apply_dialog_options(FileDialog::new(), title.as_deref(), filters.as_deref());
         dialog.save_file()
     });
@@ -127,7 +127,7 @@ fn save_file_dialog(
 
 #[pyfunction(signature = (title=None))]
 fn pick_folder_dialog(py: Python<'_>, title: Option<String>) -> PyResult<Option<String>> {
-    let path = py.allow_threads(|| {
+    let path = py.detach(|| {
         let mut dialog = FileDialog::new();
         if let Some(title) = title.as_deref().filter(|title| !title.is_empty()) {
             dialog = dialog.set_title(title);

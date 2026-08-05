@@ -6,10 +6,36 @@ Python describes the application. Rust owns the hot path: windowing, input,
 layout, text, rendering, GPU widgets, and retained widget state. The native
 renderer does not call Python on every frame.
 
-**Status:** pre-alpha. Core widgets, charts, virtualized tables, the optional
-embedded terminal, reactive components, live updates, CSS styling, and GPU data
-widgets are functional. APIs may change. `NodeGraph` is experimental and **not
-ready for application or production use**; see [Experimental APIs](#experimental-apis).
+**Status:** stable. Version 1.0.0 is the first production release. Public APIs
+follow semantic versioning from this release forward. `NodeGraph` remains an
+experimental preview outside the stable API guarantee; see
+[Experimental APIs](#experimental-apis).
+
+## Installation
+
+DragonGUI requires Python 3.12 or 3.13. Install the prebuilt wheel from PyPI:
+
+```bash
+python -m pip install dragongui
+```
+
+Normal wheel installation does not require Rust. A Rust toolchain is needed
+only when pip must build from the source distribution or when developing
+DragonGUI itself.
+
+Optional integrations can be installed independently:
+
+```bash
+python -m pip install "dragongui[numpy]"     # NumPy plotting/colormap paths
+python -m pip install "dragongui[pandas]"    # pandas integration
+python -m pip install "dragongui[polars]"    # Polars integration
+python -m pip install "dragongui[dataframe]" # pandas and Polars together
+python -m pip install "dragongui[terminal]"  # Windows ConPTY support
+```
+
+Version 1.0.0 publishes wheels for Windows x86-64, Linux x86-64, macOS Intel,
+and macOS Apple Silicon. Other architectures may build from source but are not
+part of the supported 1.0.0 binary matrix.
 
 ## Quick Look
 
@@ -512,15 +538,16 @@ Python widgets / components
 - A Rust toolchain when building from source (not when installing a wheel)
 - Windows, macOS, or Linux with a GPU backend supported by `wgpu`
 
-CI runs the Python suite on Linux, compile-checks the Rust backend on Windows,
-macOS, and Linux, and performs native wheel/import smoke tests on Windows and
-macOS (including a short macOS window-render smoke test).
+CI runs Python 3.12 and 3.13 tests, Rust checks on Windows, macOS, and Linux,
+supply-chain checks, and release metadata validation. The release workflow
+builds and smoke-tests Windows x86-64, Linux x86-64, macOS Intel, and macOS
+Apple Silicon wheels before publishing.
 
 Optional extras: `pip install "dragongui[dataframe]"` for `pandas`/`polars`
 DataFrame integration, `[terminal]` for the embedded terminal (`pywinpty` on
-Windows), `[dev]` for build/test tooling, and `[docs]` for the Sphinx docs.
-Some plotting and colormap conversion paths use `numpy`; install it directly or
-through an extra that provides it when those paths are needed.
+Windows), `[numpy]` for NumPy plotting paths, `[pandas]` or `[polars]` for one
+dataframe engine, `[dev]` for build/test tooling, and `[docs]` for the Sphinx
+docs.
 
 ## License
 

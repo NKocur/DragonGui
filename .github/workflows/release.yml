@@ -1,0 +1,242 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  source-check:
+    name: Validate release source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python tools/check_release.py
+
+  sdist:
+    name: Build source distribution
+    needs: source-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - run: python -m pip install maturin
+      - run: python -m maturin sdist --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-sdist
+          path: dist/*
+          if-no-files-found: error
+
+  wheels:
+    name: Build ${{ matrix.artifact }}
+    needs: source-check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64
+            artifact: linux-x86_64
+            manylinux: "2014"
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: windows-x86_64
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            artifact: macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: macos-aarch64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: PyO3/maturin-action@v1
+        if: runner.os == 'Linux'
+        with:
+          maturin-version: v1.14.1
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          command: build
+          args: --release --locked --compatibility pypi --out dist
+      - uses: PyO3/maturin-action@v1
+        if: runner.os != 'Linux'
+        with:
+          maturin-version: v1.14.1
+          target: ${{ matrix.target }}
+          command: build
+          args: --release --locked --compatibility pypi --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.artifact }}
+          path: dist/*
+          if-no-files-found: error
+
+  wheel-smoke:
+    name: Smoke ${{ matrix.artifact }} / Python ${{ matrix.python-version }}
+    needs: wheels
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: linux-x86_64
+            python-version: "3.12"
+          - os: ubuntu-latest
+            artifact: linux-x86_64
+            python-version: "3.13"
+          - os: windows-latest
+            artifact: windows-x86_64
+            python-version: "3.12"
+          - os: windows-latest
+            artifact: windows-x86_64
+            python-version: "3.13"
+          - os: macos-15-intel
+            artifact: macos-x86_64
+            python-version: "3.12"
+          - os: macos-15-intel
+            artifact: macos-x86_64
+            python-version: "3.13"
+          - os: macos-latest
+            artifact: macos-aarch64
+            python-version: "3.12"
+          - os: macos-latest
+            artifact: macos-aarch64
+            python-version: "3.13"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-${{ matrix.artifact }}
+          path: dist
+      - run: python -m pip install --no-index --find-links dist dragongui
+      - name: Verify native import
+        run: >-
+          python -c "import dragongui as dg; info = dg.backend_info();
+          print(info); assert dg.__version__ == '1.0.0'; assert info['native']"
+
+  sdist-smoke:
+    name: Rebuild source distribution
+    needs: sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-sdist
+          path: dist
+      - run: python -m pip wheel --no-deps --wheel-dir rebuilt dist/*.tar.gz
+      - run: python -m pip install --no-index --find-links rebuilt dragongui
+      - run: python -c "import dragongui as dg; assert dg.backend_info()['native']"
+
+  artifacts:
+    name: Validate distributions
+    needs: [sdist-smoke, wheel-smoke]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+      - run: python -m pip install twine
+      - run: python -m twine check dist/*
+      - run: python tools/check_release.py --artifacts dist
+      - run: mkdir checksums && sha256sum dist/* > checksums/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-distributions
+          path: dist/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-checksums
+          path: checksums/SHA256SUMS
+          if-no-files-found: error
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    if: github.event_name == 'workflow_dispatch'
+    needs: artifacts
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/dragongui
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-distributions
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    name: Publish to PyPI
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: artifacts
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/dragongui
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-distributions
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    name: Create GitHub release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: publish-pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-distributions
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-checksums
+          path: dist
+      - name: Create release and attach distributions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes --title "DragonGui $GITHUB_REF_NAME"

@@ -13,6 +13,7 @@ import sys
 import os
 from datetime import date, datetime, time
 from pathlib import Path
+from typing import Callable
 
 import pytest
 

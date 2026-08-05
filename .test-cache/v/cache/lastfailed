@@ -1,3 +1,0 @@
-{
-  "tests/test_python_api.py::test_scatter_add_points_enqueues_actor": true
-}

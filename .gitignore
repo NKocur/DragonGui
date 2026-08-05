@@ -8,6 +8,7 @@ docs/sphinx/_build/
 *.dylib
 *.dll
 .pytest_cache/
+.test-cache/
 .ruff_cache/
 .mypy_cache/
 pytest-cache-files-*/

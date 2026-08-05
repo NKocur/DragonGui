@@ -5,7 +5,7 @@ idea is simple: Python describes the application, while Rust owns the hot path:
 windowing, input, layout, rendering, text, data uploads, retained widget state,
 and custom GPU widgets.
 
-The library is currently pre-alpha. It already supports a usable set of native
+Version 1.0.0 is the first stable release. The library supports a broad set of native
 widgets, live updates from Python callbacks and background threads, structured
 inline styles, a CSS styling subset, themes, reactive Python components, GPU
 scatter rendering, and DataFrame-style tables.

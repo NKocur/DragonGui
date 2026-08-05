@@ -1,20 +1,52 @@
 # Third-Party Notices
 
-DragonGUI's own source is licensed under the MIT License. Release artifacts
-must also include license notices for bundled third-party Rust and Python
-dependencies.
+DragonGUI is licensed under the MIT License in `LICENSE`. The notices in this
+file and `THIRD_PARTY_RUST_NOTICES.md` apply only to third-party components
+distributed with DragonGUI.
 
-Before publishing a wheel or source distribution, regenerate and review the
-third-party dependency notice output with an automated license tool such as
-`cargo-about`.
+## Rust dependencies
 
-Recommended release check:
+The complete notice report for the 454 third-party Rust packages used across the
+supported Windows, Linux, and macOS targets is in
+`THIRD_PARTY_RUST_NOTICES.md`. It is generated from `native/Cargo.lock` using
+the checked-in `about.toml` policy and `about.hbs` template:
 
-```powershell
-cargo about generate --manifest-path native/Cargo.toml --workspace > THIRD_PARTY_NOTICES.md
+```text
+cargo about generate --locked --fail --manifest-path native/Cargo.toml about.hbs --output-file THIRD_PARTY_RUST_NOTICES.md
 ```
 
-If the project adds dependencies with file-level copyleft licenses, such as
-MPL-2.0 dependencies used unmodified through Cargo, keep their license notices
-in the release artifact. DragonGUI source files remain MIT unless an
-MPL-licensed source file is vendored or modified directly.
+The report includes package names, exact versions, upstream repositories,
+copyright notices, and full detected license texts. MPL-2.0-covered packages
+are used through Cargo without vendored modifications. Their corresponding
+source is available from the repositories and exact package versions listed
+in that report.
+
+## xterm.js 5.5.0 and FitAddon
+
+DragonGUI distributes minified xterm.js, FitAddon, and xterm.css assets from
+xterm.js 5.5.0 without source modifications.
+
+- Project: https://github.com/xtermjs/xterm.js
+- Corresponding source: https://github.com/xtermjs/xterm.js/tree/5.5.0
+- License: MIT
+
+Copyright (c) 2014 The xterm.js authors. All rights reserved.
+Copyright (c) 2012-2013, Christopher Jeffrey (MIT License)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

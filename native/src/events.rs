@@ -520,17 +520,14 @@ impl WidgetState {
             .focused
             .as_ref()
             .and_then(|id| visible.iter().position(|candidate| candidate == id));
-        for offset in 1..=len {
-            let idx = match (start, reverse) {
-                (Some(i), true) => (i + len - offset) % len,
-                (Some(i), false) => (i + offset) % len,
-                (None, true) => len - offset,
-                (None, false) => offset - 1,
-            };
-            self.focused = Some(visible[idx].clone());
-            self.close_popups();
-            return;
-        }
+        let idx = match (start, reverse) {
+            (Some(i), true) => (i + len - 1) % len,
+            (Some(i), false) => (i + 1) % len,
+            (None, true) => len - 1,
+            (None, false) => 0,
+        };
+        self.focused = Some(visible[idx].clone());
+        self.close_popups();
     }
 
     pub fn text_for(&self, id: &str) -> Option<&str> {

@@ -6,39 +6,39 @@ on:
   pull_request:
     branches: [master]
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # -------------------------------------------------------------------------
-  # Pure Python smoke tests — no native build required.
-  # Runs from the source tree with dev fallback active so no window opens.
-  # -------------------------------------------------------------------------
-  python-tests:
-    name: Python API tests
+  python:
+    name: Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-
-      - name: Install test dependencies
-        run: pip install pytest numpy
-
-      - name: pytest
-        run: python -m pytest tests/ -v
+          python-version: ${{ matrix.python-version }}
+      - name: Install test tools
+        run: python -m pip install pytest numpy ruff
+      - name: Check release metadata
+        run: python tools/check_release.py
+      - name: Lint for correctness errors
+        run: python -m ruff check --no-cache --select E9,F63,F7,F82 python tests tools examples
+      - name: Run Python tests
+        run: python -m pytest tests -v
         env:
           PYTHONPATH: python
           DRAGONGUI_DEV_FALLBACK: "1"
 
-  # -------------------------------------------------------------------------
-  # Rust compile check on all three platforms.
-  # Catches platform-specific winit/wgpu issues early without a full build.
-  # -------------------------------------------------------------------------
-  rust-check:
-    name: cargo check (${{ matrix.os }})
+  rust:
+    name: Rust (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -46,119 +46,46 @@ jobs:
         os: [windows-latest, macos-latest, ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         id: python
         with:
           python-version: "3.12"
-
       - uses: dtolnay/rust-toolchain@stable
-
+        with:
+          components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: native
-
-      - name: cargo check
-        run: cargo check --manifest-path native/Cargo.toml
+      - name: Check formatting
+        if: runner.os == 'Linux'
+        run: cargo fmt --manifest-path native/Cargo.toml --all -- --check
+      - name: Compile
+        run: cargo check --locked --manifest-path native/Cargo.toml
+        env:
+          PYO3_PYTHON: ${{ steps.python.outputs.python-path }}
+      - name: Run Rust tests
+        run: cargo test --locked --manifest-path native/Cargo.toml
+        env:
+          PYO3_PYTHON: ${{ steps.python.outputs.python-path }}
+      - name: Clippy correctness baseline
+        if: runner.os == 'Linux'
+        run: cargo clippy --locked --manifest-path native/Cargo.toml --lib -- -D clippy::correctness -A clippy::approx_constant -A dead-code
         env:
           PYO3_PYTHON: ${{ steps.python.outputs.python-path }}
 
-  # -------------------------------------------------------------------------
-  # Windows: build the native extension, run an import smoke test.
-  # Python pytest is run separately (above) without the native module so that
-  # tests which call app.run() do not block on a live window.
-  # -------------------------------------------------------------------------
-  windows-native:
-    name: Windows native build
-    runs-on: windows-latest
-    needs: [python-tests, rust-check]
+  supply-chain:
+    name: Supply-chain checks
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        id: python
+      - uses: rustsec/audit-check@v2
         with:
-          python-version: "3.12"
-
+          token: ${{ secrets.GITHUB_TOKEN }}
+          working-directory: native
       - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: native
-
-      - name: Install maturin
-        run: pip install maturin
-
-      - name: Build wheel
-        run: python -m maturin build --manifest-path native/Cargo.toml --out dist
-        env:
-          PYO3_PYTHON: ${{ steps.python.outputs.python-path }}
-
-      - name: Install built wheel
-        run: pip install --no-index --find-links dist dragongui
-
-      - name: Import smoke test
-        run: >
-          python -c "import dragongui as dg;
-          info = dg.backend_info();
-          print(info);
-          assert info['native'], f'Expected native=True: {info}'"
-
-  # -------------------------------------------------------------------------
-  # macOS: build the native extension, import smoke, then window smoke.
-  #
-  # The window smoke test uses DRAGONGUI_SMOKE_FRAMES=3, which causes the Rust
-  # event loop to exit after rendering 3 frames rather than waiting for a
-  # manual close. This exercises the winit main-thread path that is the actual
-  # macOS risk called out in the M1 plan.
-  #
-  # GitHub Actions macos-latest runners are Apple Silicon hardware with Metal,
-  # so wgpu GPU initialisation should succeed.
-  # -------------------------------------------------------------------------
-  macos-native:
-    name: macOS native build
-    runs-on: macos-latest
-    needs: [python-tests, rust-check]
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        id: python
-        with:
-          python-version: "3.12"
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: native
-
-      - name: Install maturin
-        run: pip install maturin
-
-      - name: Build wheel
-        run: python -m maturin build --manifest-path native/Cargo.toml --out dist
-        env:
-          PYO3_PYTHON: ${{ steps.python.outputs.python-path }}
-
-      - name: Install built wheel
-        run: pip install --no-index --find-links dist dragongui
-
-      - name: Import smoke test
-        run: >
-          python -c "import dragongui as dg;
-          info = dg.backend_info();
-          print(info);
-          assert info['native'], f'Expected native=True: {info}'"
-
-      - name: Window smoke test (macOS main-thread path)
-        run: >
-          python -c "import dragongui as dg;
-          app = dg.App();
-          win = dg.Window('CI Smoke', width=400, height=300);
-          result = app.run(win);
-          print(result);
-          assert result['status'] == 'ok', f'Expected ok: {result}';
-          assert result['renderer'] == 'wgpu', f'Expected wgpu: {result}'"
-        env:
-          DRAGONGUI_SMOKE_FRAMES: "3"
+      - name: Install cargo-about
+        run: cargo install cargo-about --version 0.9.1 --locked --features cli
+      - name: Verify generated Rust notices
+        run: |
+          cargo about generate --config about.toml --manifest-path native/Cargo.toml about.hbs --output-file /tmp/THIRD_PARTY_RUST_NOTICES.md
+          cmp THIRD_PARTY_RUST_NOTICES.md /tmp/THIRD_PARTY_RUST_NOTICES.md

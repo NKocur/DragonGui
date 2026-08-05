@@ -1,0 +1,25 @@
+# Rust Dependency Notices
+
+This file is generated from `native/Cargo.lock` with:
+
+```text
+cargo about generate --locked --fail --manifest-path native/Cargo.toml about.hbs
+```
+
+The licenses below apply to the listed third-party packages, not to DragonGUI
+itself. DragonGUI is licensed under the MIT License in `LICENSE`.
+
+{{#each licenses}}
+## {{name}}
+
+Used by:
+
+{{#each used_by}}
+- {{crate.name}} {{crate.version}}{{#if crate.repository}} — {{crate.repository}}{{/if}}
+{{/each}}
+
+```text
+{{{text}}}
+```
+
+{{/each}}
