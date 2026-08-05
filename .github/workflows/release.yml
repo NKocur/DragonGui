@@ -50,16 +50,20 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64
+            rust-target: x86_64-unknown-linux-gnu
             artifact: linux-x86_64
             manylinux: "2014"
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            rust-target: x86_64-pc-windows-msvc
             artifact: windows-x86_64
           - os: macos-15-intel
             target: x86_64-apple-darwin
+            rust-target: x86_64-apple-darwin
             artifact: macos-x86_64
           - os: macos-latest
             target: aarch64-apple-darwin
+            rust-target: aarch64-apple-darwin
             artifact: macos-aarch64
     steps:
       - uses: actions/checkout@v5
@@ -68,7 +72,7 @@ jobs:
           python-version: "3.12"
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.rust-target }}
       - uses: PyO3/maturin-action@v1
         if: runner.os == 'Linux'
         with:
