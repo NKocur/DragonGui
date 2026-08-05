@@ -234,9 +234,12 @@ mod tests {
             measured.line_count > 4,
             "regression must exercise more than four wrapped lines: {measured:?}"
         );
+        let unclamped_height = measured.height + 30.0;
+        let viewport_height = 500.0 - theme.spacing * 2.0;
+        let expected_height = unclamped_height.min(viewport_height);
         assert!(
-            (styled.h - (measured.height + 30.0)).abs() <= 1.0,
-            "tooltip surface must use the shaped wrapped height: styled={styled:?} measured={measured:?}"
+            (styled.h - expected_height).abs() <= 1.0,
+            "tooltip surface must use the shaped wrapped height, clamped to the viewport: styled={styled:?} measured={measured:?} expected_height={expected_height}"
         );
         assert!(styled.x >= 0.0 && styled.y >= 0.0);
         assert!(styled.x + styled.w <= 180.0);
