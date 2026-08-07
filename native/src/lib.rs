@@ -162,6 +162,10 @@ fn apply_dialog_options(
 
 #[pymodule]
 fn _dragongui(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add(
+        "ScatterCapacityError",
+        m.py().get_type::<error::ScatterCapacityError>(),
+    )?;
     m.add_class::<commands::NativeCommandSender>()?;
     m.add_function(wrap_pyfunction!(backend_info, m)?)?;
     m.add_function(wrap_pyfunction!(run_app, m)?)?;

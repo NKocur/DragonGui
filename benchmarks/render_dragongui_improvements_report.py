@@ -1,0 +1,47 @@
+"""Render the DragonGUI before/after improvement report."""
+
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+OUT = ROOT / "docs" / "dragongui-improvements.html"
+
+
+HTML = r'''<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DragonGUI Improvement Report</title>
+<style>
+:root{--bg:#071116;--card:#0d2028;--line:#24424c;--text:#e4f0ed;--muted:#9bb4b1;--good:#62d49b;--warn:#f2bd68;--blue:#73b7ff}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 15% 0,#153541,var(--bg) 48%);color:var(--text);font:15px/1.55 system-ui,sans-serif}main{max-width:1180px;margin:auto;padding:54px 24px 80px}h1{font-size:clamp(2.6rem,6vw,5.5rem);line-height:.98;max-width:800px;margin:12px 0 20px;letter-spacing:-.06em}h2{margin:0 0 10px;font-size:1.55rem}h3{margin:0 0 7px}.eyebrow{color:var(--good);font-size:.76rem;letter-spacing:.14em;text-transform:uppercase;font-weight:700}.lede{font-size:1.2rem;color:var(--muted);max-width:800px}.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin-top:24px}.card{background:#0d2028dd;border:1px solid var(--line);border-radius:16px;padding:22px}.wide{grid-column:1/-1}.status{font-size:1.05rem;color:var(--good);font-weight:700}.muted{color:var(--muted)}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{text-align:left;padding:12px 10px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--muted);font-size:.8rem;text-transform:uppercase;letter-spacing:.06em}.good{color:var(--good)}.warn{color:var(--warn)}.metric{font-size:2rem;font-weight:800;color:var(--good);margin:5px 0}.bar{height:14px;background:#162f39;border-radius:9px;margin:10px 0 18px;overflow:hidden}.bar i{display:block;height:100%;border-radius:9px;background:linear-gradient(90deg,var(--blue),var(--good))}.foot{margin-top:35px;color:var(--muted);font-size:.85rem}a{color:var(--blue)}@media(max-width:760px){.grid{grid-template-columns:1fr}.wide{grid-column:auto}main{padding:30px 15px}}
+</style></head><body><main>
+<div class="eyebrow">DragonGUI engineering review · August 2026</div>
+<h1>What actually improved?</h1>
+<p class="lede">This report is a before/after view of DragonGUI work inspired by the XY comparison. It separates delivered capabilities from measurements that are still diagnostic.</p>
+
+<section class="grid">
+<article class="card"><div class="eyebrow">Interaction</div><h2>Cursor-anchored 2D zoom</h2><div class="status">Delivered</div><p class="muted">Before: orthographic zoom changed scale around the plot center, so a far-tail target could leave the viewport. After: the data coordinate beneath the pointer is preserved while zooming.</p><p>Proof: 42 real Windows wheel inputs, sentinel target remained lit, final span 0.004659 of home.</p></article>
+<article class="card"><div class="eyebrow">Scalability</div><h2>Adaptive viewport refinement</h2><div class="status">Delivered</div><p class="muted">Before: large scatter data expanded into a full render representation. After: density/decimated representations are used for overview work, then exact visible rows are rebuilt asynchronously.</p><p>Proof: 1M-point final adaptive representation rendered one exact visible source row with zero viewport-job errors.</p></article>
+<article class="card"><div class="eyebrow">Safety</div><h2>Capacity and representation controls</h2><div class="status">Delivered</div><p class="muted">Before: oversized GPU allocations could escape as native validation failures. After: compact formats, chunk metadata, bounded caches, and observable representation decisions reduce the failure surface.</p><p>Proof: representation telemetry reports source rows, render rows, chunk counts, culling, cache state, and policy reason.</p></article>
+<article class="card"><div class="eyebrow">Verification</div><h2>Correctness-first interaction gates</h2><div class="status">Delivered</div><p class="muted">Before: frame smoothness could be mistaken for a successful interaction. After: every gate checks semantic state, target pixels, queue drain, and identical final captures.</p><p>Proof: mixed OS regression and matched wheel gates pass with stable hashes.</p></article>
+</section>
+
+<section class="card wide" style="margin-top:16px"><div class="eyebrow">Measured result</div><h2>Rendering is fast; validation transport is the remaining drag</h2><table><thead><tr><th>Metric</th><th>Measured result</th><th>Interpretation</th></tr></thead><tbody>
+<tr><td>First correct pixels</td><td class="good">93–116 ms</td><td>Primary interaction responsiveness signal.</td></tr>
+<tr><td>Exact representation</td><td class="good">15.66–263.33 ms</td><td>Asynchronous viewport refinement; timing varies with when the job is observed.</td></tr>
+<tr><td>Screenshot work</td><td class="good">115–161 ms total</td><td>Actual GPU readback work across the stability probe.</td></tr>
+<tr><td>Screenshot-per-sample stability</td><td class="warn">1.34–1.48 s</td><td>Legacy diagnostic path dominated by synchronous readback pacing.</td></tr>
+<tr><td>Frame-generation stability</td><td class="good">340.16 ms</td><td>New XY-inspired probe: completed native frames plus one final pixel confirmation.</td></tr>
+</tbody></table><div class="bar"><i style="width:9%"></i></div><p class="muted">The bar illustrates the relationship between roughly 115 ms first-correct response and roughly 1.4 s serialized validation completion; it is not a universal performance score.</p></section>
+
+<section class="card wide" style="margin-top:16px"><div class="eyebrow">Still remaining</div><h2>What has not improved yet</h2><table><thead><tr><th>Area</th><th>Current state</th><th>Next action</th></tr></thead><tbody>
+<tr><td>Native screenshot path</td><td class="warn">Synchronous readback paces stability samples at roughly 110–120 ms.</td><td>Implement asynchronous/batched GPU readback and hash-only validation.</td></tr>
+<tr><td>Cross-library latency ranking</td><td class="warn">Still directional: native wgpu versus headless SwiftShader.</td><td>Compare primary latency metrics only, with capture stacks disclosed.</td></tr>
+<tr><td>Very large exact datasets</td><td class="warn">Capacity work continues beyond the validated 1M interaction case.</td><td>Finish compact/chunked exact rendering and allocation guards.</td></tr>
+</tbody></table></section>
+
+<p class="foot">Sources: <a href="dragongui-vs-xy-benchmark.md">benchmark notes</a> · <a href="../plans/xy-inspired-scatter-improvement-plan.md">improvement plan</a> · <a href="dragongui-vs-xy-benchmark.html">XY comparison report</a></p>
+</main></body></html>'''
+
+
+if __name__ == "__main__":
+    OUT.write_text(HTML, encoding="utf-8")
+    print(f"Wrote {OUT}")

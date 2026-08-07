@@ -669,6 +669,24 @@ pub struct TextRendererDg {
     prepare_errors: u64,
     overlay_prepare_errors: u64,
     atlas_trims: u64,
+    init_timings: TextRendererInitTimings,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct TextRendererInitTimings {
+    pub(crate) font_system_ms: f64,
+    pub(crate) swash_cache_ms: f64,
+    pub(crate) atlas_viewport_ms: f64,
+    pub(crate) base_renderer_ms: f64,
+    pub(crate) overlay_renderer_ms: f64,
+}
+
+/// CPU-only text state that can be prepared while the GPU adapter and device
+/// are being requested. System font discovery is the expensive part of text
+/// startup and does not depend on wgpu.
+pub(crate) struct PreparedFontSystem {
+    font_system: FontSystem,
+    init_ms: f64,
 }
 
 pub(crate) struct WidgetTextRebuild {
@@ -679,18 +697,49 @@ pub(crate) struct WidgetTextRebuild {
 }
 
 impl TextRendererDg {
+    pub(crate) fn prepare_font_system() -> PreparedFontSystem {
+        let t0 = std::time::Instant::now();
+        let font_system = FontSystem::new();
+        PreparedFontSystem {
+            font_system,
+            init_ms: t0.elapsed().as_secs_f64() * 1000.0,
+        }
+    }
+
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         surface_format: wgpu::TextureFormat,
     ) -> Self {
-        let font_system = FontSystem::new();
+        Self::new_with_prepared_font_system(
+            device,
+            queue,
+            surface_format,
+            Self::prepare_font_system(),
+        )
+    }
+
+    pub(crate) fn new_with_prepared_font_system(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        surface_format: wgpu::TextureFormat,
+        prepared: PreparedFontSystem,
+    ) -> Self {
+        let PreparedFontSystem {
+            font_system,
+            init_ms: font_system_ms,
+        } = prepared;
+        let swash_cache_t0 = std::time::Instant::now();
         let swash_cache = SwashCache::new();
+        let swash_cache_ms = swash_cache_t0.elapsed().as_secs_f64() * 1000.0;
         // Cache is cloned into TextAtlas and used for Viewport bind group;
         // it does not need to be retained after construction.
+        let atlas_viewport_t0 = std::time::Instant::now();
         let cache = Cache::new(device);
         let viewport = Viewport::new(device, &cache);
         let mut atlas = TextAtlas::new(device, queue, &cache, surface_format);
+        let atlas_viewport_ms = atlas_viewport_t0.elapsed().as_secs_f64() * 1000.0;
+        let base_renderer_t0 = std::time::Instant::now();
         let renderer = TextRenderer::new(
             &mut atlas,
             device,
@@ -704,6 +753,8 @@ impl TextRendererDg {
                 bias: wgpu::DepthBiasState::default(),
             }),
         );
+        let base_renderer_ms = base_renderer_t0.elapsed().as_secs_f64() * 1000.0;
+        let overlay_renderer_t0 = std::time::Instant::now();
         let overlay_renderer = TextRenderer::new(
             &mut atlas,
             device,
@@ -716,6 +767,7 @@ impl TextRendererDg {
                 bias: wgpu::DepthBiasState::default(),
             }),
         );
+        let overlay_renderer_ms = overlay_renderer_t0.elapsed().as_secs_f64() * 1000.0;
         Self {
             font_system,
             attempted_font_sources: HashMap::new(),
@@ -738,7 +790,18 @@ impl TextRendererDg {
             prepare_errors: 0,
             overlay_prepare_errors: 0,
             atlas_trims: 0,
+            init_timings: TextRendererInitTimings {
+                font_system_ms,
+                swash_cache_ms,
+                atlas_viewport_ms,
+                base_renderer_ms,
+                overlay_renderer_ms,
+            },
         }
+    }
+
+    pub(crate) fn init_timings(&self) -> TextRendererInitTimings {
+        self.init_timings
     }
 
     /// Update the viewport resolution (call on creation and every resize).

@@ -71,6 +71,8 @@ impl Default for LoadingScreenSpec {
 /// Wire format for scatter point data embedded in `NodeProps` or sent live.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ScatterPayloadFormat {
+    /// Packed little-endian float32 xy pairs, 8 bytes per point.
+    XyF32V0,
     /// Packed little-endian float32 xyz triples, 12 bytes per point.
     #[default]
     XyzF32V0,
@@ -82,6 +84,7 @@ pub enum ScatterPayloadFormat {
 impl ScatterPayloadFormat {
     pub fn from_str(s: &str) -> Self {
         match s.trim() {
+            "xy_f32_v0" => Self::XyF32V0,
             "point_instance_v1" => Self::PointInstanceV1,
             _ => Self::XyzF32V0,
         }
@@ -89,6 +92,7 @@ impl ScatterPayloadFormat {
 
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::XyF32V0 => "xy_f32_v0",
             Self::XyzF32V0 => "xyz_f32_v0",
             Self::PointInstanceV1 => "point_instance_v1",
         }

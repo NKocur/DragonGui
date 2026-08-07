@@ -480,7 +480,9 @@ def run_pyqt6(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def run_dearpygui(args: argparse.Namespace) -> dict[str, Any]:
-    sys.path.insert(0, str(ROOT / "artifacts" / "benchmark-deps"))
+    # Prefer wheels installed in the active benchmark environment; retain the
+    # bundle only as a fallback for optional dependencies.
+    sys.path.append(str(ROOT / "artifacts" / "benchmark-deps"))
     import dearpygui.dearpygui as dpg
 
     if args.workload == "table_model" and args.scale > 5000:

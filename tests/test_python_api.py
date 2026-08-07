@@ -38,6 +38,13 @@ class DemoFrame:
     shape = (1_000_000, 3)
 
 
+def test_scatter_capacity_error_is_public_and_catchable() -> None:
+    assert "ScatterCapacityError" in dg.__all__
+    assert issubclass(dg.ScatterCapacityError, RuntimeError)
+    with pytest.raises(dg.ScatterCapacityError, match="device buffer limit"):
+        raise dg.ScatterCapacityError("device buffer limit")
+
+
 def _decode_hover_meta(meta: str) -> list[str]:
     return meta[1:].split("\0") if meta.startswith("\0") else json.loads(meta)
 
@@ -5289,6 +5296,81 @@ def test_scatter_v0_format_default_without_advanced_options() -> None:
     assert scatter.data_format == "xyz_f32_v0"
 
 
+def test_scatter_rendering_policy_validates_and_serializes_modes() -> None:
+    exact = dg.Scatter3D(
+        DemoFrame(), x="x", y="y", z="z", rendering="EXACT", parent=None
+    )
+    adaptive = dg.ScatterPlot2D(DemoFrame(), rendering="adaptive", parent=None)
+    density = dg.ScatterPlot2D(DemoFrame(), rendering="DENSITY", parent=None)
+    decimated = dg.ScatterPlot2D(DemoFrame(), rendering="DECIMATED", parent=None)
+
+    assert exact.rendering == "exact"
+    assert exact.props()["rendering"] == "exact"
+    assert adaptive.rendering == "adaptive"
+    assert adaptive.props()["rendering"] == "adaptive"
+    assert density.rendering == "density"
+    assert density.props()["rendering"] == "density"
+    assert decimated.rendering == "decimated"
+    assert decimated.props()["rendering"] == "decimated"
+    with pytest.raises(ValueError, match="rendering policy"):
+        dg.Scatter3D(
+            DemoFrame(), x="x", y="y", z="z", rendering="automatic", parent=None
+        )
+    exact.set_rendering("decimated")
+    assert exact.rendering == "decimated"
+
+
+def test_scatter_rendering_policy_routes_to_native_sender() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+
+        def enqueue_set_scatter_rendering_policy(
+            self, widget_id: str, rendering: str
+        ) -> None:
+            self.calls.append((widget_id, rendering))
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+    handle.widget_handle("scatter-policy").enqueue_set_scatter_rendering_policy(
+        "adaptive"
+    )
+
+    assert sender.calls == [("scatter-policy", "adaptive")]
+
+
+def test_scatter_source_retention_validates_serializes_and_updates() -> None:
+    plot = dg.ScatterPlot2D(
+        DemoFrame(), rendering="density", source_retention="NONE", parent=None
+    )
+
+    assert plot.source_retention == "none"
+    assert plot.props()["source_retention"] == "none"
+    plot.set_source_retention("current")
+    assert plot.source_retention == "current"
+    with pytest.raises(ValueError, match="source_retention"):
+        dg.ScatterPlot2D(DemoFrame(), source_retention="latest", parent=None)
+
+
+def test_scatter_source_retention_routes_to_native_sender() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+
+        def enqueue_set_scatter_source_retention(
+            self, widget_id: str, source_retention: str
+        ) -> None:
+            self.calls.append((widget_id, source_retention))
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+    handle.widget_handle("scatter-retention").enqueue_set_scatter_source_retention("none")
+
+    assert sender.calls == [("scatter-retention", "none")]
+
+
 def test_scatter_opacity_triggers_v1_format() -> None:
     scatter = dg.Scatter3D(DemoFrame(), x="x", y="y", z="z", opacity=0.5, id="s", parent=None)
     assert scatter.data_format == "point_instance_v1"
@@ -5744,6 +5826,7 @@ def test_app_run_binds_live_handles_only_for_native_event_loop(monkeypatch) -> N
         assert app_handle is app._handle
         assert button.is_live
         assert button._live_handle.id == button.id
+        seen["startup"] = app_handle._python_debug_snapshot()["startup"]
         return {"status": "ok"}
 
     monkeypatch.setattr(app_module, "native_event_loop_available", lambda: True)
@@ -5753,6 +5836,11 @@ def test_app_run_binds_live_handles_only_for_native_event_loop(monkeypatch) -> N
 
     assert result == {"status": "ok"}
     assert seen["app_handle"] is not None
+    startup = seen["startup"]
+    assert isinstance(startup, dict)
+    assert float(startup["pre_native_total_ms"]) >= 0.0
+    assert float(startup["document_ms"]) >= 0.0
+    assert float(startup["bind_and_queue_resources_ms"]) >= 0.0
     assert app._handle is None
     assert button.is_live is False
 
@@ -8720,6 +8808,46 @@ def test_scatter_enable_rectangle_picking_stores_callback() -> None:
     assert s._on_select is cb
 
 
+def test_scatter_select_rectangle_enqueues_normalized_bounds() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.calls: list[tuple] = []
+
+        def enqueue_select_scatter_rectangle_normalized(
+            self, widget_id: str, rect: list[float]
+        ) -> None:
+            self.calls.append((widget_id, rect))
+
+        def close(self) -> None:
+            pass
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+    scatter = dg.Scatter3D(DemoFrame(), x="x", y="y", z="z", id="s", parent=None)
+    scatter._bind_live(handle.widget_handle(scatter.id))
+
+    scatter.select_rectangle((0.25, 0.20, 0.75, 0.80))
+
+    assert sender.calls == [("s", [0.25, 0.20, 0.75, 0.80])]
+
+
+@pytest.mark.parametrize(
+    "bounds",
+    [(-0.1, 0.0, 1.0, 1.0), (0.0, 0.0, 1.1, 1.0), (0.0, float("nan"), 1.0, 1.0)],
+)
+def test_scatter_select_rectangle_rejects_invalid_normalized_bounds(bounds) -> None:
+    scatter = dg.Scatter3D(DemoFrame(), x="x", y="y", z="z", parent=None)
+    with pytest.raises(ValueError, match="finite normalized values"):
+        scatter.select_rectangle(bounds)
+
+
+def test_scatter_select_rectangle_requires_live_projection() -> None:
+    scatter = dg.Scatter3D(DemoFrame(), x="x", y="y", z="z", parent=None)
+    with pytest.raises(RuntimeError, match="requires a live scatter"):
+        scatter.select_rectangle((0.0, 0.0, 1.0, 1.0))
+
+
 # â”€â”€ Phase 6: Mesh and Statistical Overlays â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_scatter_pack_mesh_payload_roundtrip() -> None:
@@ -8978,7 +9106,7 @@ def test_scatter_plot_2d_serializes_as_flat_scatter() -> None:
     assert props["frame"]["columns"] == ["time", "value", "group"]
 
 
-def test_scatter_plot_2d_payload_uses_zero_z_column() -> None:
+def test_scatter_plot_2d_payload_uses_compact_xy_pairs() -> None:
     np = pytest.importorskip("numpy")
     import struct
 
@@ -8994,8 +9122,391 @@ def test_scatter_plot_2d_payload_uses_zero_z_column() -> None:
     plot = dg.ScatterPlot2D(Frame2D(), x="x", y="y", parent=None)
     payload = plot._build_payload()
     assert payload is not None
-    assert struct.unpack_from("<3f", payload, 0) == pytest.approx((1.0, 3.0, 0.0))
-    assert struct.unpack_from("<3f", payload, 12) == pytest.approx((2.0, 4.0, 0.0))
+    assert plot.data_format == "xy_f32_v0"
+    assert len(payload) == 16
+    assert struct.unpack_from("<2f", payload, 0) == pytest.approx((1.0, 3.0))
+    assert struct.unpack_from("<2f", payload, 8) == pytest.approx((2.0, 4.0))
+
+
+def test_point_store_shares_xy_payload_across_2d_plots() -> None:
+    np = pytest.importorskip("numpy")
+
+    store = dg.PointStore(
+        np.array([1.0, 2.0], dtype=np.float64),
+        np.array([3.0, 4.0], dtype=np.float64),
+    )
+    first = dg.ScatterPlot2D(store, parent=None)
+    second = dg.ScatterPlot2D(store, parent=None)
+
+    assert first.data_format == "xy_f32_v0"
+    assert first._cached_payload is second._cached_payload
+    assert store.source_bytes == 32
+    assert store.render_cache_bytes == 16
+    assert store.stats()["render_cache_entries"] == 1
+
+
+def test_point_store_shares_xyz_payload_and_separates_projection_identity() -> None:
+    np = pytest.importorskip("numpy")
+    store = dg.PointStore(
+        np.array([1.0, 2.0], dtype=np.float32),
+        np.array([3.0, 4.0], dtype=np.float32),
+        z=np.array([5.0, 6.0], dtype=np.float32),
+        scalars=np.array([7.0, 8.0], dtype=np.float32),
+    )
+    first = dg.Scatter3D(store, x="x", y="y", z="z", parent=None)
+    second = dg.Scatter3D(store, x="x", y="y", z="z", parent=None)
+
+    assert first.data_format == "xyz_f32_v0"
+    assert first._cached_payload is second._cached_payload
+    assert len(first._cached_payload) == 24
+    assert store.stats()["render_cache_xyz_entries"] == 1
+    xy_id, _ = store._dragongui_xy_source("x", "y")
+    xyz_id, _ = store._dragongui_xyz_source("x", "y", "z")
+    assert xy_id != xyz_id
+
+    payload = first._cached_payload
+    store.touch("scalars")
+    assert store._dragongui_pack_xyz("x", "y", "z") is payload
+    store.touch("z")
+    assert store._dragongui_pack_xyz("x", "y", "z") is not payload
+
+
+def test_point_store_native_identity_is_stable_and_revisioned() -> None:
+    np = pytest.importorskip("numpy")
+    store = dg.PointStore(np.array([1.0]), np.array([2.0]))
+
+    store_id, revision = store._dragongui_xy_source("x", "y")
+    assert store._dragongui_xy_source("x", "y") == (store_id, revision)
+    assert store_id.startswith(store.stats()["native_store_id"] + ":xy:")
+
+    store.touch("y")
+    assert store._dragongui_xy_source("x", "y") == (store_id, revision + 1)
+
+
+def test_point_store_native_command_falls_back_for_older_sender() -> None:
+    class OldSender:
+        def __init__(self) -> None:
+            self.calls: list[tuple[object, ...]] = []
+
+        def enqueue_set_scatter_points_packed(self, *args: object) -> None:
+            self.calls.append(args)
+
+    handle = AppHandle()
+    old = OldSender()
+    handle._bind_native_sender(old)
+
+    shared = handle.enqueue_set_scatter_store_points_packed(
+        "plot", b"12345678", store_id="store", revision=3
+    )
+
+    assert shared is False
+    assert old.calls[0][0:2] == ("plot", b"12345678")
+
+
+def test_point_store_native_command_uses_store_aware_sender() -> None:
+    class NewSender:
+        def __init__(self) -> None:
+            self.calls: list[tuple[object, ...]] = []
+
+        def enqueue_set_scatter_store_points_packed(self, *args: object) -> None:
+            self.calls.append(args)
+
+    handle = AppHandle()
+    new = NewSender()
+    handle._bind_native_sender(new)
+
+    shared = handle.enqueue_set_scatter_store_points_packed(
+        "plot", b"12345678", store_id="store", revision=3
+    )
+
+    assert shared is True
+    assert new.calls[0][0:4] == ("plot", b"12345678", "store", 3)
+
+
+def test_point_store_native_command_publishes_once_then_references() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.payload_calls: list[tuple[object, ...]] = []
+            self.reference_calls: list[tuple[object, ...]] = []
+
+        def enqueue_set_scatter_store_points_packed(self, *args: object) -> None:
+            self.payload_calls.append(args)
+
+        def enqueue_set_scatter_point_store_reference(self, *args: object) -> None:
+            self.reference_calls.append(args)
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+
+    for widget_id in ("first", "second"):
+        assert handle.enqueue_set_scatter_store_points_packed(
+            widget_id, b"12345678", store_id="store", revision=3
+        )
+
+    assert len(sender.payload_calls) == 1
+    assert sender.payload_calls[0][0:4] == ("first", b"12345678", "store", 3)
+    assert len(sender.reference_calls) == 1
+    assert sender.reference_calls[0][0:3] == ("second", "store", 3)
+
+    handle.enqueue_set_scatter_store_points_packed(
+        "first", b"abcdefgh", store_id="store", revision=4
+    )
+    assert len(sender.payload_calls) == 2
+
+
+def test_point_store_prebind_commands_choose_reference_or_payload_fallback() -> None:
+    class NewSender:
+        def __init__(self) -> None:
+            self.payload_calls: list[tuple[object, ...]] = []
+            self.reference_calls: list[tuple[object, ...]] = []
+
+        def enqueue_set_scatter_store_points_packed(self, *args: object) -> None:
+            self.payload_calls.append(args)
+
+        def enqueue_set_scatter_point_store_reference(self, *args: object) -> None:
+            self.reference_calls.append(args)
+
+    handle = AppHandle()
+    for widget_id in ("first", "second"):
+        handle.enqueue_set_scatter_store_points_packed(
+            widget_id, b"12345678", store_id="store", revision=1
+        )
+    sender = NewSender()
+    handle._bind_native_sender(sender)
+    assert len(sender.payload_calls) == 1
+    assert sender.reference_calls == [
+        ("second", "store", 1, "viridis", "xy_f32_v0", True, False)
+    ]
+
+    class OldSender:
+        def __init__(self) -> None:
+            self.calls: list[tuple[object, ...]] = []
+
+        def enqueue_set_scatter_points_packed(self, *args: object) -> None:
+            self.calls.append(args)
+
+    fallback_handle = AppHandle()
+    for widget_id in ("first", "second"):
+        fallback_handle.enqueue_set_scatter_store_points_packed(
+            widget_id, b"12345678", store_id="store", revision=1
+        )
+    old = OldSender()
+    fallback_handle._bind_native_sender(old)
+    assert len(old.calls) == 2
+    assert [call[0] for call in old.calls] == ["first", "second"]
+
+
+def test_point_store_borrowed_touch_invalidates_only_dependent_xy_payloads() -> None:
+    np = pytest.importorskip("numpy")
+
+    x = np.array([1.0, 2.0], dtype=np.float32)
+    y = np.array([3.0, 4.0], dtype=np.float32)
+    scalars = np.array([5.0, 6.0], dtype=np.float32)
+    store = dg.PointStore(x, y, scalars=scalars, ownership="borrowed")
+    original = store._dragongui_pack_xy("x", "y")
+    source_revision = store.source_revision
+
+    scalars[0] = 8.0
+    store.touch("scalars")
+    assert store.source_revision == source_revision + 1
+    assert store._dragongui_pack_xy("x", "y") is original
+
+    y[0] = 9.0
+    store.touch("y")
+    replacement = store._dragongui_pack_xy("x", "y")
+    assert replacement is not original
+    assert replacement.view("<f4").reshape(-1, 2)[0, 1] == pytest.approx(9.0)
+
+    plot = dg.ScatterPlot2D(store, parent=None)
+    plotted_payload = plot._cached_payload
+    y[1] = 12.0
+    store.touch("y")
+    plot.set_points(store)
+    plot.props()
+    assert plot._cached_payload is not plotted_payload
+    assert plot._cached_payload is store._dragongui_pack_xy("x", "y")
+
+
+def test_point_store_copy_ownership_and_selective_bounds_invalidation() -> None:
+    np = pytest.importorskip("numpy")
+
+    x = np.array([1.0, 2.0], dtype=np.float64)
+    store = dg.PointStore(x, [3.0, 4.0], ownership="copied")
+    original_bounds = store.bounds("x", "y")
+    x[0] = 100.0
+    assert store.bounds("x", "y") == original_bounds
+    assert store["x"][0] == pytest.approx(1.0)
+
+    old_y_revision = store.column_revision("y")
+    store.replace_column("y", [8.0, 9.0], ownership="copied")
+    assert store.column_revision("y") == old_y_revision + 1
+    assert store.bounds("x", "y") == ((1.0, 8.0), (2.0, 9.0))
+    assert list(store.row_ids) == [0, 1]
+
+
+def test_point_store_rejects_noncontiguous_borrowed_and_mismatched_columns() -> None:
+    np = pytest.importorskip("numpy")
+
+    with pytest.raises(ValueError, match="C-contiguous"):
+        dg.PointStore(np.arange(6, dtype=np.float32)[::2], np.arange(3), ownership="borrowed")
+    with pytest.raises(ValueError, match="equal lengths"):
+        dg.PointStore([1.0], [2.0, 3.0], ownership="copied")
+    with pytest.raises(TypeError, match="numeric"):
+        dg.PointStore(["a"], [1.0], ownership="copied")
+
+
+def test_point_store_rect_query_returns_exact_rows_and_reuses_sorted_index() -> None:
+    np = pytest.importorskip("numpy")
+    store = dg.PointStore(
+        np.array([3.0, 1.0, 2.0, np.nan], dtype=np.float32),
+        np.array([3.0, 1.0, 5.0, 2.0], dtype=np.float32),
+    )
+
+    rows = store.query_rect(0.5, 2.5, 0.0, 2.0, strategy="sorted_x")
+    assert rows.tolist() == [1]
+    first_stats = store.stats()
+    assert first_stats["spatial_index_entries"] == 1
+    assert first_stats["spatial_index_bytes"] > 0
+
+    assert store.query_rect(0.0, 4.0, 0.0, 6.0, strategy="sorted_x").tolist() == [0, 1, 2]
+    assert store.stats()["spatial_index_entries"] == 1
+    assert store.stats()["spatial_queries"] == 2
+
+    store.touch("y")
+    assert store.stats()["spatial_index_entries"] == 1
+    store.touch("x")
+    assert store.stats()["spatial_index_entries"] == 0
+
+
+def test_point_store_monotonic_rect_query_needs_no_owned_index() -> None:
+    np = pytest.importorskip("numpy")
+    store = dg.PointStore(
+        np.arange(10, dtype=np.float32),
+        np.arange(10, dtype=np.float32),
+    )
+
+    assert store.query_rect(3.0, 6.0, 4.0, 8.0).tolist() == [4, 5, 6]
+    assert store.stats()["spatial_index_bytes"] == 0
+    assert store.stats()["spatial_candidate_rows"] == 4
+
+
+def test_point_store_rect_query_scan_matches_sorted_index() -> None:
+    np = pytest.importorskip("numpy")
+    rng = np.random.default_rng(42)
+    store = dg.PointStore(
+        rng.uniform(-10.0, 10.0, 10_000).astype(np.float32),
+        rng.uniform(-10.0, 10.0, 10_000).astype(np.float32),
+    )
+
+    indexed = np.sort(store.query_rect(-0.5, 0.5, -1.0, 1.0))
+    scanned = store.query_rect(-0.5, 0.5, -1.0, 1.0, strategy="scan")
+    assert indexed.tolist() == scanned.tolist()
+
+
+def test_point_store_auto_query_does_not_build_random_index() -> None:
+    np = pytest.importorskip("numpy")
+    store = dg.PointStore(
+        np.array([2.0, 0.0, 1.0], dtype=np.float32),
+        np.array([2.0, 0.0, 1.0], dtype=np.float32),
+    )
+
+    assert store.query_rect(0.0, 1.0, 0.0, 1.0).tolist() == [1, 2]
+    assert store.stats()["spatial_index_entries"] == 0
+    built = store.build_spatial_index()
+    assert built["owned_bytes"] > 0
+    assert store.stats()["spatial_index_entries"] == 1
+
+
+def test_point_store_box_query_matches_scan_and_preserves_source_rows() -> None:
+    np = pytest.importorskip("numpy")
+    store = dg.PointStore(
+        np.array([3.0, 1.0, 2.0, np.nan], dtype=np.float32),
+        np.array([3.0, 1.0, 2.0, 1.0], dtype=np.float32),
+        z=np.array([0.0, 5.0, 1.0, 1.0], dtype=np.float32),
+        row_ids=("a", "b", "c", "d"),
+    )
+
+    indexed = store.query_box(0.0, 3.0, 0.0, 2.5, 0.5, 6.0, strategy="sorted_x")
+    scanned = store.query_box(0.0, 3.0, 0.0, 2.5, 0.5, 6.0, strategy="scan")
+    assert indexed.tolist() == [1, 2]
+    assert indexed.tolist() == scanned.tolist()
+    assert [store.row_ids[index] for index in indexed] == ["b", "c"]
+
+
+def test_point_store_box_query_invalidates_only_x_index_dependency() -> None:
+    np = pytest.importorskip("numpy")
+    store = dg.PointStore(
+        np.arange(10, dtype=np.float32),
+        np.arange(10, dtype=np.float32),
+        z=np.arange(10, dtype=np.float32),
+    )
+
+    assert store.query_box(2, 5, 2, 5, 2, 5).tolist() == [2, 3, 4, 5]
+    assert store.stats()["spatial_index_entries"] == 1
+    store.touch("z")
+    assert store.stats()["spatial_index_entries"] == 1
+    store.touch("x")
+    assert store.stats()["spatial_index_entries"] == 0
+
+
+def test_point_store_chunk_bounds_reject_box_and_frustum_ranges() -> None:
+    np = pytest.importorskip("numpy")
+    values = np.arange(8, dtype=np.float32)
+    store = dg.PointStore(values, values, z=values)
+
+    box_ranges = store.query_box_chunks(1.5, 4.5, 1.5, 4.5, 1.5, 4.5, chunk_rows=2)
+    assert box_ranges.tolist() == [[2, 4], [4, 6]]
+
+    planes = [
+        (1.0, 0.0, 0.0, -1.5),
+        (-1.0, 0.0, 0.0, 4.5),
+        (0.0, 1.0, 0.0, -1.5),
+        (0.0, -1.0, 0.0, 4.5),
+        (0.0, 0.0, 1.0, -1.5),
+        (0.0, 0.0, -1.0, 4.5),
+    ]
+    assert store.query_frustum_chunks(planes, chunk_rows=2).tolist() == box_ranges.tolist()
+    stats = store.build_chunk_bounds(chunk_rows=2)
+    assert stats["chunk_count"] == 4
+    assert stats["finite_chunk_count"] == 4
+    assert stats["owned_bytes"] > 0
+
+
+def test_point_store_chunk_bounds_ignore_nonfinite_chunks_and_invalidate_dependencies() -> None:
+    np = pytest.importorskip("numpy")
+    store = dg.PointStore(
+        np.array([np.nan, np.nan, 2.0, 3.0], dtype=np.float32),
+        np.array([0.0, 1.0, 2.0, 3.0], dtype=np.float32),
+        z=np.array([0.0, 1.0, 2.0, 3.0], dtype=np.float32),
+        scalars=np.ones(4, dtype=np.float32),
+    )
+
+    assert store.query_box_chunks(-10, 10, -10, 10, -10, 10, chunk_rows=2).tolist() == [
+        [2, 4]
+    ]
+    assert store.stats()["chunk_bounds_entries"] == 1
+    store.touch("scalars")
+    assert store.stats()["chunk_bounds_entries"] == 1
+    store.touch("z")
+    assert store.stats()["chunk_bounds_entries"] == 0
+
+    with pytest.raises(ValueError, match="shape"):
+        store.query_frustum_chunks([(1.0, 0.0, 0.0)], chunk_rows=2)
+
+
+def test_scatter_plot_2d_styled_payload_keeps_point_instances() -> None:
+    np = pytest.importorskip("numpy")
+
+    frame = {
+        "x": np.array([1.0, 2.0], dtype=np.float32),
+        "y": np.array([3.0, 4.0], dtype=np.float32),
+    }
+    plot = dg.ScatterPlot2D(frame, x="x", y="y", opacity=0.5, parent=None)
+    payload = plot._build_payload()
+    assert payload is not None
+    assert plot.data_format == "point_instance_v1"
+    assert len(payload) == 64
 
 
 def test_scatter_plot_2d_fit_syncs_flat_camera() -> None:
@@ -9723,7 +10234,7 @@ def test_scatterplot2d_startup_keeps_single_2d_fit(monkeypatch) -> None:
     sender = _make_full_startup_sender()
     handle = AppHandle()
     handle._bind_native_sender(sender)
-    monkeypatch.setattr(widgets_module.Scatter3D, "_build_payload", lambda self: b"\x00" * 48)
+    monkeypatch.setattr(widgets_module.ScatterPlot2D, "_build_payload", lambda self: b"\x00" * 32)
 
     plot = dg.ScatterPlot2D(DemoFrame(), x="x", y="y", id="fit2d", parent=None)
     plot._bind_live(handle.widget_handle(plot.id))

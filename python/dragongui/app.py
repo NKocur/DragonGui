@@ -279,6 +279,12 @@ class App:
 
     def run(self, window: Window | ComponentInstance) -> dict[str, Any]:
         """Start the native event loop for a window."""
+        startup_t0 = time.perf_counter()
+        startup_timings: dict[str, Any] = {}
+
+        def record_startup_phase(name: str, started: float) -> None:
+            startup_timings[name] = (time.perf_counter() - started) * 1000.0
+
         component_runtime = window._runtime if isinstance(window, ComponentInstance) else None
         bind_live = native_event_loop_available()
         if bind_live:
@@ -288,6 +294,7 @@ class App:
         if component_runtime is not None and bind_live:
             component_runtime.attach(handle)
         if component_runtime is not None:
+            phase_t0 = time.perf_counter()
             try:
                 window = render_component_window(window)
             except Exception:
@@ -295,9 +302,15 @@ class App:
                     component_runtime.detach()
                     handle._close()
                 raise
+            record_startup_phase("render_component_window_ms", phase_t0)
+        phase_t0 = time.perf_counter()
         click_cbs, change_cbs = _collect_runtime_callbacks(window)
+        record_startup_phase("collect_callbacks_ms", phase_t0)
+        phase_t0 = time.perf_counter()
         widgets = _walk_widget_tree(window)
+        record_startup_phase("walk_widgets_ms", phase_t0)
         if bind_live:
+            phase_t0 = time.perf_counter()
             self._handle = handle
             self._queue_image_resources(handle)
             if component_runtime is not None and component_runtime.app_handle is not handle:
@@ -308,11 +321,21 @@ class App:
             for widget in widgets:
                 widget._queue_startup_resources()
             _set_active_app_handle(handle)
+            record_startup_phase("bind_and_queue_resources_ms", phase_t0)
         try:
             native_click_cbs = {} if component_runtime is not None and bind_live else click_cbs
             native_change_cbs = {} if component_runtime is not None and bind_live else change_cbs
+            phase_t0 = time.perf_counter()
+            startup_document = self.document(
+                window, include_startup_resource_payloads=not bind_live
+            )
+            record_startup_phase("document_ms", phase_t0)
+            startup_timings["pre_native_total_ms"] = (
+                time.perf_counter() - startup_t0
+            ) * 1000.0
+            handle._set_startup_timings(startup_timings)
             result = run_document(
-                self.document(window, include_startup_resource_payloads=not bind_live),
+                startup_document,
                 native_click_cbs,
                 native_change_cbs,
                 app_handle=handle if bind_live else None,

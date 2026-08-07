@@ -18,7 +18,7 @@ struct Uniforms {
     clip_radii: vec4<f32>,
     compact_z_range: vec2<f32>,
     compact_colormap_len: u32,
-    _pad1: u32,
+    point_color_mode: u32,
     compact_colormap: array<vec4<f32>, 9>,
 }
 

@@ -924,6 +924,51 @@ fn write_instance_range<T: Pod>(
     bytes.len() as u64
 }
 
+fn create_primitive_render_pipeline(
+    device: &wgpu::Device,
+    surface_format: wgpu::TextureFormat,
+    pipeline_layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    label: &'static str,
+    vertex_layout: wgpu::VertexBufferLayout<'static>,
+    pipeline_cache: Option<&wgpu::PipelineCache>,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[vertex_layout],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: surface_format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: crate::DEPTH_STENCIL_FORMAT,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::Always),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: pipeline_cache,
+    })
+}
+
 pub struct PrimitivesRenderer {
     simple_pipeline: wgpu::RenderPipeline,
     line_pipeline: wgpu::RenderPipeline,
@@ -968,6 +1013,7 @@ impl PrimitivesRenderer {
         surface_format: wgpu::TextureFormat,
         width: u32,
         height: u32,
+        pipeline_cache: Option<&wgpu::PipelineCache>,
     ) -> Self {
         let complex_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("prim-rect"),
@@ -1002,109 +1048,49 @@ impl PrimitivesRenderer {
             immediate_size: 0,
         });
 
-        let simple_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("prim-simple-rect-pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &simple_shader,
-                entry_point: Some("vs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[simple_rect_instance_layout()],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &simple_shader,
-                entry_point: Some("fs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: crate::DEPTH_STENCIL_FORMAT,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::Always),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
-
-        let line_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("prim-line-segment-pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &line_shader,
-                entry_point: Some("vs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[line_segment_instance_layout()],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &line_shader,
-                entry_point: Some("fs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: crate::DEPTH_STENCIL_FORMAT,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::Always),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
-
-        let complex_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("prim-rect-pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &complex_shader,
-                entry_point: Some("vs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[rect_instance_layout()],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &complex_shader,
-                entry_point: Some("fs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: crate::DEPTH_STENCIL_FORMAT,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::Always),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
+        let (simple_pipeline, line_pipeline, complex_pipeline) = std::thread::scope(|scope| {
+            let simple_task = scope.spawn(|| {
+                create_primitive_render_pipeline(
+                    device,
+                    surface_format,
+                    &pipeline_layout,
+                    &simple_shader,
+                    "prim-simple-rect-pipeline",
+                    simple_rect_instance_layout(),
+                    pipeline_cache,
+                )
+            });
+            let line_task = scope.spawn(|| {
+                create_primitive_render_pipeline(
+                    device,
+                    surface_format,
+                    &pipeline_layout,
+                    &line_shader,
+                    "prim-line-segment-pipeline",
+                    line_segment_instance_layout(),
+                    pipeline_cache,
+                )
+            });
+            let complex_task = scope.spawn(|| {
+                create_primitive_render_pipeline(
+                    device,
+                    surface_format,
+                    &pipeline_layout,
+                    &complex_shader,
+                    "prim-rect-pipeline",
+                    rect_instance_layout(),
+                    pipeline_cache,
+                )
+            });
+            (
+                simple_task
+                    .join()
+                    .expect("simple primitive pipeline panicked"),
+                line_task.join().expect("line primitive pipeline panicked"),
+                complex_task
+                    .join()
+                    .expect("complex primitive pipeline panicked"),
+            )
         });
 
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {

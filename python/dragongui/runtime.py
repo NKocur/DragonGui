@@ -191,6 +191,37 @@ class LiveWidgetHandle:
             bounds_max=bounds_max,
         )
 
+    def enqueue_set_scatter_store_points_packed(
+        self,
+        xyz: bytes,
+        *,
+        store_id: str,
+        revision: int,
+        pack_ms: float | None = None,
+        enqueue_epoch_ms: float | None = None,
+        colormap: str = "viridis",
+        payload_format: str = "xy_f32_v0",
+        coalesce: bool = True,
+        fit: bool = False,
+        bounds_min: tuple[float, float, float] | None = None,
+        bounds_max: tuple[float, float, float] | None = None,
+    ) -> bool:
+        self.ensure_open()
+        return self.app.enqueue_set_scatter_store_points_packed(
+            self.id,
+            xyz,
+            store_id=store_id,
+            revision=revision,
+            pack_ms=pack_ms,
+            enqueue_epoch_ms=enqueue_epoch_ms,
+            colormap=colormap,
+            payload_format=payload_format,
+            coalesce=coalesce,
+            fit=fit,
+            bounds_min=bounds_min,
+            bounds_max=bounds_max,
+        )
+
     def enqueue_set_line_plot_data_packed(
         self,
         series: str,
@@ -519,6 +550,14 @@ class LiveWidgetHandle:
         self.ensure_open()
         self.app.enqueue_set_scatter_lod(self.id, enabled, threshold, factor)
 
+    def enqueue_set_scatter_rendering_policy(self, rendering: str) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_rendering_policy(self.id, rendering)
+
+    def enqueue_set_scatter_source_retention(self, source_retention: str) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_source_retention(self.id, source_retention)
+
     def enqueue_set_scatter_auto_point_size(self, enabled: bool) -> None:
         self.ensure_open()
         self.app.enqueue_set_scatter_auto_point_size(self.id, enabled)
@@ -534,6 +573,10 @@ class LiveWidgetHandle:
     def enqueue_set_scatter_picking_mode(self, mode: str) -> None:
         self.ensure_open()
         self.app.enqueue_set_scatter_picking_mode(self.id, mode)
+
+    def enqueue_select_scatter_rectangle_normalized(self, rect: list[float]) -> None:
+        self.ensure_open()
+        self.app.enqueue_select_scatter_rectangle_normalized(self.id, rect)
 
     def enqueue_set_scatter_hover_tooltip(self, enabled: bool) -> None:
         self.ensure_open()
@@ -642,6 +685,7 @@ class AppHandle:
         self._python_task_queue_growth_warnings = 0
         self._next_python_task_queue_warning = _PYTHON_TASK_QUEUE_WARNING_THRESHOLD
         self._pending_native: deque[tuple[str, tuple[object, ...]]] = deque()
+        self._registered_point_stores: set[tuple[str, int]] = set()
         self._click_callbacks: dict[str, Callable[[], None]] = {}
         self._change_callbacks: dict[str, Callable[[object], None]] = {}
         self._native_sender: Any | None = None
@@ -838,6 +882,101 @@ class AppHandle:
             bounds_min,
             bounds_max,
         )
+
+    def enqueue_set_scatter_store_points_packed(
+        self,
+        widget_id: str,
+        xyz: bytes,
+        *,
+        store_id: str,
+        revision: int,
+        pack_ms: float | None = None,
+        enqueue_epoch_ms: float | None = None,
+        colormap: str = "viridis",
+        payload_format: str = "xy_f32_v0",
+        coalesce: bool = True,
+        fit: bool = False,
+        bounds_min: tuple[float, float, float] | None = None,
+        bounds_max: tuple[float, float, float] | None = None,
+    ) -> bool:
+        method = "enqueue_set_scatter_store_points_packed"
+        reference_method = "enqueue_set_scatter_point_store_reference"
+        key = (str(store_id), int(revision))
+        with self._lock:
+            sender = self._native_sender
+            can_reference = (
+                sender is not None
+                and hasattr(sender, method)
+                and hasattr(sender, reference_method)
+            )
+            already_registered = key in self._registered_point_stores
+        if sender is None and already_registered:
+            self._send_or_queue_native(
+                "_enqueue_set_scatter_point_store_reference_or_payload",
+                widget_id,
+                xyz,
+                key[0],
+                key[1],
+                pack_ms,
+                enqueue_epoch_ms,
+                _scatter_colormap(colormap),
+                payload_format,
+                bool(coalesce),
+                bool(fit),
+                bounds_min,
+                bounds_max,
+            )
+            return True
+        if can_reference and already_registered:
+            self._send_or_queue_native(
+                reference_method,
+                widget_id,
+                key[0],
+                key[1],
+                _scatter_colormap(colormap),
+                payload_format,
+                bool(coalesce),
+                bool(fit),
+            )
+            return True
+        if not self._native_method_available(method):
+            self.enqueue_set_scatter_points_packed(
+                widget_id,
+                xyz,
+                pack_ms=pack_ms,
+                enqueue_epoch_ms=enqueue_epoch_ms,
+                colormap=colormap,
+                payload_format=payload_format,
+                coalesce=coalesce,
+                fit=fit,
+                bounds_min=bounds_min,
+                bounds_max=bounds_max,
+            )
+            return False
+        self._send_or_queue_native(
+            method,
+            widget_id,
+            xyz,
+            str(store_id),
+            int(revision),
+            pack_ms,
+            enqueue_epoch_ms,
+            _scatter_colormap(colormap),
+            payload_format,
+            bool(coalesce),
+            bool(fit),
+            bounds_min,
+            bounds_max,
+        )
+        if can_reference or sender is None:
+            with self._lock:
+                self._registered_point_stores = {
+                    registered
+                    for registered in self._registered_point_stores
+                    if registered[0] != key[0]
+                }
+                self._registered_point_stores.add(key)
+        return True
 
     def enqueue_set_line_plot_data_packed(
         self,
@@ -1201,6 +1340,24 @@ class AppHandle:
     ) -> None:
         self._send_or_queue_native("enqueue_set_scatter_lod", widget_id, enabled, threshold, factor)
 
+    def enqueue_set_scatter_rendering_policy(
+        self, widget_id: str, rendering: str
+    ) -> None:
+        if not self._native_method_available("enqueue_set_scatter_rendering_policy"):
+            return
+        self._send_or_queue_native(
+            "enqueue_set_scatter_rendering_policy", widget_id, str(rendering)
+        )
+
+    def enqueue_set_scatter_source_retention(
+        self, widget_id: str, source_retention: str
+    ) -> None:
+        if not self._native_method_available("enqueue_set_scatter_source_retention"):
+            return
+        self._send_or_queue_native(
+            "enqueue_set_scatter_source_retention", widget_id, str(source_retention)
+        )
+
     def enqueue_set_scatter_auto_point_size(self, widget_id: str, enabled: bool) -> None:
         if not self._native_method_available("enqueue_set_scatter_auto_point_size"):
             return
@@ -1224,6 +1381,13 @@ class AppHandle:
 
     def enqueue_set_scatter_picking_mode(self, widget_id: str, mode: str) -> None:
         self._send_or_queue_native("enqueue_set_scatter_picking_mode", widget_id, mode)
+
+    def enqueue_select_scatter_rectangle_normalized(
+        self, widget_id: str, rect: list[float]
+    ) -> None:
+        self._send_or_queue_native(
+            "enqueue_select_scatter_rectangle_normalized", widget_id, rect
+        )
 
     def enqueue_set_scatter_hover_tooltip(self, widget_id: str, enabled: bool) -> None:
         self._send_or_queue_native("enqueue_set_scatter_hover_tooltip", widget_id, enabled)
@@ -1893,6 +2057,24 @@ class AppHandle:
             pending = list(self._pending_native)
             self._pending_native.clear()
         for method, args in pending:
+            if method == "_enqueue_set_scatter_point_store_reference_or_payload":
+                if (
+                    hasattr(sender, "enqueue_set_scatter_store_points_packed")
+                    and hasattr(sender, "enqueue_set_scatter_point_store_reference")
+                ):
+                    method = "enqueue_set_scatter_point_store_reference"
+                    args = (args[0], args[2], args[3], args[6], args[7], args[8], args[9])
+                elif hasattr(sender, "enqueue_set_scatter_store_points_packed"):
+                    method = "enqueue_set_scatter_store_points_packed"
+                else:
+                    method = "enqueue_set_scatter_points_packed"
+                    args = args[:2] + args[4:]
+            if (
+                method == "enqueue_set_scatter_store_points_packed"
+                and not hasattr(sender, method)
+            ):
+                method = "enqueue_set_scatter_points_packed"
+                args = args[:2] + args[4:]
             send_t0 = time.perf_counter()
             try:
                 getattr(sender, method)(*args)

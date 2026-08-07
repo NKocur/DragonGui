@@ -156,7 +156,13 @@ def run_dragongui(args: argparse.Namespace) -> dict[str, Any]:
     import dragongui as dg
     import_ms = (time.perf_counter() - started) * 1000.0
 
-    os.environ["DRAGONGUI_SMOKE_FRAMES"] = str(args.frames)
+    # The producer starts only after application readiness, while a fast native
+    # renderer can otherwise exhaust the requested display-frame cap before a
+    # 60 Hz mutation sequence has been submitted. Keep the app alive long
+    # enough for the scheduled operation window; reported `frames_requested`
+    # remains the requested measurement window.
+    smoke_frames = args.frames + (args.updates * 3 + 240 if args.updates else 0)
+    os.environ["DRAGONGUI_SMOKE_FRAMES"] = str(smoke_frames)
     started = time.perf_counter()
     app = dg.App(loading_screen=False)
     window = dg.Window("GUI framework benchmark", width=1000, height=720)
@@ -403,7 +409,9 @@ def run_pyqt6(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def run_dearpygui(args: argparse.Namespace) -> dict[str, Any]:
-    sys.path.insert(0, str(ROOT / "artifacts" / "benchmark-deps"))
+    # Prefer wheels installed in the active benchmark environment; retain the
+    # bundle only as a fallback for optional dependencies.
+    sys.path.append(str(ROOT / "artifacts" / "benchmark-deps"))
     started = time.perf_counter()
     import dearpygui.dearpygui as dpg
     import_ms = (time.perf_counter() - started) * 1000.0

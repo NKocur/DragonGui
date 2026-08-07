@@ -105,6 +105,26 @@ pub enum Command {
         /// When true, older pending point updates for this scatter are dropped.
         coalesce: bool,
     },
+    SetScatterStorePointsPacked {
+        id: String,
+        xyz: Vec<u8>,
+        store_id: String,
+        revision: u64,
+        telemetry: Option<ScatterTelemetry>,
+        colormap: String,
+        payload_format: ScatterPayloadFormat,
+        fit: bool,
+        coalesce: bool,
+    },
+    SetScatterPointStoreReference {
+        id: String,
+        store_id: String,
+        revision: u64,
+        colormap: String,
+        payload_format: ScatterPayloadFormat,
+        fit: bool,
+        coalesce: bool,
+    },
     SetLinePlotDataPacked {
         id: String,
         series: String,
@@ -467,6 +487,14 @@ pub enum Command {
         threshold: u32,
         factor: u32,
     },
+    SetScatterRenderingPolicy {
+        id: String,
+        requested: String,
+    },
+    SetScatterSourceRetention {
+        id: String,
+        requested: String,
+    },
     SetScatterAutoPointSize {
         id: String,
         enabled: bool,
@@ -484,6 +512,11 @@ pub enum Command {
         id: String,
         /// "point" | "rectangle" | "lasso" | "none"
         mode: String,
+    },
+    SelectScatterRectangleNormalized {
+        id: String,
+        /// Viewport-normalized [x0, y0, x1, y1], each component in 0..=1.
+        rect: [f32; 4],
     },
     SetScatterHoverTooltip {
         id: String,
@@ -691,6 +724,38 @@ struct CommandQueueInner {
 }
 
 impl CommandQueueInner {
+    fn coalesce_scatter_store_key(
+        &mut self,
+        key: &CommandCoalescingKey,
+        incoming: Command,
+    ) -> Result<(), Command> {
+        let Some(index) = self.latest.get(key).copied() else {
+            return Err(incoming);
+        };
+        if !incoming.has_same_scatter_store_source(
+            &self.nodes[index]
+                .as_ref()
+                .expect("command queue key must reference a live node")
+                .command,
+        ) {
+            return Err(incoming);
+        }
+        let mut node = self.nodes[index]
+            .take()
+            .expect("command queue key must reference a live node");
+        let mut previous = node.command;
+        let mut winner = incoming;
+        if previous.has_newer_scatter_store_revision_than(&winner) {
+            previous.merge_replaced(&winner);
+            winner = previous;
+        } else {
+            winner.merge_replaced(&previous);
+        }
+        node.command = winner;
+        self.nodes[index] = Some(node);
+        Ok(())
+    }
+
     fn unlink(&mut self, index: usize) -> Command {
         let node = self.nodes[index]
             .take()
@@ -907,6 +972,33 @@ impl CommandQueueStats {
 }
 
 impl Command {
+    pub(crate) fn has_same_scatter_store_source(&self, retained: &Command) -> bool {
+        self.scatter_store_source()
+            .zip(retained.scatter_store_source())
+            .is_some_and(|((incoming_id, _), (retained_id, _))| incoming_id == retained_id)
+    }
+
+    fn scatter_store_source(&self) -> Option<(&str, u64)> {
+        match self {
+            Command::SetScatterStorePointsPacked {
+                store_id, revision, ..
+            }
+            | Command::SetScatterPointStoreReference {
+                store_id, revision, ..
+            } => Some((store_id.as_str(), *revision)),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn has_newer_scatter_store_revision_than(&self, retained: &Command) -> bool {
+        match (self.scatter_store_source(), retained.scatter_store_source()) {
+            (Some((incoming_id, incoming_revision)), Some((retained_id, retained_revision))) => {
+                incoming_id == retained_id && incoming_revision > retained_revision
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn coalescing_key(&self) -> Option<CommandCoalescingKey> {
         match self {
             Command::SetProp { id, prop, .. } => Some(CommandCoalescingKey::property(id, prop)),
@@ -921,6 +1013,12 @@ impl Command {
                 Some(CommandCoalescingKey::ClearStylesheets(*origin))
             }
             Command::SetScatterPointsPacked {
+                id, coalesce: true, ..
+            } => Some(CommandCoalescingKey::ScatterPoints(id.clone())),
+            Command::SetScatterStorePointsPacked {
+                id, coalesce: true, ..
+            } => Some(CommandCoalescingKey::ScatterPoints(id.clone())),
+            Command::SetScatterPointStoreReference {
                 id, coalesce: true, ..
             } => Some(CommandCoalescingKey::ScatterPoints(id.clone())),
             Command::SetLinePlotDataPacked {
@@ -965,6 +1063,18 @@ impl Command {
                 },
             )
             | (
+                Command::SetScatterStorePointsPacked { fit, .. },
+                Command::SetScatterStorePointsPacked {
+                    fit: previous_fit, ..
+                },
+            )
+            | (
+                Command::SetScatterPointStoreReference { fit, .. },
+                Command::SetScatterPointStoreReference {
+                    fit: previous_fit, ..
+                },
+            )
+            | (
                 Command::SetLinePlotDataPacked { fit, .. },
                 Command::SetLinePlotDataPacked {
                     fit: previous_fit, ..
@@ -986,6 +1096,12 @@ impl Command {
             | Command::RemoveStylesheet { .. }
             | Command::ClearStylesheets { .. } => Some(CommandCoalescingFamily::Stylesheet),
             Command::SetScatterPointsPacked { coalesce: true, .. } => {
+                Some(CommandCoalescingFamily::ScatterPoints)
+            }
+            Command::SetScatterStorePointsPacked { coalesce: true, .. } => {
+                Some(CommandCoalescingFamily::ScatterPoints)
+            }
+            Command::SetScatterPointStoreReference { coalesce: true, .. } => {
                 Some(CommandCoalescingFamily::ScatterPoints)
             }
             Command::SetLinePlotDataPacked { coalesce: true, .. } => {
@@ -1074,7 +1190,11 @@ impl CommandQueue {
             | Command::SetStylesheet { .. }
             | Command::RemoveStylesheet { .. }
             | Command::ClearStylesheets { .. } => QueueReplacementFamily::ThemeStylesheet,
-            Command::SetScatterPointsPacked { .. } => QueueReplacementFamily::ScatterPoints,
+            Command::SetScatterPointsPacked { .. }
+            | Command::SetScatterStorePointsPacked { .. }
+            | Command::SetScatterPointStoreReference { .. } => {
+                QueueReplacementFamily::ScatterPoints
+            }
             Command::SetLinePlotDataPacked { .. } => QueueReplacementFamily::LinePlot,
             Command::SetHistogramData { .. } => QueueReplacementFamily::Histogram,
             Command::SetScatterScalarBar { .. } => QueueReplacementFamily::ScatterScalarBar,
@@ -1101,8 +1221,27 @@ impl CommandQueue {
                 }
             }
         } else if let Some(key) = command.coalescing_key() {
-            if let Some(previous) = inner.remove_key(&key) {
-                command.merge_replaced(&previous);
+            match inner.coalesce_scatter_store_key(&key, command) {
+                Ok(()) => {
+                    let depth = inner.len;
+                    inner.stats.record_barrier(barrier);
+                    inner.stats.record_push(
+                        push_t0.elapsed().as_secs_f64() * 1000.0,
+                        depth,
+                        1,
+                        replacement_family,
+                    );
+                    return Ok(());
+                }
+                Err(returned) => command = returned,
+            }
+            if let Some(mut previous) = inner.remove_key(&key) {
+                if previous.has_newer_scatter_store_revision_than(&command) {
+                    previous.merge_replaced(&command);
+                    command = previous;
+                } else {
+                    command.merge_replaced(&previous);
+                }
                 replacements = 1;
             }
         }
@@ -1556,6 +1695,7 @@ impl NativeCommandSender {
         let xyz = byte_buffer_from_py(xyz, "scatter point payload")?;
         let fmt = ScatterPayloadFormat::from_str(payload_format.as_deref().unwrap_or("xyz_f32_v0"));
         let bytes_per_point = match fmt {
+            ScatterPayloadFormat::XyF32V0 => 8,
             ScatterPayloadFormat::PointInstanceV1 => 32,
             ScatterPayloadFormat::XyzF32V0 => 12,
         };
@@ -1591,6 +1731,89 @@ impl NativeCommandSender {
             telemetry,
             colormap: normalize_colormap(colormap),
             payload_format: fmt,
+            fit,
+            coalesce: coalesce.unwrap_or(true),
+        })
+    }
+
+    #[pyo3(signature = (id, xyz, store_id, revision, pack_ms=None, enqueue_epoch_ms=None, colormap=None, payload_format=None, coalesce=None, fit=false, bounds_min=None, bounds_max=None))]
+    fn enqueue_set_scatter_store_points_packed(
+        &self,
+        id: String,
+        xyz: &Bound<'_, PyAny>,
+        store_id: String,
+        revision: u64,
+        pack_ms: Option<f64>,
+        enqueue_epoch_ms: Option<f64>,
+        colormap: Option<String>,
+        payload_format: Option<String>,
+        coalesce: Option<bool>,
+        fit: bool,
+        bounds_min: Option<(f32, f32, f32)>,
+        bounds_max: Option<(f32, f32, f32)>,
+    ) -> PyResult<()> {
+        if store_id.is_empty() {
+            return Err(PyValueError::new_err("PointStore id must not be empty"));
+        }
+        let xyz = byte_buffer_from_py(xyz, "scatter PointStore payload")?;
+        let fmt = ScatterPayloadFormat::from_str(payload_format.as_deref().unwrap_or("xy_f32_v0"));
+        let bytes_per_point = match fmt {
+            ScatterPayloadFormat::XyF32V0 => 8,
+            ScatterPayloadFormat::PointInstanceV1 => 32,
+            ScatterPayloadFormat::XyzF32V0 => 12,
+        };
+        let bounds = match (bounds_min, bounds_max) {
+            (Some(min), Some(max))
+                if [min.0, min.1, min.2, max.0, max.1, max.2]
+                    .iter()
+                    .all(|value| value.is_finite()) =>
+            {
+                Some(([min.0, min.1, min.2], [max.0, max.1, max.2]))
+            }
+            _ => None,
+        };
+        let telemetry = Some(ScatterTelemetry {
+            pack_ms: pack_ms.unwrap_or(0.0).max(0.0),
+            enqueue_epoch_ms: enqueue_epoch_ms.unwrap_or_else(now_epoch_ms),
+            point_count: xyz.len() / bytes_per_point,
+            payload_bytes: xyz.len(),
+            bounds,
+        });
+        self.enqueue(Command::SetScatterStorePointsPacked {
+            id,
+            xyz,
+            store_id,
+            revision,
+            telemetry,
+            colormap: normalize_colormap(colormap),
+            payload_format: fmt,
+            fit,
+            coalesce: coalesce.unwrap_or(true),
+        })
+    }
+
+    #[pyo3(signature = (id, store_id, revision, colormap=None, payload_format=None, coalesce=None, fit=false))]
+    fn enqueue_set_scatter_point_store_reference(
+        &self,
+        id: String,
+        store_id: String,
+        revision: u64,
+        colormap: Option<String>,
+        payload_format: Option<String>,
+        coalesce: Option<bool>,
+        fit: bool,
+    ) -> PyResult<()> {
+        if store_id.is_empty() {
+            return Err(PyValueError::new_err("PointStore id must not be empty"));
+        }
+        self.enqueue(Command::SetScatterPointStoreReference {
+            id,
+            store_id,
+            revision,
+            colormap: normalize_colormap(colormap),
+            payload_format: ScatterPayloadFormat::from_str(
+                payload_format.as_deref().unwrap_or("xy_f32_v0"),
+            ),
             fit,
             coalesce: coalesce.unwrap_or(true),
         })
@@ -2278,6 +2501,35 @@ impl NativeCommandSender {
         })
     }
 
+    #[pyo3(signature = (id, rendering))]
+    fn enqueue_set_scatter_rendering_policy(&self, id: String, rendering: String) -> PyResult<()> {
+        let requested = rendering.trim().to_ascii_lowercase();
+        if !matches!(
+            requested.as_str(),
+            "exact" | "decimated" | "density" | "adaptive"
+        ) {
+            return Err(PyValueError::new_err(format!(
+                "unknown scatter rendering policy {rendering:?}; expected exact, decimated, density, or adaptive"
+            )));
+        }
+        self.enqueue(Command::SetScatterRenderingPolicy { id, requested })
+    }
+
+    #[pyo3(signature = (id, source_retention))]
+    fn enqueue_set_scatter_source_retention(
+        &self,
+        id: String,
+        source_retention: String,
+    ) -> PyResult<()> {
+        let requested = source_retention.trim().to_ascii_lowercase();
+        if !matches!(requested.as_str(), "current" | "none") {
+            return Err(PyValueError::new_err(format!(
+                "unknown scatter source retention {source_retention:?}; expected current or none"
+            )));
+        }
+        self.enqueue(Command::SetScatterSourceRetention { id, requested })
+    }
+
     #[pyo3(signature = (id, enabled))]
     fn enqueue_set_scatter_auto_point_size(&self, id: String, enabled: bool) -> PyResult<()> {
         self.enqueue(Command::SetScatterAutoPointSize { id, enabled })
@@ -2305,6 +2557,23 @@ impl NativeCommandSender {
     #[pyo3(signature = (id, mode))]
     fn enqueue_set_scatter_picking_mode(&self, id: String, mode: String) -> PyResult<()> {
         self.enqueue(Command::SetScatterPickingMode { id, mode })
+    }
+
+    #[pyo3(signature = (id, rect))]
+    fn enqueue_select_scatter_rectangle_normalized(
+        &self,
+        id: String,
+        rect: [f32; 4],
+    ) -> PyResult<()> {
+        if !rect
+            .iter()
+            .all(|value| value.is_finite() && (0.0..=1.0).contains(value))
+        {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "normalized scatter selection coordinates must be finite values in 0..=1",
+            ));
+        }
+        self.enqueue(Command::SelectScatterRectangleNormalized { id, rect })
     }
 
     #[pyo3(signature = (id, enabled))]
@@ -3809,6 +4078,36 @@ mod tests {
                 coalesce: true,
             }]
         );
+    }
+
+    #[test]
+    fn queue_keeps_highest_pending_revision_for_same_scatter_store() {
+        let queue = CommandQueue::default();
+        for (revision, fit) in [(9_u64, false), (1, true)] {
+            queue
+                .push(Command::SetScatterStorePointsPacked {
+                    id: "scatter".to_string(),
+                    xyz: vec![revision as u8; 8],
+                    store_id: "store:xy".to_string(),
+                    revision,
+                    telemetry: None,
+                    colormap: "viridis".to_string(),
+                    payload_format: ScatterPayloadFormat::XyF32V0,
+                    fit,
+                    coalesce: true,
+                })
+                .unwrap();
+        }
+
+        assert!(matches!(
+            queue.drain().as_slice(),
+            [Command::SetScatterStorePointsPacked {
+                revision: 9,
+                xyz,
+                fit: true,
+                ..
+            }] if xyz == &vec![9; 8]
+        ));
     }
 
     #[test]

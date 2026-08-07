@@ -1,6 +1,14 @@
 """Python API for DragonGUI."""
 
 from ._backend import BackendUnavailableError, backend_info, native_backend_available
+
+try:
+    from ._dragongui import ScatterCapacityError
+except ImportError:
+    class ScatterCapacityError(RuntimeError):
+        """An exact scatter representation exceeds a GPU buffer limit."""
+
+
 from .agent_messages import (
     AgentEnvelopeParseEvent,
     AgentEnvelopeParser,
@@ -30,6 +38,7 @@ from .icons import (
 )
 from .manual import HelpSection, help
 from .notifications import toast
+from .point_store import PointStore, PointStoreOwnership
 from .node_graph import (
     NodeGraph,
     NodeGraphActionTarget,
@@ -198,6 +207,7 @@ __all__ = [
     "AgentSessionLogEntry",
     "AgentSessionRecord",
     "BackendUnavailableError",
+    "ScatterCapacityError",
     "ComponentCtx",
     "ComponentInstance",
     "FileDialog",
@@ -295,6 +305,8 @@ __all__ = [
     "Panel",
     "PieChart",
     "ProgressBar",
+    "PointStore",
+    "PointStoreOwnership",
     "Property",
     "PropertyChange",
     "PropertyGrid",

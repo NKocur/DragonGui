@@ -77,6 +77,9 @@ def _pack_xyz_bytes(frame: Any, x_col: str, y_col: str, z_col: str) -> object | 
     attributes (e.g. mock frames used in tests).  NumPy is required for
     efficient serialization; without it this returns None.
     """
+    shared_packer = getattr(frame, "_dragongui_pack_xyz", None)
+    if callable(shared_packer):
+        return shared_packer(x_col, y_col, z_col)
     try:
         import numpy as np
 
@@ -170,6 +173,9 @@ class _Scatter2DFrame:
 
 def _pack_xy_bytes(frame: Any, x_col: str | None, y_col: str) -> object | None:
     """Serialize xy columns as packed float32 little-endian pairs."""
+    shared_packer = getattr(frame, "_dragongui_pack_xy", None)
+    if callable(shared_packer):
+        return shared_packer(x_col, y_col)
     try:
         import numpy as np
 
@@ -424,6 +430,9 @@ def _xyz_bounds(
     y_col: str,
     z_col: str,
 ) -> tuple[tuple[float, float, float], tuple[float, float, float]] | None:
+    shared_bounds = getattr(frame, "_dragongui_xyz_bounds", None)
+    if callable(shared_bounds):
+        return shared_bounds(x_col, y_col, z_col)
     try:
         import numpy as np
 
@@ -466,6 +475,34 @@ def _scatter_colormap(value: str) -> str:
         allowed = ", ".join(sorted(_SCATTER_COLORMAPS))
         raise ValueError(f"unknown Scatter3D colormap {value!r}; expected one of: {allowed}")
     return colormap
+
+
+_SCATTER_RENDERING_POLICIES = {"exact", "decimated", "density", "adaptive"}
+_SCATTER_SOURCE_RETENTION_POLICIES = {"current", "none"}
+
+
+def _scatter_rendering_policy(value: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("scatter rendering must be a non-empty string")
+    rendering = value.strip().lower()
+    if rendering not in _SCATTER_RENDERING_POLICIES:
+        allowed = ", ".join(sorted(_SCATTER_RENDERING_POLICIES))
+        raise ValueError(
+            f"unknown scatter rendering policy {value!r}; expected one of: {allowed}"
+        )
+    return rendering
+
+
+def _scatter_source_retention(value: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("scatter source_retention must be a non-empty string")
+    retention = value.strip().lower()
+    if retention not in _SCATTER_SOURCE_RETENTION_POLICIES:
+        allowed = ", ".join(sorted(_SCATTER_SOURCE_RETENTION_POLICIES))
+        raise ValueError(
+            f"unknown scatter source_retention {value!r}; expected one of: {allowed}"
+        )
+    return retention
 
 
 def _format_number(value: float) -> str:
@@ -10039,6 +10076,8 @@ class Scatter3D(Widget):
         orientation_axes: bool = False,
         hover: "str | list[str] | None" = None,
         on_hover: "ScatterPickCallback | None" = None,
+        rendering: str = "exact",
+        source_retention: str = "current",
         lod: bool = False,
         lod_threshold: int = 200_000,
         lod_factor: int = 8,
@@ -10108,6 +10147,8 @@ class Scatter3D(Widget):
         self._scalar_bar_colormap: str = str(scalar_bar_colormap)
         self._scalar_bar_title: str | None = scalar_bar_title
         self._orientation_axes_visible: bool = bool(orientation_axes)
+        self.rendering: str = _scatter_rendering_policy(rendering)
+        self.source_retention: str = _scatter_source_retention(source_retention)
         # Phase 5 — LOD and picking mode (not startup props; always set live)
         self._lod_enabled: bool = bool(lod)
         self._lod_threshold: int = max(0, int(lod_threshold))
@@ -10144,7 +10185,7 @@ class Scatter3D(Widget):
         self.data_format = (
             "point_instance_v1"
             if _scatter_needs_v1(color, colors, scalars, point_sizes, opacity, nan_color, clim, log_scale)
-            else "xyz_f32_v0"
+            else self._compact_payload_format()
         )
         self._refresh_cached_payload()
         if scalar_bar_vmin is not None or scalar_bar_vmax is not None:
@@ -10176,6 +10217,9 @@ class Scatter3D(Widget):
                 nan_color=self.nan_color,
             )
         return _pack_xyz_bytes(self.frame, self.x, self.y, self.z)
+
+    def _compact_payload_format(self) -> str:
+        return "xyz_f32_v0"
 
     def _refresh_cached_payload(self) -> None:
         buf = self._build_payload()
@@ -10325,7 +10369,7 @@ class Scatter3D(Widget):
 
     @staticmethod
     def _payload_point_count(payload: bytes, payload_format: str) -> int:
-        bytes_per_point = 32 if payload_format == "point_instance_v1" else 12
+        bytes_per_point = {"point_instance_v1": 32, "xyz_f32_v0": 12, "xy_f32_v0": 8}.get(payload_format, 0)
         return len(payload) // bytes_per_point if bytes_per_point else 0
 
     @classmethod
@@ -10561,7 +10605,7 @@ class Scatter3D(Widget):
         self.data_format = (
             "point_instance_v1"
             if _scatter_needs_v1(self.color, self.colors, self.scalars, self.point_sizes, self.opacity, self.nan_color, self.clim, self.log_scale)
-            else "xyz_f32_v0"
+            else self._compact_payload_format()
         )
         self.frame_summary = summarize_frame(frame)
         # Clear point-layer metadata (DragonSci parity: set_points replaces the point scene).
@@ -10586,14 +10630,7 @@ class Scatter3D(Widget):
                 )
             self._cached_payload = payload
             self._compute_auto_color_meta()
-            handle.enqueue_set_scatter_points_packed(
-                payload,
-                pack_ms=pack_ms,
-                enqueue_epoch_ms=time.time() * 1000.0,
-                colormap=self.colormap,
-                payload_format=self.data_format,
-                fit=fit,
-            )
+            self._enqueue_primary_points(handle, payload, pack_ms=pack_ms, fit=fit)
             handle.enqueue_set_scatter_tooltip_axis_labels(self.x, self.y, self.z)
             self._enqueue_primary_hover_metadata(handle)
             if self._legend_visible:
@@ -10640,13 +10677,7 @@ class Scatter3D(Widget):
             self._cached_payload = payload
             self._payload_token = zlib.crc32(payload)
             self._compute_auto_color_meta()
-            handle.enqueue_set_scatter_points_packed(
-                payload,
-                pack_ms=pack_ms,
-                enqueue_epoch_ms=time.time() * 1000.0,
-                colormap=self.colormap,
-                payload_format=self.data_format,
-            )
+            self._enqueue_primary_points(handle, payload, pack_ms=pack_ms)
             # Native clears primary_hover_meta on SetScatterPointsPacked; re-send it.
             self._enqueue_primary_hover_metadata(handle)
             if self._scalar_bar_visible:
@@ -10677,6 +10708,8 @@ class Scatter3D(Widget):
             "z": self.z,
             "colormap": self.colormap,
             "data_format": self.data_format,
+            "rendering": self.rendering,
+            "source_retention": self.source_retention,
             "events": ["change"] if self.on_pick is not None else [],
             # Compact identity for diff — never sent to native directly.
             "_payload_token": self._payload_token,
@@ -10728,6 +10761,18 @@ class Scatter3D(Widget):
         self._grid_visible = bool(visible)
         if (handle := self._live()) is not None:
             handle.enqueue_set_scatter_grid_visible(self._grid_visible)
+
+    def set_rendering(self, rendering: str) -> None:
+        """Select exact, decimated, density, or adaptive scatter rendering."""
+        self.rendering = _scatter_rendering_policy(rendering)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_scatter_rendering_policy(self.rendering)
+
+    def set_source_retention(self, source_retention: str) -> None:
+        """Retain the current exact source, or release it after bounded rendering."""
+        self.source_retention = _scatter_source_retention(source_retention)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_scatter_source_retention(self.source_retention)
 
     def show_grid_planes(self, major: bool = True, minor: bool = False) -> None:
         """Enable or disable filled grid planes behind the scatter.
@@ -11564,6 +11609,37 @@ class Scatter3D(Widget):
         if (wh := self._live()) is not None:
             wh.enqueue_set_scatter_picking_mode("lasso")
 
+    def select_rectangle(self, bounds: tuple[float, float, float, float]) -> None:
+        """Select source rows inside a normalized viewport rectangle.
+
+        ``bounds`` is ``(x0, y0, x1, y1)`` in viewport coordinates where
+        ``(0, 0)`` is the top-left and ``(1, 1)`` is the bottom-right. The
+        result is delivered asynchronously through the normal selection path,
+        updating ``selected``, ``selected_indices``, and
+        ``selected_index_values`` before invoking the rectangle/lasso
+        ``on_select`` callback.
+
+        Selection tests authoritative source rows even when density or
+        decimated rendering is active. The scatter must be live because the
+        current camera and viewport determine projection.
+        """
+        try:
+            values = tuple(float(value) for value in bounds)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("select_rectangle bounds must contain four numbers") from exc
+        if len(values) != 4:
+            raise ValueError("select_rectangle bounds must contain four numbers")
+        import math
+
+        if not all(math.isfinite(value) and 0.0 <= value <= 1.0 for value in values):
+            raise ValueError(
+                "select_rectangle bounds must be finite normalized values in 0..=1"
+            )
+        handle = self._live()
+        if handle is None:
+            raise RuntimeError("select_rectangle requires a live scatter")
+        handle.enqueue_select_scatter_rectangle_normalized(list(values))
+
     def disable_picking(self) -> None:
         """Disable all picking and selection interaction."""
         self._picking_mode = "none"
@@ -11791,7 +11867,16 @@ class Scatter3D(Widget):
     def _extract_row_labels(frame: Any) -> "list | None":
         """Return non-trivial dataframe index labels, or None for positional/unknown frames."""
         try:
-            index = list(frame.index)
+            raw_index = frame.index
+            if isinstance(raw_index, range) and raw_index == range(len(raw_index)):
+                return None
+            if (
+                getattr(raw_index, "start", None) == 0
+                and getattr(raw_index, "step", None) == 1
+                and getattr(raw_index, "stop", None) == len(raw_index)
+            ):
+                return None
+            index = list(raw_index)
             if index == list(range(len(index))):
                 return None  # trivial 0-based integer index
             return [str(i) for i in index]
@@ -12084,6 +12169,11 @@ class Scatter3D(Widget):
             self._pending_scene_ops.append(("clear_meshes", ()))
 
     def reset_camera(self) -> None:
+        """Reset the camera.
+
+        ``ScatterPlot2D`` refits current full data bounds in orthographic XY.
+        ``Scatter3D`` restores its saved/default camera state.
+        """
         if (handle := self._live()) is not None:
             handle.enqueue_reset_scatter_camera()
 
@@ -12309,6 +12399,42 @@ class Scatter3D(Widget):
     def _startup_fit_primary_points(self) -> bool:
         return True
 
+    def _enqueue_primary_points(
+        self,
+        handle: Any,
+        payload: bytes,
+        *,
+        pack_ms: float,
+        coalesce: bool = True,
+        fit: bool = False,
+    ) -> bool:
+        source = None
+        source_args: tuple[Any, ...] = ()
+        if self.data_format == "xy_f32_v0":
+            source = getattr(self.frame, "_dragongui_xy_source", None)
+            source_args = (self.x, self.y)
+        elif self.data_format == "xyz_f32_v0":
+            source = getattr(self.frame, "_dragongui_xyz_source", None)
+            source_args = (self.x, self.y, self.z)
+        common = {
+            "pack_ms": pack_ms,
+            "enqueue_epoch_ms": time.time() * 1000.0,
+            "colormap": self.colormap,
+            "payload_format": self.data_format,
+            "coalesce": coalesce,
+            "fit": fit,
+        }
+        if callable(source):
+            store_id, revision = source(*source_args)
+            return handle.enqueue_set_scatter_store_points_packed(
+                payload,
+                store_id=store_id,
+                revision=revision,
+                **common,
+            )
+        handle.enqueue_set_scatter_points_packed(payload, **common)
+        return False
+
     def _queue_startup_resources(self) -> None:
         """Replay scene operations that were queued before the widget went live."""
         import base64 as _base64
@@ -12338,12 +12464,10 @@ class Scatter3D(Widget):
                 self._compute_auto_color_meta()
             if payload is not None:
                 enqueue_t0 = time.perf_counter()
-                handle.enqueue_set_scatter_points_packed(
+                self._enqueue_primary_points(
+                    handle,
                     payload,
                     pack_ms=pack_ms,
-                    enqueue_epoch_ms=time.time() * 1000.0,
-                    colormap=self.colormap,
-                    payload_format=self.data_format,
                     coalesce=False,
                     fit=self._startup_fit_primary_points(),
                 )
@@ -12386,6 +12510,8 @@ class Scatter3D(Widget):
         # Sync LOD config (may have been changed before going live).
         phase_t0 = time.perf_counter()
         handle.enqueue_set_scatter_lod(self._lod_enabled, self._lod_threshold, self._lod_factor)
+        handle.enqueue_set_scatter_source_retention(self.source_retention)
+        handle.enqueue_set_scatter_rendering_policy(self.rendering)
         handle.enqueue_set_scatter_auto_point_size(self.auto_point_size)
         handle.enqueue_set_scatter_interactive_render_scale(self._interactive_render_scale)
         handle.enqueue_set_scatter_auto_quality(self._auto_quality, self._quality_target_fps)
@@ -12599,8 +12725,8 @@ class ScatterPlot2D(Scatter3D):
         self,
         frame: Any,
         *,
-        x: str,
-        y: str,
+        x: str = "x",
+        y: str = "y",
         color: str | Any | None = None,
         colors: Any | None = None,
         scalars: str | Any | None = None,
@@ -12629,6 +12755,8 @@ class ScatterPlot2D(Scatter3D):
         scalar_bar_title: str | None = None,
         hover: "str | list[str] | None" = None,
         on_hover: "ScatterPickCallback | None" = None,
+        rendering: str = "exact",
+        source_retention: str = "current",
         lod: bool = False,
         lod_threshold: int = 200_000,
         lod_factor: int = 8,
@@ -12685,6 +12813,8 @@ class ScatterPlot2D(Scatter3D):
             orientation_axes=False,
             hover=hover,
             on_hover=on_hover,
+            rendering=rendering,
+            source_retention=source_retention,
             lod=lod,
             lod_threshold=lod_threshold,
             lod_factor=lod_factor,
@@ -12701,6 +12831,15 @@ class ScatterPlot2D(Scatter3D):
         self.frame_summary = summarize_frame(frame)
         self._axis_visible = (True, True, False)
         self._parallel_projection = True
+    def _build_payload(self) -> bytes | None:
+        if self._primary_cleared:
+            return b""
+        if self.data_format == "xy_f32_v0":
+            return _pack_xy_bytes(self._source_frame, self._source_x, self._source_y)
+        return super()._build_payload()
+
+    def _compact_payload_format(self) -> str:
+        return "xy_f32_v0"
 
     def _sync_2d_camera(self, *, fit: bool = False) -> None:
         self._parallel_projection = True

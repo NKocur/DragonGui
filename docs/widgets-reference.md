@@ -288,9 +288,16 @@ Methods:
 | `run_with_loading(build_window, title=None, width=1024, height=768)` | Starts the native event loop with a placeholder window, shows the startup loading frame, then calls `build_window()` and swaps in the returned `Window` or component root before the first real redraw. |
 | `call_soon_threadsafe(fn, coalesce_key=None)` | Schedules a callable on the live runtime. Reusing a stable key retains only the newest pending snapshot; omit it for FIFO/lossless events. |
 | `toast(...)` | Shows a native toast while the app is running. |
-| `debug_snapshot(timeout_ms=1000)` | Returns live runtime diagnostics. |
+| `debug_snapshot(timeout_ms=1000)` | Returns live runtime diagnostics. `runtime.startup_phases.first_application_present_ms` measures native event-loop startup through the first application presentation; `runtime.python.startup` includes ordinary `App.run()` pre-native phase timings such as resource queueing and document serialization. |
+
 | `set_buffer_resource(resource_id, data, kind="bytes", owner=None)` | Uploads a retained native buffer. |
 | `release_resource(resource_id)` | Releases a retained native resource. |
+
+Optional line-plot and image renderers are created only when their widget
+families first appear. Diagnostics expose the nullable
+`gpu.renderer.line_plot_renderer` object and
+`gpu.renderer.image_renderer_ready` boolean; live structural insertion creates
+either renderer before its first full layout rebuild.
 
 CSS:
 
@@ -1699,6 +1706,8 @@ dg.Scatter3D(
     minor_planes=False,
     grid_sticky=True,
     grid_all_edges=False,
+    rendering="exact",
+    source_retention="current",
     lod=False,
     lod_threshold=200_000,
     lod_factor=8,
@@ -1733,6 +1742,8 @@ Options and callbacks:
 | `major_planes` / `minor_planes` | Draw major grid planes and minor subdivision lines. |
 | `grid_sticky` | Keep automatically generated nice bounds and tick steps stable while new data remains inside the current grid range. Default `True`. |
 | `grid_all_edges` | Draw an unlabeled boundary box around all grid edges as a stable reference frame. Default `False`. |
+| `rendering` | Rendering policy. `"exact"` is the default. `"decimated"` selects at most one authored source point nearest each cell center in a 256×256 spatial grid, then adds missing x/y extrema; coordinate tie-breaking makes the result deterministic under source-row reordering. It preserves point-like shape and outliers but does not encode density counts. `"density"` builds a 256×256 CPU grid of count-weighted centroids. PointStore-backed full-view density products are cached by source revision and configuration. A 128×128 exact-row candidate index is built lazily on the first settled viewport refinement. After 2D pan/zoom settles for 150 ms, visible-window work runs on a background worker while the prior product remains visible. Only a result matching the latest camera/source request is uploaded; superseded results are discarded and the newest request is coalesced behind the active job. `"adaptive"` enters density at 300,000 visible rows and switches to exact visible points at or below 200,000, retaining its current choice between those thresholds. Returning to full bounds reuses cached full density. Explicit density and decimated modes do not switch representation. The shared density cache is bounded to 16 entries and 64 MiB. Unsupported payloads, including 3D data, report an observable exact fallback through `debug_snapshot()`. |
+| `source_retention` | `"current"` (default) keeps the latest compact exact source for viewport refinement, picking, and later representation changes. `"none"` releases native exact-source bytes after a bounded 2D density or decimated product is installed. Exact/fallback rendering retains its source. Once released, changing representation requires resubmitting points; switching back to `"current"` takes effect with the next `set_points()`. |
 | `lod` | Enable representative point sampling while orbiting or panning when point count exceeds `lod_threshold`. Default `False`. |
 | `lod_threshold` | Point-count threshold for interaction LOD. Default `200_000`. |
 | `lod_factor` | Draw roughly `1 / lod_factor` of points while interaction LOD is active. Default `8`. |
@@ -1741,6 +1752,37 @@ Options and callbacks:
 | `quality_target_fps` | Target frame rate for `auto_quality`. Default `10.0`. |
 | `on_pick` | Called with `ScatterPick` or `(index, x, y, z)` after a point pick. |
 
+PointStore-backed full-view decimation and settled viewport products are also
+cached by source revision,
+exact viewport bounds, requested policy, adaptive hysteresis state, and grid
+configuration. Density colormap is presentation-only: changing it reuses the
+cached centroids/count intensity and applies the active colormap in the shader.
+Settled density uses one grid cell per two physical viewport pixels on each
+axis, clamped to 32..256; the effective grid dimensions are part of the cache
+key. Full-view density and decimation remain fixed at 256x256. Device tier is
+not keyed because these CPU products are currently device-invariant.
+Revisiting the same settled view bypasses the CPU
+worker rebuild. This derived cache uses least-recently-used eviction and is
+bounded to 32 entries and 64 MiB; it is
+separate from the 16-entry/64-MiB full-density cache. Cache hits, misses,
+eviction policy, recency updates, evictions, limits, and retained bytes are
+available through `debug_snapshot()`.
+The CPU derived product is shared. Byte-identical decimation and neutral-density
+products also share one immutable GPU buffer across plots. Density widgets keep
+independent shader colormap uniforms, so Viridis and Plasma views can reuse the
+same intensity geometry. GPU cache ownership is weak, so active widgets keep
+buffers alive while unused products are released.
+Coalesced live PointStore updates use monotonic source revisions. The highest
+pending revision wins even if an older producer message arrives later, packed
+registration remains ordered before shared references, and delayed cross-batch
+revisions are dropped at the runtime watermark. A revision advance removes only
+that projection's obsolete exact, density, derived, and GPU cache entries.
+Background viewport results must also match both the latest camera generation
+and current source revision before cache insertion or GPU upload. The active
+derived product's `source_revision`, along with stale/completed job counters, is
+available in `debug_snapshot()` under the scatter representation's `density`
+telemetry.
+
 When any of `color`, `colors`, `scalars`, `point_sizes`, `opacity != 1.0`, `nan_color`, `clim`, or `log_scale=True` are used, the widget
 automatically emits a `point_instance_v1` packet (per-point RGBA). Otherwise it emits the compact `xyz_f32_v0` format (XYZ only, colored by z-range at render time).
 
@@ -1748,7 +1790,9 @@ Mouse controls:
 
 - Left drag orbits the camera.
 - Middle drag, right drag, or Shift+left drag pans.
-- Mouse wheel zooms.
+- Mouse wheel zooms. In `ScatterPlot2D`, the data coordinate beneath the
+  pointer remains fixed so repeated wheel input drills into an off-center
+  feature; `Scatter3D` retains center-based camera zoom.
 - `R` or `Home` resets the active scatter camera.
 
 Live methods:
@@ -1757,22 +1801,70 @@ Live methods:
 - `create_live_frame(frame=None, *, capacity=None, x=None, y=None, z=None, color=None, colors=None, scalars=None, point_size=None, point_sizes=None, opacity=None, colormap=None, clim=None, log_scale=None, nan_color=None, size_range=None, mode="primary", fit=False)` - create a retained replacement handle for sensors that publish complete frames. The default `mode="primary"` uses the fast primary packed update path without rebuilding the declarative widget tree; `mode="actor"` keeps an independent point actor layer. Call `live.replace(frame)` for simple use, pack off the UI thread with `Scatter3D.prepare_points(...)` and call `live.replace_prepared(payload)` from a GUI callback, or call `live.enqueue_prepared(payload)` directly from a producer thread for high-rate latest-frame streams.
 - `prepare_points(frame, *, x, y, z, ...)` - class method that packs a frame into a reusable `ScatterPayload` without mutating a live widget. This is the preferred packing step for background workers and benchmark streams.
 - `set_colormap(colormap)` — change colormap; repacks data if per-point colors are baked.
-- `reset_camera()` — reset camera to last fitted position.
+- `reset_camera()` — reset the camera. `ScatterPlot2D` refits current full data bounds and restores orthographic XY; `Scatter3D` retains its saved/default camera behavior. Physical `R` and `Home` use the same native path.
 - `view_xy()`, `view_xz()`, `view_yz()`, `view_isometric()` — snap to a preset view direction.
 - `fit(bounds=None)` — fit camera to data bounds; optional explicit `(x_min, y_min, z_min, x_max, y_max, z_max)`.
 - `set_camera(state)` — apply a camera state dict with keys `target`, `distance`, `yaw`, `pitch`, `parallel`.
 - `get_camera()` — return current camera state dict via debug snapshot, or `None` if not live.
 - `set_point_style(style)` — set point shape: `"circle"`, `"square"`, or `"gaussian"`.
+- `set_rendering(rendering)` — switch among `"exact"`, `"decimated"`, `"density"`, and `"adaptive"` without discarding the exact source data.
+- `set_source_retention(source_retention)` — choose `"current"` or `"none"`; see the ownership tradeoff above.
 - `set_auto_point_size(enabled=True)` — toggle native adaptive point-size shrinking for dense views.
 - `set_lod(enabled=True, threshold=200_000, factor=8)` — configure representative point sampling during orbit/pan interaction.
 - `set_interactive_render_scale(scale)` - set interaction-only scatter render scale in the range `0.25..1.0`.
 - `set_auto_quality(enabled=True, target_fps=None)` - enable or disable native interaction quality budgeting.
+- `select_rectangle((x0, y0, x1, y1))` - asynchronously select authoritative source rows inside a viewport-normalized rectangle. Coordinates use top-left `(0, 0)` and bottom-right `(1, 1)`. Results update `selected`, `selected_indices`, and `selected_index_values`, then invoke the callback registered by `enable_rectangle_picking(...)` or `enable_lasso_picking(...)`. The scatter must be live.
 - `show_grid(visible=True)` — show or hide grid/ticks/labels.
 - `show_grid_planes(major=True, minor=False)` — show or hide major and minor grid planes.
 - `set_grid_options(sticky=True, all_edges=False)` — update sticky auto bounds and all-edges boundary behavior.
 - `set_ticks(x=None, y=None, z=None)` — override per-axis tick counts; `None` uses auto ticks.
 - `parallel_projection` — read/write property; `True` for orthographic, `False` for perspective (default).
 - `colormap_names()` — class method returning sorted list of valid colormap names.
+
+Diagnostic capture methods:
+
+- `screenshot()` performs bounded scatter-local RGBA readback and returns an `(H, W, 4)` NumPy `uint8` array, or `None` when the widget is not live. Stability probes should capture from a producer thread rather than an event-loop callback.
+- `save_png(path)` saves the current scatter-local readback as PNG.
+
+The benchmark suite uses scatter-local readback for pixel correctness and
+requires ten consecutive byte-identical frames. Exact workloads validate planted
+RGBA sentinels; density/adaptive workloads validate isolated extrema against the
+measured background together with native source-row conservation and revision
+telemetry.
+
+`benchmarks/scatter_interaction_correct_stable_case.py` extends that contract
+with fixed-deadline zoom, pan, resize, PointStore mutation, and home/fit recovery.
+It records deadline lag and last-input-to-first-correct/ten-stable latency, then
+requires the current full-density revision, a drained command queue, visible
+extrema, and ten byte-identical scatter-local RGBA captures. Deterministic
+selection uses `select_rectangle(...)` and verifies exact source-row indices
+even when the visible representation is adaptive density.
+
+The interaction gate also treats `fit(bounds)` as deterministic scatter
+rectangle zoom and verifies three repeated full `fit()` restores. Camera
+checkpoints must be identical and final density scope must return to `full`.
+Scatter-local readback can temporarily return `None` while a native resize is in
+flight, so intermediate resize checkpoints use camera state and final recovered
+pixels remain the authoritative image check. Reported presentation misses are
+an explicit estimate against 60 Hz, derived from the native presented-frame
+delta over the fixed-schedule window.
+
+`benchmarks/run_scatter_interaction_correct_stable.py` repeats the complete gate
+in fresh processes and requires cross-run framebuffer, exact-selection,
+full-density, and Home-camera parity. It reports median/minimum/maximum metrics
+and keeps frame p95 descriptive because driver and display characteristics vary.
+
+On Windows, `benchmarks/scatter_os_gesture_correct_stable_case.py` additionally
+uses real pointer, wheel, Shift+drag, resize, Home, and rectangle-selection
+input. It requires observable intermediate camera changes, exact source-row
+selection, full-density restoration, and the same final ten-frame pixel hash.
+
+`benchmarks/scatter_xy_wheel_comparison_case.py` is the stricter wheel-only
+comparison gate. It uses XY's seed, correlated Gaussian source, five planted
+sentinels, 900×420 viewport, and 42-input / 33 ms schedule, but sends trusted
+Windows wheel input. The target sentinel must remain lit after the x-span
+shrinks below half of home, all asynchronous viewport work remains on the
+clock, and the stability streak resets whenever a correct frame changes.
 
 Live-frame streaming paths:
 
@@ -1812,6 +1904,12 @@ live.enqueue_prepared(payload, update_metadata=False, coalesce=True)
 
 In short: `replace_prepared(...)` is the stateful GUI-callback path;
 `enqueue_prepared(...)` is the direct producer-thread path.
+
+The direct path has a permanent release benchmark at
+`benchmarks/prepared_frame_throughput_case.py`. It submits prebuilt compact
+payloads from a producer thread, observes native state after each round, checks
+that the final payload wins and queues drain, and can enforce a maximum
+throughput regression against a saved release artifact.
 
 Callback data:
 

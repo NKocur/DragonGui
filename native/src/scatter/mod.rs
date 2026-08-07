@@ -5,7 +5,7 @@ pub mod grid;
 use bytemuck::{Pod, Zeroable};
 use camera::Camera;
 use grid::{build_grid, stable_face_bits, sticky_nice_bounds, GridGeometry, LineVertex};
-use std::{borrow::Cow, time::Instant};
+use std::{borrow::Cow, sync::Arc, time::Instant};
 
 // ---------------------------------------------------------------------------
 // GPU vertex layout
@@ -23,6 +23,101 @@ pub struct PointInstance {
 }
 
 const MAX_GPU_COLORMAP_POINTS: usize = 9;
+const MIN_SCATTER_BUFFER_CAPACITY: u64 = 4 * 1024 * 1024;
+
+#[derive(thiserror::Error, Debug, Clone, PartialEq, Eq)]
+#[error(
+    "scatter capacity exceeded for {representation}: {requested_points} points require {required_bytes} bytes ({stride_bytes} bytes/point), but the device max_buffer_size is {max_buffer_size} bytes; use compact attributes, rendering='adaptive', or split the data into smaller exact chunks"
+)]
+pub struct ScatterCapacityError {
+    pub requested_points: u64,
+    pub required_bytes: u64,
+    pub max_buffer_size: u64,
+    pub stride_bytes: u64,
+    pub representation: &'static str,
+}
+
+fn scatter_capacity_error(
+    required_bytes: u64,
+    max_buffer_size: u64,
+    stride_bytes: u64,
+    representation: &'static str,
+) -> ScatterCapacityError {
+    ScatterCapacityError {
+        requested_points: required_bytes / stride_bytes.max(1),
+        required_bytes,
+        max_buffer_size,
+        stride_bytes,
+        representation,
+    }
+}
+
+/// Choose reusable allocation headroom without crossing the adapter limit.
+fn bounded_scatter_buffer_capacity(required: u64, max_buffer_size: u64) -> Option<u64> {
+    if required == 0 || required > max_buffer_size {
+        return None;
+    }
+    Some(
+        required
+            .saturating_mul(2)
+            .max(MIN_SCATTER_BUFFER_CAPACITY.min(max_buffer_size))
+            .min(max_buffer_size),
+    )
+}
+
+fn scatter_chunk_layout(
+    total_bytes: u64,
+    max_buffer_size: u64,
+    stride_bytes: u64,
+) -> Option<(u64, usize)> {
+    if total_bytes == 0 || stride_bytes == 0 || total_bytes % stride_bytes != 0 {
+        return None;
+    }
+    let chunk_bytes = max_buffer_size / stride_bytes * stride_bytes;
+    if chunk_bytes == 0 {
+        return None;
+    }
+    Some((chunk_bytes, total_bytes.div_ceil(chunk_bytes) as usize))
+}
+
+fn compact_xyz_chunk_bounds(bytes: &[u8]) -> Option<(glam::Vec3, glam::Vec3)> {
+    let mut min = glam::Vec3::splat(f32::INFINITY);
+    let mut max = glam::Vec3::splat(f32::NEG_INFINITY);
+    let mut any = false;
+    for point in bytes.chunks_exact(12) {
+        let value = glam::Vec3::new(
+            f32::from_le_bytes(point[0..4].try_into().unwrap()),
+            f32::from_le_bytes(point[4..8].try_into().unwrap()),
+            f32::from_le_bytes(point[8..12].try_into().unwrap()),
+        );
+        if value.is_finite() {
+            min = min.min(value);
+            max = max.max(value);
+            any = true;
+        }
+    }
+    any.then_some((min, max))
+}
+
+fn aabb_intersects_clip(bounds: (glam::Vec3, glam::Vec3), view_proj: glam::Mat4) -> bool {
+    let (min, max) = bounds;
+    let mut clips = [glam::Vec4::ZERO; 8];
+    let mut index = 0;
+    for x in [min.x, max.x] {
+        for y in [min.y, max.y] {
+            for z in [min.z, max.z] {
+                clips[index] = view_proj * glam::Vec4::new(x, y, z, 1.0);
+                index += 1;
+            }
+        }
+    }
+    !clips.iter().all(|p| p.x < -p.w)
+        && !clips.iter().all(|p| p.x > p.w)
+        && !clips.iter().all(|p| p.y < -p.w)
+        && !clips.iter().all(|p| p.y > p.w)
+        && !clips.iter().all(|p| p.z < 0.0)
+        && !clips.iter().all(|p| p.z > p.w)
+}
 
 static POINT_ATTRS: [wgpu::VertexAttribute; 4] = [
     wgpu::VertexAttribute {
@@ -66,6 +161,20 @@ fn xyz_point_layout() -> wgpu::VertexBufferLayout<'static> {
         array_stride: 12,
         step_mode: wgpu::VertexStepMode::Instance,
         attributes: &XYZ_POINT_ATTRS,
+    }
+}
+
+static XY_POINT_ATTRS: [wgpu::VertexAttribute; 1] = [wgpu::VertexAttribute {
+    format: wgpu::VertexFormat::Float32x2,
+    offset: 0,
+    shader_location: 0,
+}];
+
+fn xy_point_layout() -> wgpu::VertexBufferLayout<'static> {
+    wgpu::VertexBufferLayout {
+        array_stride: 8,
+        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &XY_POINT_ATTRS,
     }
 }
 
@@ -114,13 +223,14 @@ struct Uniforms {
     clip_radii: [f32; 4],
     compact_z_range: [f32; 2],
     compact_colormap_len: u32,
-    _pad1: u32,
+    point_color_mode: u32,
     compact_colormap: [[f32; 4]; MAX_GPU_COLORMAP_POINTS],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PrimaryPointStorage {
     PointInstance,
+    XyF32,
     XyzF32,
 }
 
@@ -578,7 +688,13 @@ impl PointActor {
             return ScatterUploadTimings::default();
         }
         if self.vertex_buffer.is_none() || size > self.vertex_cap {
-            let cap = (size * 2).max(4 * 1024 * 1024);
+            let Some(cap) = bounded_scatter_buffer_capacity(size, device.limits().max_buffer_size)
+            else {
+                self.vertex_buffer = None;
+                self.vertex_cap = 0;
+                self.point_count = 0;
+                return ScatterUploadTimings::default();
+            };
             self.vertex_buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("scatter-actor-vb"),
                 size: cap,
@@ -1101,6 +1217,24 @@ fn zoom_out_point_size_scale(camera_distance: f32, fit_distance: f32) -> f32 {
     1.0 + (0.45 - 1.0) * smooth
 }
 
+fn pan2d_cursor_anchor_adjustment(
+    before: [f32; 4],
+    after: [f32; 4],
+    pointer_fraction: [f32; 2],
+) -> glam::Vec2 {
+    let fx = pointer_fraction[0].clamp(0.0, 1.0);
+    let fy_data = 1.0 - pointer_fraction[1].clamp(0.0, 1.0);
+    let before_anchor = glam::Vec2::new(
+        before[0] + (before[2] - before[0]) * fx,
+        before[1] + (before[3] - before[1]) * fy_data,
+    );
+    let after_anchor = glam::Vec2::new(
+        after[0] + (after[2] - after[0]) * fx,
+        after[1] + (after[3] - after[1]) * fy_data,
+    );
+    before_anchor - after_anchor
+}
+
 fn clamp_interactive_render_scale(scale: f32) -> f32 {
     if scale.is_finite() {
         scale.clamp(0.25, 1.0)
@@ -1165,10 +1299,18 @@ pub struct ScatterWidget {
     pipeline: wgpu::RenderPipeline,
     opaque_pipeline: Option<wgpu::RenderPipeline>,
     compact_pipeline: Option<wgpu::RenderPipeline>,
+    compact_xy_pipeline: Option<wgpu::RenderPipeline>,
     compact_opaque_pipeline: Option<wgpu::RenderPipeline>,
     clip_mask_pipeline: Option<wgpu::RenderPipeline>,
     vertex_buffer: Option<wgpu::Buffer>,
     vertex_cap: u64,
+    primary_extra_buffers: Vec<wgpu::Buffer>,
+    primary_extra_caps: Vec<u64>,
+    primary_draw_counts: Vec<u32>,
+    primary_source_offsets: Vec<u32>,
+    primary_chunk_bounds: Vec<Option<(glam::Vec3, glam::Vec3)>>,
+    primary_chunk_culling: bool,
+    shared_primary: Option<Arc<SharedPointBuffers>>,
     uniform_buffer: wgpu::Buffer,
     bind_group_layout: wgpu::BindGroupLayout,
     bind_group: wgpu::BindGroup,
@@ -1197,6 +1339,7 @@ pub struct ScatterWidget {
     clip_radii: [f32; 4],
     compact_z_range: [f32; 2],
     compact_colormap_len: u32,
+    point_color_mode: u32,
     compact_colormap: [[f32; 4]; MAX_GPU_COLORMAP_POINTS],
     // ── Grid / chrome ────────────────────────────────────────────────────────
     line_pipeline: Option<wgpu::RenderPipeline>,
@@ -1271,12 +1414,57 @@ pub struct ScatterWidget {
     screenshot_cache: Option<ScreenshotCache>,
     scene_revision: u64,
     last_uniforms: Option<Uniforms>,
+    last_capacity_error: Option<ScatterCapacityError>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ScatterUploadTimings {
     pub primary_ms: f64,
     pub lod_ms: f64,
+}
+
+pub(crate) struct SharedPointBuffers {
+    buffers: Vec<wgpu::Buffer>,
+    capacities: Vec<u64>,
+    draw_counts: Vec<u32>,
+    source_offsets: Vec<u32>,
+    chunk_bounds: Vec<Option<(glam::Vec3, glam::Vec3)>>,
+    chunk_culling: bool,
+    point_count: u32,
+    storage: PrimaryPointStorage,
+    points_opaque: bool,
+}
+
+impl SharedPointBuffers {
+    pub(crate) fn allocated_bytes(&self) -> u64 {
+        self.capacities.iter().copied().sum()
+    }
+
+    pub(crate) fn used_bytes(&self) -> u64 {
+        let stride = match self.storage {
+            PrimaryPointStorage::PointInstance => std::mem::size_of::<PointInstance>() as u64,
+            PrimaryPointStorage::XyF32 => 8,
+            PrimaryPointStorage::XyzF32 => 12,
+        };
+        self.draw_counts
+            .iter()
+            .map(|count| *count as u64 * stride)
+            .sum()
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ScatterGpuMemoryStats {
+    pub primary_allocated_bytes: u64,
+    pub primary_used_bytes: u64,
+    pub primary_shared: bool,
+    pub lod_allocated_bytes: u64,
+    pub lod_used_bytes: u64,
+    pub actor_allocated_bytes: u64,
+    pub chrome_allocated_bytes: u64,
+    pub mesh_allocated_bytes: u64,
+    pub uniform_allocated_bytes: u64,
+    pub total_allocated_bytes: u64,
 }
 
 struct ScreenshotCache {
@@ -1347,7 +1535,12 @@ fn upload_lod_buffer(
         return;
     }
     if lod_buf.is_none() || size > *lod_cap {
-        let cap = (size * 2).max(4 * 1024 * 1024);
+        let Some(cap) = bounded_scatter_buffer_capacity(size, device.limits().max_buffer_size)
+        else {
+            *lod_buf = None;
+            *lod_cap = 0;
+            return;
+        };
         *lod_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("scatter-lod-vb"),
             size: cap,
@@ -1559,10 +1752,18 @@ impl ScatterWidget {
             pipeline,
             opaque_pipeline: None,
             compact_pipeline: None,
+            compact_xy_pipeline: None,
             compact_opaque_pipeline: None,
             clip_mask_pipeline: None,
             vertex_buffer: None,
             vertex_cap: 0,
+            primary_extra_buffers: Vec::new(),
+            primary_extra_caps: Vec::new(),
+            primary_draw_counts: Vec::new(),
+            primary_source_offsets: Vec::new(),
+            primary_chunk_bounds: Vec::new(),
+            primary_chunk_culling: false,
+            shared_primary: None,
             uniform_buffer,
             bind_group_layout,
             bind_group,
@@ -1589,6 +1790,7 @@ impl ScatterWidget {
             clip_radii: [0.0; 4],
             compact_z_range: [0.0, 1.0],
             compact_colormap_len: gpu_colormap_uniform("viridis").1,
+            point_color_mode: 0,
             compact_colormap: gpu_colormap_uniform("viridis").0,
             line_pipeline: None,
             line_vertex_buffer: None,
@@ -1645,6 +1847,7 @@ impl ScatterWidget {
             screenshot_cache: None,
             scene_revision: 1,
             last_uniforms: None,
+            last_capacity_error: None,
         }
     }
 
@@ -1907,16 +2110,38 @@ impl ScatterWidget {
         ));
     }
 
+    fn ensure_compact_xy_point_pipeline(&mut self, device: &wgpu::Device) {
+        if self.compact_xy_pipeline.is_some() {
+            return;
+        }
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("scatter-compact-xy-points-flat"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("compact_xy_points.wgsl").into()),
+        });
+        let pipeline_layout = self.scatter_pipeline_layout(device);
+        self.compact_xy_pipeline = Some(create_scatter_point_pipeline(
+            device,
+            self.surface_format,
+            &pipeline_layout,
+            &shader,
+            "scatter-compact-xy-flat",
+            xy_point_layout(),
+            false,
+        ));
+    }
+
     pub fn prepare_render_pipelines(&mut self, device: &wgpu::Device) {
         self.ensure_base_render_pipelines(device);
 
         let primary_is_lod =
             self.lod_enabled && self.lod_active && self.point_count > self.lod_threshold;
-        let primary_visible = self.point_count > 0 && self.vertex_buffer.is_some();
+        let primary_visible = self.point_count > 0 && self.primary_first_buffer().is_some();
         let flat_2d = self.interaction_mode == ScatterInteractionMode::Pan2D;
 
         if primary_visible && self.primary_points_opaque {
-            if self.primary_storage == PrimaryPointStorage::XyzF32 && !primary_is_lod {
+            if self.primary_storage == PrimaryPointStorage::XyF32 && !primary_is_lod && flat_2d {
+                self.ensure_compact_xy_point_pipeline(device);
+            } else if self.primary_storage == PrimaryPointStorage::XyzF32 && !primary_is_lod {
                 if flat_2d {
                     self.ensure_compact_point_pipeline(device);
                 } else {
@@ -1939,6 +2164,159 @@ impl ScatterWidget {
         }
     }
 
+    fn set_single_primary_draw(&mut self, point_count: u32) {
+        self.shared_primary = None;
+        self.primary_extra_buffers.clear();
+        self.primary_extra_caps.clear();
+        self.primary_draw_counts.clear();
+        self.primary_source_offsets.clear();
+        self.primary_chunk_bounds.clear();
+        self.primary_chunk_culling = false;
+        if point_count > 0 {
+            self.primary_draw_counts.push(point_count);
+            self.primary_source_offsets.push(0);
+            self.primary_chunk_bounds.push(None);
+        }
+    }
+
+    fn clear_primary_draw_buffers(&mut self) {
+        self.shared_primary = None;
+        self.vertex_buffer = None;
+        self.vertex_cap = 0;
+        self.primary_extra_buffers.clear();
+        self.primary_extra_caps.clear();
+        self.primary_draw_counts.clear();
+        self.primary_source_offsets.clear();
+        self.primary_chunk_bounds.clear();
+        self.primary_chunk_culling = false;
+    }
+
+    pub fn primary_chunk_count(&self) -> usize {
+        self.primary_draw_counts.len()
+    }
+
+    pub fn primary_chunk_source_offsets(&self) -> &[u32] {
+        &self.primary_source_offsets
+    }
+
+    fn primary_chunk_visible_with_view_proj(&self, index: usize, view_proj: glam::Mat4) -> bool {
+        if !self.primary_chunk_culling {
+            return true;
+        }
+        self.primary_chunk_bounds
+            .get(index)
+            .copied()
+            .flatten()
+            .is_some_and(|bounds| aabb_intersects_clip(bounds, view_proj))
+    }
+
+    pub fn visible_primary_chunk_count(&self) -> usize {
+        let view_proj = self.camera.view_proj();
+        (0..self.primary_chunk_count())
+            .filter(|index| self.primary_chunk_visible_with_view_proj(*index, view_proj))
+            .count()
+    }
+
+    pub fn visible_primary_candidate_rows(&self) -> u64 {
+        let view_proj = self.camera.view_proj();
+        self.primary_draw_counts
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| self.primary_chunk_visible_with_view_proj(*index, view_proj))
+            .map(|(_, count)| *count as u64)
+            .sum()
+    }
+
+    fn primary_first_buffer(&self) -> Option<&wgpu::Buffer> {
+        self.shared_primary
+            .as_ref()
+            .and_then(|shared| shared.buffers.first())
+            .or(self.vertex_buffer.as_ref())
+    }
+
+    pub(crate) fn promote_primary_to_shared(&mut self) -> Option<Arc<SharedPointBuffers>> {
+        if let Some(shared) = &self.shared_primary {
+            return Some(shared.clone());
+        }
+        if self.point_count == 0 {
+            return None;
+        }
+        let first = self.vertex_buffer.take()?;
+        let mut buffers = Vec::with_capacity(1 + self.primary_extra_buffers.len());
+        buffers.push(first);
+        buffers.append(&mut self.primary_extra_buffers);
+        let mut capacities = Vec::with_capacity(1 + self.primary_extra_caps.len());
+        capacities.push(std::mem::take(&mut self.vertex_cap));
+        capacities.append(&mut self.primary_extra_caps);
+        let shared = Arc::new(SharedPointBuffers {
+            buffers,
+            capacities,
+            draw_counts: self.primary_draw_counts.clone(),
+            source_offsets: self.primary_source_offsets.clone(),
+            chunk_bounds: self.primary_chunk_bounds.clone(),
+            chunk_culling: self.primary_chunk_culling,
+            point_count: self.point_count,
+            storage: self.primary_storage,
+            points_opaque: self.primary_points_opaque,
+        });
+        self.shared_primary = Some(shared.clone());
+        Some(shared)
+    }
+
+    pub(crate) fn set_shared_buffers(
+        &mut self,
+        shared: Arc<SharedPointBuffers>,
+        data_min: glam::Vec3,
+        data_max: glam::Vec3,
+        colormap: &str,
+        queue: &wgpu::Queue,
+    ) -> ScatterUploadTimings {
+        self.point_color_mode = 0;
+        self.vertex_buffer = None;
+        self.vertex_cap = 0;
+        self.primary_extra_buffers.clear();
+        self.primary_extra_caps.clear();
+        self.primary_draw_counts = shared.draw_counts.clone();
+        self.primary_source_offsets = shared.source_offsets.clone();
+        self.primary_chunk_bounds = shared.chunk_bounds.clone();
+        self.primary_chunk_culling = shared.chunk_culling;
+        self.point_count = shared.point_count;
+        self.primary_storage = shared.storage;
+        self.primary_points_opaque = shared.points_opaque;
+        self.shared_primary = Some(shared);
+        if self.primary_storage == PrimaryPointStorage::XyzF32 {
+            let (gpu_colormap, gpu_colormap_len) = gpu_colormap_uniform(colormap);
+            self.compact_colormap = gpu_colormap;
+            self.compact_colormap_len = gpu_colormap_len;
+            self.compact_z_range = [data_min.z, data_max.z];
+        }
+        self.lod_vertex_buffer = None;
+        self.lod_vertex_cap = 0;
+        self.last_capacity_error = None;
+        self.mark_scene_dirty();
+        self.recompute_point_size_scale();
+        self.update_camera(queue);
+        ScatterUploadTimings::default()
+    }
+
+    /// Select presentation-neutral density coloring for PointInstance buffers.
+    /// Mode 1 interprets red as normalized intensity and applies the per-widget
+    /// colormap in the shader, so multiple plots can share the same geometry.
+    pub(crate) fn set_density_colormap_mode(
+        &mut self,
+        enabled: bool,
+        colormap: &str,
+        queue: &wgpu::Queue,
+    ) {
+        self.point_color_mode = u32::from(enabled);
+        if enabled {
+            let (gpu_colormap, gpu_colormap_len) = gpu_colormap_uniform(colormap);
+            self.compact_colormap = gpu_colormap;
+            self.compact_colormap_len = gpu_colormap_len;
+        }
+        self.update_camera(queue);
+    }
+
     /// Upload point data to GPU.  Reallocates the vertex buffer if needed.
     pub fn set_points(
         &mut self,
@@ -1946,9 +2324,12 @@ impl ScatterWidget {
         queue: &wgpu::Queue,
         points: &[PointInstance],
     ) -> ScatterUploadTimings {
+        self.point_color_mode = 0;
         let size = (points.len() * std::mem::size_of::<PointInstance>()) as u64;
         if size == 0 {
+            self.last_capacity_error = None;
             self.point_count = 0;
+            self.set_single_primary_draw(0);
             self.primary_points_opaque = true;
             self.primary_storage = PrimaryPointStorage::PointInstance;
             self.lod_vertex_buffer = None;
@@ -1960,7 +2341,21 @@ impl ScatterWidget {
         }
         if self.vertex_buffer.is_none() || size > self.vertex_cap {
             // Over-allocate by 2× so incremental updates don't thrash.
-            let cap = (size * 2).max(4 * 1024 * 1024); // min 4 MiB
+            let Some(cap) = bounded_scatter_buffer_capacity(size, device.limits().max_buffer_size)
+            else {
+                self.last_capacity_error = Some(scatter_capacity_error(
+                    size,
+                    device.limits().max_buffer_size,
+                    std::mem::size_of::<PointInstance>() as u64,
+                    "point_instance_v1",
+                ));
+                self.clear_primary_draw_buffers();
+                self.point_count = 0;
+                self.lod_vertex_buffer = None;
+                self.lod_vertex_cap = 0;
+                self.mark_scene_dirty();
+                return ScatterUploadTimings::default();
+            };
             self.vertex_buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("scatter-vb"),
                 size: cap,
@@ -1969,6 +2364,7 @@ impl ScatterWidget {
             }));
             self.vertex_cap = cap;
         }
+        self.last_capacity_error = None;
         let primary_t0 = Instant::now();
         queue.write_buffer(
             self.vertex_buffer.as_ref().unwrap(),
@@ -1977,6 +2373,7 @@ impl ScatterWidget {
         );
         let primary_ms = primary_t0.elapsed().as_secs_f64() * 1000.0;
         self.point_count = points.len() as u32;
+        self.set_single_primary_draw(self.point_count);
         self.primary_points_opaque = points_are_opaque(points);
         self.primary_storage = PrimaryPointStorage::PointInstance;
         self.mark_scene_dirty();
@@ -2004,6 +2401,25 @@ impl ScatterWidget {
         ScatterUploadTimings { primary_ms, lod_ms }
     }
 
+    /// Upload a derived point product and release a materially oversized exact buffer.
+    /// Density/representative products are disposable, so retaining an exact-sized
+    /// allocation after a policy toggle defeats their GPU-memory benefit.
+    pub fn set_derived_points(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        points: &[PointInstance],
+    ) -> ScatterUploadTimings {
+        let required = (points.len() * std::mem::size_of::<PointInstance>()) as u64;
+        let target = bounded_scatter_buffer_capacity(required, device.limits().max_buffer_size)
+            .unwrap_or(required);
+        if self.vertex_cap > target {
+            self.vertex_buffer = None;
+            self.vertex_cap = 0;
+        }
+        self.set_points(device, queue, points)
+    }
+
     /// Upload an already GPU-shaped point_instance_v1 payload directly.
     ///
     /// This avoids rebuilding a CPU `Vec<PointInstance>` for high-rate full-frame
@@ -2014,18 +2430,22 @@ impl ScatterWidget {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         bytes: &[u8],
-    ) -> Option<ScatterUploadTimings> {
+    ) -> Result<Option<ScatterUploadTimings>, ScatterCapacityError> {
         const STRIDE: usize = std::mem::size_of::<PointInstance>();
         if bytes.len() % STRIDE != 0 {
-            return None;
+            return Ok(None);
         }
         let point_count = bytes.len() / STRIDE;
         if self.should_build_active_lod(point_count as u32) {
-            return None;
+            return Ok(None);
         }
+        self.point_color_mode = 0;
+        self.shared_primary = None;
         let size = bytes.len() as u64;
         if size == 0 {
+            self.last_capacity_error = None;
             self.point_count = 0;
+            self.set_single_primary_draw(0);
             self.primary_points_opaque = true;
             self.primary_storage = PrimaryPointStorage::PointInstance;
             self.lod_vertex_buffer = None;
@@ -2033,10 +2453,25 @@ impl ScatterWidget {
             self.mark_scene_dirty();
             self.recompute_point_size_scale();
             self.update_camera(queue);
-            return Some(ScatterUploadTimings::default());
+            return Ok(Some(ScatterUploadTimings::default()));
         }
         if self.vertex_buffer.is_none() || size > self.vertex_cap {
-            let cap = (size * 2).max(4 * 1024 * 1024);
+            let Some(cap) = bounded_scatter_buffer_capacity(size, device.limits().max_buffer_size)
+            else {
+                let error = scatter_capacity_error(
+                    size,
+                    device.limits().max_buffer_size,
+                    STRIDE as u64,
+                    "point_instance_v1",
+                );
+                self.last_capacity_error = Some(error.clone());
+                self.clear_primary_draw_buffers();
+                self.point_count = 0;
+                self.lod_vertex_buffer = None;
+                self.lod_vertex_cap = 0;
+                self.mark_scene_dirty();
+                return Err(error);
+            };
             self.vertex_buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("scatter-vb"),
                 size: cap,
@@ -2045,10 +2480,12 @@ impl ScatterWidget {
             }));
             self.vertex_cap = cap;
         }
+        self.last_capacity_error = None;
         let primary_t0 = Instant::now();
         queue.write_buffer(self.vertex_buffer.as_ref().unwrap(), 0, bytes);
         let primary_ms = primary_t0.elapsed().as_secs_f64() * 1000.0;
         self.point_count = point_count as u32;
+        self.set_single_primary_draw(self.point_count);
         self.primary_points_opaque = point_instance_bytes_are_opaque(bytes);
         self.primary_storage = PrimaryPointStorage::PointInstance;
         self.lod_vertex_buffer = None;
@@ -2056,10 +2493,137 @@ impl ScatterWidget {
         self.mark_scene_dirty();
         self.recompute_point_size_scale();
         self.update_camera(queue);
-        Some(ScatterUploadTimings {
+        Ok(Some(ScatterUploadTimings {
             primary_ms,
             lod_ms: 0.0,
-        })
+        }))
+    }
+
+    /// Upload a compact xy_f32_v0 payload directly for a flat 2D scatter.
+    pub fn set_xy_points_raw(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        bytes: &[u8],
+    ) -> Result<Option<ScatterUploadTimings>, ScatterCapacityError> {
+        if bytes.len() % 8 != 0 || self.interaction_mode != ScatterInteractionMode::Pan2D {
+            return Ok(None);
+        }
+        let point_count = bytes.len() / 8;
+        if self.should_build_active_lod(point_count as u32) {
+            return Ok(None);
+        }
+        let size = bytes.len() as u64;
+        if size == 0 {
+            self.last_capacity_error = None;
+            self.point_count = 0;
+            self.set_single_primary_draw(0);
+            self.primary_points_opaque = true;
+            self.primary_storage = PrimaryPointStorage::XyF32;
+            self.lod_vertex_buffer = None;
+            self.lod_vertex_cap = 0;
+            self.mark_scene_dirty();
+            self.recompute_point_size_scale();
+            self.update_camera(queue);
+            return Ok(Some(ScatterUploadTimings::default()));
+        }
+        let max_buffer_size = device.limits().max_buffer_size;
+        let Some((chunk_bytes, chunk_count)) = scatter_chunk_layout(size, max_buffer_size, 8)
+        else {
+            let error = scatter_capacity_error(size, max_buffer_size, 8, "chunked_xy_f32_v0");
+            self.last_capacity_error = Some(error.clone());
+            self.clear_primary_draw_buffers();
+            self.point_count = 0;
+            self.mark_scene_dirty();
+            return Err(error);
+        };
+        let first_size = size.min(chunk_bytes);
+        if self.vertex_buffer.is_none() || first_size > self.vertex_cap {
+            let cap = if chunk_count == 1 {
+                bounded_scatter_buffer_capacity(first_size, max_buffer_size).unwrap()
+            } else {
+                first_size
+            };
+            self.vertex_buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("scatter-compact-xy-vb"),
+                size: cap,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+            self.vertex_cap = cap;
+        }
+
+        let extra_count = chunk_count.saturating_sub(1);
+        while self.primary_extra_buffers.len() < extra_count {
+            let index = self.primary_extra_buffers.len() + 1;
+            let offset = index as u64 * chunk_bytes;
+            let required = (size - offset).min(chunk_bytes);
+            let cap = bounded_scatter_buffer_capacity(required, max_buffer_size).unwrap();
+            self.primary_extra_buffers
+                .push(device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("scatter-compact-xy-chunk-vb"),
+                    size: cap,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }));
+            self.primary_extra_caps.push(cap);
+        }
+        for index in 0..extra_count {
+            let offset = (index as u64 + 1) * chunk_bytes;
+            let required = (size - offset).min(chunk_bytes);
+            if required > self.primary_extra_caps[index] {
+                let cap = bounded_scatter_buffer_capacity(required, max_buffer_size).unwrap();
+                self.primary_extra_buffers[index] = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("scatter-compact-xy-chunk-vb"),
+                    size: cap,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                self.primary_extra_caps[index] = cap;
+            }
+        }
+        self.primary_extra_buffers.truncate(extra_count);
+        self.primary_extra_caps.truncate(extra_count);
+
+        self.last_capacity_error = None;
+        let primary_t0 = Instant::now();
+        let chunk_bytes_usize = chunk_bytes as usize;
+        for (index, chunk) in bytes.chunks(chunk_bytes_usize).enumerate() {
+            let buffer = if index == 0 {
+                self.vertex_buffer.as_ref().unwrap()
+            } else {
+                &self.primary_extra_buffers[index - 1]
+            };
+            queue.write_buffer(buffer, 0, chunk);
+        }
+        let primary_ms = primary_t0.elapsed().as_secs_f64() * 1000.0;
+        self.point_count = point_count as u32;
+        self.primary_draw_counts = bytes
+            .chunks(chunk_bytes_usize)
+            .map(|chunk| (chunk.len() / 8) as u32)
+            .collect();
+        self.primary_source_offsets = self
+            .primary_draw_counts
+            .iter()
+            .scan(0_u32, |offset, count| {
+                let current = *offset;
+                *offset = offset.saturating_add(*count);
+                Some(current)
+            })
+            .collect();
+        self.primary_chunk_bounds = vec![None; self.primary_draw_counts.len()];
+        self.primary_chunk_culling = false;
+        self.primary_points_opaque = true;
+        self.primary_storage = PrimaryPointStorage::XyF32;
+        self.lod_vertex_buffer = None;
+        self.lod_vertex_cap = 0;
+        self.mark_scene_dirty();
+        self.recompute_point_size_scale();
+        self.update_camera(queue);
+        Ok(Some(ScatterUploadTimings {
+            primary_ms,
+            lod_ms: 0.0,
+        }))
     }
 
     /// Upload a compact xyz_f32_v0 payload directly and color it in the point shader.
@@ -2074,17 +2638,21 @@ impl ScatterWidget {
         data_min: glam::Vec3,
         data_max: glam::Vec3,
         colormap: &str,
-    ) -> Option<ScatterUploadTimings> {
+        source_chunk_rows: Option<usize>,
+    ) -> Result<Option<ScatterUploadTimings>, ScatterCapacityError> {
         if bytes.len() % 12 != 0 || !data_min.is_finite() || !data_max.is_finite() {
-            return None;
+            return Ok(None);
         }
+        self.shared_primary = None;
         let point_count = bytes.len() / 12;
         if self.should_build_active_lod(point_count as u32) {
-            return None;
+            return Ok(None);
         }
         let size = bytes.len() as u64;
         if size == 0 {
+            self.last_capacity_error = None;
             self.point_count = 0;
+            self.set_single_primary_draw(0);
             self.primary_points_opaque = true;
             self.primary_storage = PrimaryPointStorage::XyzF32;
             self.lod_vertex_buffer = None;
@@ -2092,10 +2660,33 @@ impl ScatterWidget {
             self.mark_scene_dirty();
             self.recompute_point_size_scale();
             self.update_camera(queue);
-            return Some(ScatterUploadTimings::default());
+            return Ok(Some(ScatterUploadTimings::default()));
         }
-        if self.vertex_buffer.is_none() || size > self.vertex_cap {
-            let cap = (size * 2).max(4 * 1024 * 1024);
+        let max_buffer_size = device.limits().max_buffer_size;
+        let requested_chunk_bytes = source_chunk_rows
+            .and_then(|rows| rows.checked_mul(12))
+            .map(|bytes| bytes as u64)
+            .unwrap_or(max_buffer_size)
+            .min(max_buffer_size);
+        let Some((chunk_bytes, chunk_count)) =
+            scatter_chunk_layout(size, requested_chunk_bytes, 12)
+        else {
+            let error = scatter_capacity_error(size, max_buffer_size, 12, "chunked_xyz_f32_v0");
+            self.last_capacity_error = Some(error.clone());
+            self.clear_primary_draw_buffers();
+            self.point_count = 0;
+            self.lod_vertex_buffer = None;
+            self.lod_vertex_cap = 0;
+            self.mark_scene_dirty();
+            return Err(error);
+        };
+        let first_size = size.min(chunk_bytes);
+        if self.vertex_buffer.is_none() || first_size > self.vertex_cap {
+            let cap = if chunk_count == 1 && source_chunk_rows.is_none() {
+                bounded_scatter_buffer_capacity(first_size, max_buffer_size).unwrap()
+            } else {
+                first_size
+            };
             self.vertex_buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("scatter-compact-xyz-vb"),
                 size: cap,
@@ -2104,14 +2695,73 @@ impl ScatterWidget {
             }));
             self.vertex_cap = cap;
         }
+        let extra_count = chunk_count.saturating_sub(1);
+        while self.primary_extra_buffers.len() < extra_count {
+            let index = self.primary_extra_buffers.len() + 1;
+            let offset = index as u64 * chunk_bytes;
+            let required = (size - offset).min(chunk_bytes);
+            let cap = required;
+            self.primary_extra_buffers
+                .push(device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("scatter-compact-xyz-chunk-vb"),
+                    size: cap,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }));
+            self.primary_extra_caps.push(cap);
+        }
+        for index in 0..extra_count {
+            let offset = (index as u64 + 1) * chunk_bytes;
+            let required = (size - offset).min(chunk_bytes);
+            if required > self.primary_extra_caps[index] {
+                let cap = required;
+                self.primary_extra_buffers[index] = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("scatter-compact-xyz-chunk-vb"),
+                    size: cap,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                self.primary_extra_caps[index] = cap;
+            }
+        }
+        self.primary_extra_buffers.truncate(extra_count);
+        self.primary_extra_caps.truncate(extra_count);
+
+        self.last_capacity_error = None;
         let primary_t0 = Instant::now();
-        queue.write_buffer(self.vertex_buffer.as_ref().unwrap(), 0, bytes);
+        let chunk_bytes_usize = chunk_bytes as usize;
+        for (index, chunk) in bytes.chunks(chunk_bytes_usize).enumerate() {
+            let buffer = if index == 0 {
+                self.vertex_buffer.as_ref().unwrap()
+            } else {
+                &self.primary_extra_buffers[index - 1]
+            };
+            queue.write_buffer(buffer, 0, chunk);
+        }
         let primary_ms = primary_t0.elapsed().as_secs_f64() * 1000.0;
         let (gpu_colormap, gpu_colormap_len) = gpu_colormap_uniform(colormap);
         self.compact_colormap = gpu_colormap;
         self.compact_colormap_len = gpu_colormap_len;
         self.compact_z_range = [data_min.z, data_max.z];
         self.point_count = point_count as u32;
+        self.primary_draw_counts = bytes
+            .chunks(chunk_bytes_usize)
+            .map(|chunk| (chunk.len() / 12) as u32)
+            .collect();
+        self.primary_source_offsets = self
+            .primary_draw_counts
+            .iter()
+            .scan(0_u32, |offset, count| {
+                let current = *offset;
+                *offset = offset.saturating_add(*count);
+                Some(current)
+            })
+            .collect();
+        self.primary_chunk_bounds = bytes
+            .chunks(chunk_bytes_usize)
+            .map(compact_xyz_chunk_bounds)
+            .collect();
+        self.primary_chunk_culling = true;
         self.primary_points_opaque = true;
         self.primary_storage = PrimaryPointStorage::XyzF32;
         self.lod_vertex_buffer = None;
@@ -2119,10 +2769,14 @@ impl ScatterWidget {
         self.mark_scene_dirty();
         self.recompute_point_size_scale();
         self.update_camera(queue);
-        Some(ScatterUploadTimings {
+        Ok(Some(ScatterUploadTimings {
             primary_ms,
             lod_ms: 0.0,
-        })
+        }))
+    }
+
+    pub fn last_capacity_error(&self) -> Option<&ScatterCapacityError> {
+        self.last_capacity_error.as_ref()
     }
 
     fn should_build_lod(&self, point_count: u32) -> bool {
@@ -2134,7 +2788,10 @@ impl ScatterWidget {
     }
 
     pub fn set_compact_colormap(&mut self, colormap: &str, queue: &wgpu::Queue) -> bool {
-        if self.primary_storage != PrimaryPointStorage::XyzF32 {
+        if !matches!(
+            self.primary_storage,
+            PrimaryPointStorage::XyF32 | PrimaryPointStorage::XyzF32
+        ) {
             return false;
         }
         let (gpu_colormap, gpu_colormap_len) = gpu_colormap_uniform(colormap);
@@ -2218,7 +2875,7 @@ impl ScatterWidget {
             clip_radii: self.clip_radii,
             compact_z_range: self.compact_z_range,
             compact_colormap_len: self.compact_colormap_len,
-            _pad1: 0,
+            point_color_mode: self.point_color_mode,
             compact_colormap: self.compact_colormap,
         }
     }
@@ -2338,6 +2995,137 @@ impl ScatterWidget {
                 .sum::<u32>()
     }
 
+    pub fn primary_representation(&self) -> &'static str {
+        if self.point_count == 0 || self.primary_first_buffer().is_none() {
+            "empty"
+        } else if self.lod_enabled && self.lod_active && self.point_count > self.lod_threshold {
+            "lod_point_instance"
+        } else {
+            match self.primary_storage {
+                PrimaryPointStorage::PointInstance => "point_instance_v1",
+                PrimaryPointStorage::XyF32 if self.primary_chunk_count() > 1 => "chunked_xy_f32_v0",
+                PrimaryPointStorage::XyF32 => "compact_xy_f32_v0",
+                PrimaryPointStorage::XyzF32 if self.primary_chunk_count() > 1 => {
+                    "chunked_xyz_f32_v0"
+                }
+                PrimaryPointStorage::XyzF32 => "compact_xyz_f32_v0",
+            }
+        }
+    }
+
+    pub fn representation_reason(&self) -> &'static str {
+        if self.point_count == 0 || self.primary_first_buffer().is_none() {
+            "no_renderable_primary_buffer"
+        } else if self.lod_enabled && self.lod_active && self.point_count > self.lod_threshold {
+            "interaction_lod_active_above_threshold"
+        } else {
+            match self.primary_storage {
+                PrimaryPointStorage::PointInstance => "payload_requires_per_point_style",
+                PrimaryPointStorage::XyF32 if self.primary_chunk_count() > 1 => {
+                    "2d_exact_payload_split_at_device_buffer_limit"
+                }
+                PrimaryPointStorage::XyF32 => "2d_position_only_payload_uses_compact_layout",
+                PrimaryPointStorage::XyzF32
+                    if self.primary_chunk_count() > 1
+                        && self.primary_chunk_bounds.iter().any(Option::is_some) =>
+                {
+                    "3d_point_store_source_chunks_enable_frustum_culling"
+                }
+                PrimaryPointStorage::XyzF32 if self.primary_chunk_count() > 1 => {
+                    "3d_exact_payload_split_at_device_buffer_limit"
+                }
+                PrimaryPointStorage::XyzF32 => "position_only_payload_uses_compact_layout",
+            }
+        }
+    }
+
+    pub fn gpu_memory_stats(&self) -> ScatterGpuMemoryStats {
+        let primary_allocated_bytes = self.shared_primary.as_ref().map_or_else(
+            || {
+                self.vertex_buffer
+                    .as_ref()
+                    .map_or(0, |_| self.vertex_cap)
+                    .saturating_add(self.primary_extra_caps.iter().copied().sum::<u64>())
+            },
+            |shared| shared.allocated_bytes(),
+        );
+        let primary_stride = match self.primary_storage {
+            PrimaryPointStorage::PointInstance => std::mem::size_of::<PointInstance>() as u64,
+            PrimaryPointStorage::XyF32 => 8,
+            PrimaryPointStorage::XyzF32 => 12,
+        };
+        let primary_used_bytes = self
+            .primary_first_buffer()
+            .map_or(0, |_| self.point_count as u64 * primary_stride);
+        let lod_allocated_bytes = self
+            .lod_vertex_buffer
+            .as_ref()
+            .map_or(0, |_| self.lod_vertex_cap);
+        let lod_used_bytes = self.lod_vertex_buffer.as_ref().map_or(0, |_| {
+            lod_sample_count(self.point_count as usize, self.lod_factor) as u64
+                * std::mem::size_of::<PointInstance>() as u64
+        });
+        let actor_allocated_bytes = self.extra_actors.values().fold(0_u64, |total, actor| {
+            total
+                .saturating_add(actor.vertex_buffer.as_ref().map_or(0, |_| actor.vertex_cap))
+                .saturating_add(
+                    actor
+                        .lod_vertex_buffer
+                        .as_ref()
+                        .map_or(0, |_| actor.lod_vertex_cap),
+                )
+        });
+        let chrome_allocated_bytes = self
+            .line_vertex_buffer
+            .as_ref()
+            .map_or(0, |_| self.line_vertex_cap)
+            .saturating_add(
+                self.overlay_vertex_buffer
+                    .as_ref()
+                    .map_or(0, |_| self.overlay_vertex_cap),
+            )
+            .saturating_add(
+                self.bg_vertex_buffer
+                    .as_ref()
+                    .map_or(0, |_| self.bg_vertex_cap),
+            )
+            .saturating_add(
+                self.user_line_vertex_buffer
+                    .as_ref()
+                    .map_or(0, |_| self.user_line_vertex_cap),
+            );
+        let mesh_allocated_bytes = self.mesh_actors.values().fold(0_u64, |total, actor| {
+            let vertex_bytes = actor.vertex_buffer.as_ref().map_or(0, |_| {
+                actor.positions.len() as u64 * std::mem::size_of::<MeshVertex>() as u64
+            });
+            let index_bytes = actor.index_buffer.as_ref().map_or(0, |_| {
+                actor.index_count as u64 * std::mem::size_of::<u32>() as u64
+            });
+            total
+                .saturating_add(vertex_bytes)
+                .saturating_add(index_bytes)
+        });
+        let uniform_allocated_bytes = std::mem::size_of::<Uniforms>() as u64;
+        let total_allocated_bytes = primary_allocated_bytes
+            .saturating_add(lod_allocated_bytes)
+            .saturating_add(actor_allocated_bytes)
+            .saturating_add(chrome_allocated_bytes)
+            .saturating_add(mesh_allocated_bytes)
+            .saturating_add(uniform_allocated_bytes);
+        ScatterGpuMemoryStats {
+            primary_allocated_bytes,
+            primary_used_bytes,
+            primary_shared: self.shared_primary.is_some(),
+            lod_allocated_bytes,
+            lod_used_bytes,
+            actor_allocated_bytes,
+            chrome_allocated_bytes,
+            mesh_allocated_bytes,
+            uniform_allocated_bytes,
+            total_allocated_bytes,
+        }
+    }
+
     /// Place the scatter inside a sub-region of the window.
     ///
     /// Updates the stored offset, dimensions, camera aspect ratio, and
@@ -2394,6 +3182,50 @@ impl ScatterWidget {
     /// ratio and an unusably distant camera.
     pub fn has_visible_viewport(&self) -> bool {
         self.width > 1 && self.height > 1 && self.scissor_size[0] > 1 && self.scissor_size[1] > 1
+    }
+
+    /// Visible XY data bounds for the flat orthographic interaction mode.
+    pub fn visible_xy_bounds(&self) -> Option<[f32; 4]> {
+        if self.interaction_mode != ScatterInteractionMode::Pan2D || !self.camera.parallel {
+            return None;
+        }
+        let (half_w, half_h) = if self.camera.ortho_half_w > 0.0 && self.camera.ortho_half_h > 0.0 {
+            (self.camera.ortho_half_w, self.camera.ortho_half_h)
+        } else {
+            let half_h = self.camera.distance * (self.camera.fov_y * 0.5).tan();
+            (half_h * self.camera.aspect, half_h)
+        };
+        Some([
+            self.camera.target.x - half_w,
+            self.camera.target.y - half_h,
+            self.camera.target.x + half_w,
+            self.camera.target.y + half_h,
+        ])
+    }
+
+    /// Zoom while preserving the 2D data coordinate beneath the pointer.
+    ///
+    /// Three-dimensional scatters retain their center-zoom behavior. Flat
+    /// orthographic plots translate the camera target after changing scale so
+    /// repeated wheel input can drill into an off-center feature.
+    pub fn zoom_at_position(&mut self, window_position: [f32; 2], delta: f32) {
+        let pointer_fraction = if self.interaction_mode == ScatterInteractionMode::Pan2D {
+            Some([
+                ((window_position[0] - self.offset[0]) / self.width.max(1) as f32).clamp(0.0, 1.0),
+                ((window_position[1] - self.offset[1]) / self.height.max(1) as f32).clamp(0.0, 1.0),
+            ])
+        } else {
+            None
+        };
+        let before = pointer_fraction.and_then(|_| self.visible_xy_bounds());
+        self.camera.zoom(delta);
+        if let (Some(fraction), Some(before), Some(after)) =
+            (pointer_fraction, before, self.visible_xy_bounds())
+        {
+            let adjustment = pan2d_cursor_anchor_adjustment(before, after, fraction);
+            self.camera.target.x += adjustment.x;
+            self.camera.target.y += adjustment.y;
+        }
     }
 
     /// Restore the camera to its initial fit position (R / Home key).
@@ -4169,7 +5001,7 @@ impl ScatterWidget {
             && self.line_vertex_buffer.is_some();
         let has_user_lines =
             self.user_line_vertex_count > 0 && self.user_line_vertex_buffer.is_some();
-        let has_points = self.point_count > 0 && self.vertex_buffer.is_some();
+        let has_points = self.point_count > 0 && self.primary_first_buffer().is_some();
         let has_extra_points = self
             .extra_actors
             .values()
@@ -4249,10 +5081,16 @@ impl ScatterWidget {
         }
 
         let flat_2d = self.interaction_mode == ScatterInteractionMode::Pan2D;
+        let primary_view_proj = self.camera.view_proj();
         let mut draw_point_buffer =
             |opaque: bool, compact: bool, vb: &wgpu::Buffer, draw_count: u32| {
                 let pipeline = if compact {
-                    if flat_2d {
+                    if self.primary_storage == PrimaryPointStorage::XyF32 {
+                        let Some(pipeline) = self.compact_xy_pipeline.as_ref() else {
+                            return;
+                        };
+                        pipeline
+                    } else if flat_2d {
                         let Some(pipeline) = self.compact_pipeline.as_ref() else {
                             return;
                         };
@@ -4285,16 +5123,51 @@ impl ScatterWidget {
             let draw_vb = if is_lod {
                 self.lod_vertex_buffer.as_ref()
             } else {
-                self.vertex_buffer.as_ref()
+                self.primary_first_buffer()
             };
             if let Some(vb) = draw_vb {
                 let draw_count = if is_lod {
                     lod_sample_count(self.point_count as usize, self.lod_factor) as u32
                 } else {
-                    self.point_count
+                    self.primary_draw_counts
+                        .first()
+                        .copied()
+                        .unwrap_or(self.point_count)
                 };
-                let compact = self.primary_storage == PrimaryPointStorage::XyzF32 && !is_lod;
-                draw_point_buffer(true, compact, vb, draw_count);
+                let compact = self.primary_storage != PrimaryPointStorage::PointInstance && !is_lod;
+                if is_lod || self.primary_chunk_visible_with_view_proj(0, primary_view_proj) {
+                    draw_point_buffer(true, compact, vb, draw_count);
+                }
+                if compact && self.primary_chunk_count() > 1 {
+                    if let Some(shared) = &self.shared_primary {
+                        for (index, (buffer, draw_count)) in shared
+                            .buffers
+                            .iter()
+                            .skip(1)
+                            .zip(self.primary_draw_counts.iter().skip(1).copied())
+                            .enumerate()
+                        {
+                            if self
+                                .primary_chunk_visible_with_view_proj(index + 1, primary_view_proj)
+                            {
+                                draw_point_buffer(true, true, buffer, draw_count);
+                            }
+                        }
+                    } else {
+                        for (index, (buffer, draw_count)) in self
+                            .primary_extra_buffers
+                            .iter()
+                            .zip(self.primary_draw_counts.iter().skip(1).copied())
+                            .enumerate()
+                        {
+                            if self
+                                .primary_chunk_visible_with_view_proj(index + 1, primary_view_proj)
+                            {
+                                draw_point_buffer(true, true, buffer, draw_count);
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -4329,18 +5202,55 @@ impl ScatterWidget {
             let draw_vb = if is_lod {
                 self.lod_vertex_buffer
                     .as_ref()
-                    .or(self.vertex_buffer.as_ref())
+                    .or(self.primary_first_buffer())
             } else {
-                self.vertex_buffer.as_ref()
+                self.primary_first_buffer()
             };
             if let Some(vb) = draw_vb {
                 let draw_count = if is_lod {
                     lod_sample_count(self.point_count as usize, self.lod_factor) as u32
+                } else if self.primary_storage != PrimaryPointStorage::PointInstance {
+                    self.primary_draw_counts
+                        .first()
+                        .copied()
+                        .unwrap_or(self.point_count)
                 } else {
                     self.point_count
                 };
-                let compact = self.primary_storage == PrimaryPointStorage::XyzF32 && !is_lod;
-                draw_point_buffer(false, compact, vb, draw_count);
+                let compact = self.primary_storage != PrimaryPointStorage::PointInstance && !is_lod;
+                if is_lod || self.primary_chunk_visible_with_view_proj(0, primary_view_proj) {
+                    draw_point_buffer(false, compact, vb, draw_count);
+                }
+                if compact && self.primary_chunk_count() > 1 {
+                    if let Some(shared) = &self.shared_primary {
+                        for (index, (buffer, draw_count)) in shared
+                            .buffers
+                            .iter()
+                            .skip(1)
+                            .zip(self.primary_draw_counts.iter().skip(1).copied())
+                            .enumerate()
+                        {
+                            if self
+                                .primary_chunk_visible_with_view_proj(index + 1, primary_view_proj)
+                            {
+                                draw_point_buffer(false, true, buffer, draw_count);
+                            }
+                        }
+                    } else {
+                        for (index, (buffer, draw_count)) in self
+                            .primary_extra_buffers
+                            .iter()
+                            .zip(self.primary_draw_counts.iter().skip(1).copied())
+                            .enumerate()
+                        {
+                            if self
+                                .primary_chunk_visible_with_view_proj(index + 1, primary_view_proj)
+                            {
+                                draw_point_buffer(false, true, buffer, draw_count);
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -4451,6 +5361,111 @@ mod tests {
     use super::*;
 
     #[test]
+    fn scatter_buffer_growth_is_clamped_to_device_limit() {
+        let mib = 1024 * 1024;
+        assert_eq!(
+            bounded_scatter_buffer_capacity(160 * mib, 256 * mib),
+            Some(256 * mib)
+        );
+        assert_eq!(
+            bounded_scatter_buffer_capacity(64 * mib, 256 * mib),
+            Some(128 * mib)
+        );
+    }
+
+    #[test]
+    fn scatter_buffer_capacity_rejects_uploads_larger_than_device_limit() {
+        let mib = 1024 * 1024;
+        let limit = 256 * mib;
+        assert_eq!(
+            bounded_scatter_buffer_capacity(limit - 1, limit),
+            Some(limit)
+        );
+        assert_eq!(bounded_scatter_buffer_capacity(limit, limit), Some(limit));
+        assert_eq!(bounded_scatter_buffer_capacity(limit + 1, limit), None);
+        assert_eq!(bounded_scatter_buffer_capacity(0, limit), None);
+    }
+
+    #[test]
+    fn xy_chunk_layout_crosses_single_buffer_boundary_without_splitting_points() {
+        let limit = 256 * 1024 * 1024;
+        assert_eq!(scatter_chunk_layout(limit, limit, 8), Some((limit, 1)));
+        assert_eq!(scatter_chunk_layout(limit + 8, limit, 8), Some((limit, 2)));
+        assert_eq!(
+            scatter_chunk_layout(limit * 2 + 8, limit, 8),
+            Some((limit, 3))
+        );
+    }
+
+    #[test]
+    fn xy_chunk_layout_aligns_odd_device_limits_and_rejects_partial_points() {
+        assert_eq!(scatter_chunk_layout(32, 19, 8), Some((16, 2)));
+        assert_eq!(scatter_chunk_layout(18, 19, 8), None);
+        assert_eq!(scatter_chunk_layout(8, 7, 8), None);
+    }
+
+    #[test]
+    fn xyz_chunk_layout_crosses_limit_without_splitting_points() {
+        let limit = 256 * 1024 * 1024;
+        let aligned = limit / 12 * 12;
+        assert_eq!(scatter_chunk_layout(aligned, limit, 12), Some((aligned, 1)));
+        assert_eq!(
+            scatter_chunk_layout(aligned + 12, limit, 12),
+            Some((aligned, 2))
+        );
+        assert_eq!(scatter_chunk_layout(24, 11, 12), None);
+    }
+
+    #[test]
+    fn compact_xyz_bounds_ignore_nonfinite_rows() {
+        let values = [1.0_f32, 2.0, 3.0, f32::NAN, 10.0, 10.0, -4.0, 5.0, 2.0];
+        let (min, max) = compact_xyz_chunk_bounds(bytemuck::cast_slice(&values)).unwrap();
+        assert_eq!(min, glam::Vec3::new(-4.0, 2.0, 2.0));
+        assert_eq!(max, glam::Vec3::new(1.0, 5.0, 3.0));
+    }
+
+    #[test]
+    fn aabb_clip_test_is_conservative_for_inside_outside_and_crossing_bounds() {
+        let identity = glam::Mat4::IDENTITY;
+        assert!(aabb_intersects_clip(
+            (
+                glam::Vec3::new(-0.5, -0.5, 0.1),
+                glam::Vec3::new(0.5, 0.5, 0.9)
+            ),
+            identity,
+        ));
+        assert!(!aabb_intersects_clip(
+            (
+                glam::Vec3::new(2.0, -0.5, 0.1),
+                glam::Vec3::new(3.0, 0.5, 0.9)
+            ),
+            identity,
+        ));
+        assert!(aabb_intersects_clip(
+            (
+                glam::Vec3::new(0.5, -0.5, 0.1),
+                glam::Vec3::new(2.0, 0.5, 0.9)
+            ),
+            identity,
+        ));
+    }
+
+    #[test]
+    fn scatter_capacity_error_reports_actionable_limit_context() {
+        let error = scatter_capacity_error(120_000_012, 120_000_000, 12, "compact_xyz_f32_v0");
+        assert_eq!(error.requested_points, 10_000_001);
+        assert_eq!(error.required_bytes, 120_000_012);
+        assert_eq!(error.max_buffer_size, 120_000_000);
+        assert_eq!(error.stride_bytes, 12);
+        assert_eq!(error.representation, "compact_xyz_f32_v0");
+        let message = error.to_string();
+        assert!(message.contains("10000001 points"));
+        assert!(message.contains("120000012 bytes"));
+        assert!(message.contains("max_buffer_size is 120000000 bytes"));
+        assert!(message.contains("rendering='adaptive'"));
+    }
+
+    #[test]
     fn point_size_override_uses_negative_sentinel_for_default() {
         assert_eq!(point_size_override_value(None), -1.0);
         assert_eq!(point_size_override_value(Some(6.0)), 6.0);
@@ -4495,6 +5510,23 @@ mod tests {
         assert_eq!(zoom_out_point_size_scale(fit, fit), 1.0);
         assert!(zoom_out_point_size_scale(fit * 3.0, fit) < 1.0);
         assert!(zoom_out_point_size_scale(fit * 8.0, fit) <= 0.45);
+    }
+
+    #[test]
+    fn pan2d_cursor_anchor_adjustment_preserves_off_center_data_point() {
+        let before = [-10.0, -5.0, 10.0, 5.0];
+        let after = [-5.0, -2.5, 5.0, 2.5];
+        let fraction = [0.8, 0.2];
+        let adjustment = pan2d_cursor_anchor_adjustment(before, after, fraction);
+
+        assert!((adjustment.x - 3.0).abs() < 0.0001);
+        assert!((adjustment.y - 1.5).abs() < 0.0001);
+        let anchored_after = glam::Vec2::new(
+            after[0] + adjustment.x + (after[2] - after[0]) * fraction[0],
+            after[1] + adjustment.y + (after[3] - after[1]) * (1.0 - fraction[1]),
+        );
+        assert!((anchored_after.x - 6.0).abs() < 0.0001);
+        assert!((anchored_after.y - 3.0).abs() < 0.0001);
     }
 
     #[test]

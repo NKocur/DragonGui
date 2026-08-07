@@ -1,6 +1,10 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fmt::Write as _;
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::sync::{
+    mpsc::{self, Receiver, Sender},
+    Arc, OnceLock, Weak,
+};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -94,6 +98,16 @@ use crate::table::{self, TableHit};
 use crate::text::{measure_wrapped_text_for_layout, TextRendererDg};
 use crate::theme::{parse_web_color, Theme};
 use crate::toast::{ToastLevel, ToastOverlay, ToastPosition};
+
+const DEFAULT_SCATTER_POINT_STORE_CHUNK_ROWS: usize = 1_048_576;
+
+fn scatter_point_store_chunk_rows() -> usize {
+    std::env::var("DRAGONGUI_SCATTER_POINT_STORE_CHUNK_ROWS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_SCATTER_POINT_STORE_CHUNK_ROWS)
+}
 
 #[cfg(windows)]
 fn set_system_clipboard_text(text: &str) -> bool {
@@ -419,12 +433,19 @@ fn coalesce_runtime_command_batch(commands: &mut Vec<Command>) -> CommandCoalesc
                     filtered.len(),
                 )
                 .is_none(),
-            Command::SetScatterPointsPacked { coalesce: true, .. } => {
+            Command::SetScatterPointsPacked { coalesce: true, .. }
+            | Command::SetScatterStorePointsPacked { coalesce: true, .. }
+            | Command::SetScatterPointStoreReference { coalesce: true, .. } => {
                 let key = command
                     .coalescing_key()
                     .expect("coalesced scatter points must have a key");
                 if let Some(index) = seen_replacements.get(&key).copied() {
-                    merged_replacement = filtered[index].merge_replaced(&command);
+                    if command.has_newer_scatter_store_revision_than(&filtered[index]) {
+                        merged_replacement = command.merge_replaced(&filtered[index]);
+                        std::mem::swap(&mut command, &mut filtered[index]);
+                    } else {
+                        merged_replacement = filtered[index].merge_replaced(&command);
+                    }
                     false
                 } else {
                     seen_replacements.insert(key, filtered.len());
@@ -553,6 +574,8 @@ fn command_is_coalesced_scatter_points(command: &Command) -> bool {
     matches!(
         command,
         Command::SetScatterPointsPacked { coalesce: true, .. }
+            | Command::SetScatterStorePointsPacked { coalesce: true, .. }
+            | Command::SetScatterPointStoreReference { coalesce: true, .. }
             | Command::UpdateScatterActorPacked { .. }
     )
 }
@@ -645,6 +668,9 @@ fn decode_actor_payload_bytes(
 ) -> Result<Vec<PointInstance>, DragonError> {
     let mut pts = Vec::new();
     match format {
+        ScatterPayloadFormat::XyF32V0 => {
+            decode_scatter_xy_points_bytes_into(bytes, &mut pts)?;
+        }
         ScatterPayloadFormat::XyzF32V0 => {
             decode_scatter_points_bytes_into_colormap(bytes, &mut pts, colormap)?;
         }
@@ -1286,6 +1312,73 @@ fn read_xyz_f32_v0(chunk: &[u8]) -> [f32; 3] {
         f32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]),
         f32::from_le_bytes([chunk[8], chunk[9], chunk[10], chunk[11]]),
     ]
+}
+
+#[inline]
+fn read_xy_f32_v0(chunk: &[u8]) -> [f32; 2] {
+    [
+        f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]),
+        f32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]),
+    ]
+}
+
+fn bounds_from_xy_f32_v0(bytes: &[u8]) -> Result<Option<(glam::Vec3, glam::Vec3)>, DragonError> {
+    if bytes.len() % 8 != 0 {
+        return Err(DragonError::ParseError(format!(
+            "scatter data length {} is not a multiple of 8 (xy float32)",
+            bytes.len()
+        )));
+    }
+    let mut min = glam::Vec3::splat(f32::INFINITY);
+    let mut max = glam::Vec3::splat(f32::NEG_INFINITY);
+    for chunk in bytes.chunks_exact(8) {
+        let [x, y] = read_xy_f32_v0(chunk);
+        if x.is_finite() && y.is_finite() {
+            let point = glam::Vec3::new(x, y, 0.0);
+            min = min.min(point);
+            max = max.max(point);
+        }
+    }
+    Ok((min.x <= max.x).then_some((min, max)))
+}
+
+fn decode_scatter_xy_points_bytes_into(
+    bytes: &[u8],
+    pts: &mut Vec<PointInstance>,
+) -> Result<Option<(glam::Vec3, glam::Vec3)>, DragonError> {
+    let bounds = bounds_from_xy_f32_v0(bytes)?;
+    pts.clear();
+    pts.reserve(bytes.len() / 8);
+    for chunk in bytes.chunks_exact(8) {
+        let [x, y] = read_xy_f32_v0(chunk);
+        pts.push(PointInstance {
+            position: [x, y, 0.0],
+            size: 3.0,
+            color: [0.267, 0.005, 0.329],
+            alpha: 1.0,
+        });
+    }
+    Ok(bounds)
+}
+
+fn bounds_from_xyz_f32_v0(bytes: &[u8]) -> Result<Option<(glam::Vec3, glam::Vec3)>, DragonError> {
+    if bytes.len() % 12 != 0 {
+        return Err(DragonError::ParseError(format!(
+            "scatter data length {} is not a multiple of 12 (xyz float32)",
+            bytes.len()
+        )));
+    }
+    let mut min = glam::Vec3::splat(f32::INFINITY);
+    let mut max = glam::Vec3::splat(f32::NEG_INFINITY);
+    for chunk in bytes.chunks_exact(12) {
+        let [x, y, z] = read_xyz_f32_v0(chunk);
+        if x.is_finite() && y.is_finite() && z.is_finite() {
+            let point = glam::Vec3::new(x, y, z);
+            min = min.min(point);
+            max = max.max(point);
+        }
+    }
+    Ok((min.x <= max.x).then_some((min, max)))
 }
 
 fn valid_scatter_bounds_hint(
@@ -2444,14 +2537,40 @@ fn choose_wgpu_memory_hints(requested: Option<&str>) -> (wgpu::MemoryHints, &'st
 }
 
 fn platform_default_wgpu_backends() -> (wgpu::Backends, &'static str) {
-    #[cfg(target_os = "windows")]
+    (wgpu::Backends::default(), "auto")
+}
+
+fn pipeline_cache_path(adapter_info: &wgpu::AdapterInfo) -> Option<PathBuf> {
+    if std::env::var("DRAGONGUI_PIPELINE_CACHE")
+        .ok()
+        .is_some_and(|value| matches!(value.trim(), "0" | "false" | "off" | "disabled"))
     {
-        (wgpu::Backends::DX12, "dx12")
+        return None;
     }
-    #[cfg(not(target_os = "windows"))]
-    {
-        (wgpu::Backends::default(), "auto")
-    }
+    let directory = std::env::var_os("DRAGONGUI_PIPELINE_CACHE_DIR")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            #[cfg(target_os = "windows")]
+            {
+                std::env::var_os("LOCALAPPDATA")
+                    .map(PathBuf::from)
+                    .map(|path| path.join("DragonGUI").join("pipeline-cache"))
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                std::env::var_os("XDG_CACHE_HOME")
+                    .map(PathBuf::from)
+                    .or_else(|| {
+                        std::env::var_os("HOME")
+                            .map(PathBuf::from)
+                            .map(|path| path.join(".cache"))
+                    })
+                    .map(|path| path.join("dragongui").join("pipeline-cache"))
+            }
+        })?;
+    let key = wgpu::util::pipeline_cache_key(adapter_info)?;
+    Some(directory.join(format!("{key}_dragongui.bin")))
 }
 
 fn choose_wgpu_backends(requested: Option<&str>) -> (wgpu::Backends, &'static str) {
@@ -8103,9 +8222,6 @@ mod style_patch_tests {
         assert!(choose_wgpu_backends(Some("gl"))
             .0
             .contains(wgpu::Backends::GL));
-        #[cfg(target_os = "windows")]
-        assert_eq!(choose_wgpu_backends(None).1, "dx12");
-        #[cfg(not(target_os = "windows"))]
         assert_eq!(choose_wgpu_backends(None).1, "auto");
     }
 
@@ -8484,6 +8600,49 @@ mod style_patch_tests {
                 merged: 1,
             }
         );
+    }
+
+    #[test]
+    fn command_batch_keeps_highest_revision_for_same_scatter_store() {
+        let mut commands = vec![
+            Command::SetScatterStorePointsPacked {
+                id: "scatter".to_string(),
+                xyz: vec![9; 8],
+                store_id: "store:xy".to_string(),
+                revision: 9,
+                telemetry: None,
+                colormap: "viridis".to_string(),
+                payload_format: ScatterPayloadFormat::XyF32V0,
+                fit: false,
+                coalesce: true,
+            },
+            Command::SetScatterStorePointsPacked {
+                id: "scatter".to_string(),
+                xyz: vec![1; 8],
+                store_id: "store:xy".to_string(),
+                revision: 1,
+                telemetry: None,
+                colormap: "plasma".to_string(),
+                payload_format: ScatterPayloadFormat::XyF32V0,
+                fit: true,
+                coalesce: true,
+            },
+        ];
+
+        let stats = coalesce_runtime_command_batch(&mut commands);
+
+        assert_eq!(commands.len(), 1);
+        assert!(matches!(
+            &commands[0],
+            Command::SetScatterStorePointsPacked {
+                revision: 9,
+                xyz,
+                fit: true,
+                ..
+            } if xyz == &vec![9; 8]
+        ));
+        assert_eq!(stats.superseded_commands, 1);
+        assert_eq!(stats.merged_commands, 1);
     }
 
     #[test]
@@ -10812,6 +10971,328 @@ mod style_patch_tests {
     }
 
     #[test]
+    fn compact_xyz_bounds_scan_avoids_expanding_point_instances() {
+        let mut bytes = Vec::new();
+        for value in [1.0_f32, 5.0, -2.0, -3.0, 4.0, 8.0] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        let (min, max) = bounds_from_xyz_f32_v0(&bytes).unwrap().unwrap();
+        assert_eq!(min, glam::Vec3::new(-3.0, 4.0, -2.0));
+        assert_eq!(max, glam::Vec3::new(1.0, 5.0, 8.0));
+    }
+
+    #[test]
+    fn scatter_xy_density_conserves_finite_source_rows() {
+        let mut bytes = Vec::new();
+        for [x, y] in [[0.0_f32, 0.0], [0.0, 0.0], [1.0, 1.0], [f32::NAN, 0.5]] {
+            bytes.extend_from_slice(&x.to_le_bytes());
+            bytes.extend_from_slice(&y.to_le_bytes());
+        }
+
+        let (points, stats) = build_scatter_xy_density(
+            &bytes,
+            glam::Vec3::ZERO,
+            glam::Vec3::new(1.0, 1.0, 0.0),
+            SCATTER_DENSITY_GRID_WIDTH,
+            SCATTER_DENSITY_GRID_HEIGHT,
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(points.len(), 2);
+        assert_eq!(stats.finite_source_rows, 3);
+        assert_eq!(stats.represented_source_rows, 3);
+        assert_eq!(stats.representative_rows, 2);
+        assert_eq!(stats.max_bin_count, 2);
+
+        for point in &points {
+            assert_eq!(point.color[0], point.color[1]);
+            assert_eq!(point.color[1], point.color[2]);
+            assert!((0.0..=1.0).contains(&point.color[0]));
+        }
+        let intensity = points[0].color[0];
+        assert_ne!(
+            scatter::colormap::sample(scatter::colormap::resolve("viridis"), intensity),
+            scatter::colormap::sample(scatter::colormap::resolve("plasma"), intensity),
+        );
+    }
+
+    #[test]
+    fn scatter_density_viewport_grid_tracks_pixels_with_bounds() {
+        assert_eq!(scatter_density_viewport_grid(1, 1), (32, 32));
+        assert_eq!(scatter_density_viewport_grid(320, 240), (160, 120));
+        assert_eq!(scatter_density_viewport_grid(511, 513), (256, 256));
+        assert_eq!(scatter_density_viewport_grid(1920, 1080), (256, 256));
+    }
+
+    #[test]
+    fn adaptive_scatter_density_uses_enter_exit_hysteresis() {
+        assert!(!adaptive_scatter_density_selected(299_999, false));
+        assert!(adaptive_scatter_density_selected(300_000, false));
+        assert!(adaptive_scatter_density_selected(200_000, true));
+        assert!(!adaptive_scatter_density_selected(199_999, true));
+    }
+
+    #[test]
+    fn scatter_xy_density_viewport_filters_before_aggregation() {
+        let mut bytes = Vec::new();
+        for [x, y] in [
+            [-0.75_f32, -0.75],
+            [0.25, 0.25],
+            [0.75, 0.75],
+            [f32::NAN, 0.5],
+        ] {
+            bytes.extend_from_slice(&x.to_le_bytes());
+            bytes.extend_from_slice(&y.to_le_bytes());
+        }
+        let viewport = [0.0, 0.0, 1.0, 1.0];
+        let (points, stats) = build_scatter_xy_density(
+            &bytes,
+            glam::Vec3::new(-1.0, -1.0, 0.0),
+            glam::Vec3::new(1.0, 1.0, 0.0),
+            SCATTER_DENSITY_GRID_WIDTH,
+            SCATTER_DENSITY_GRID_HEIGHT,
+            Some(viewport),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(points.len(), 2);
+        assert_eq!(stats.scanned_source_rows, 4);
+        assert_eq!(stats.finite_source_rows, 2);
+        assert_eq!(stats.represented_source_rows, 2);
+        assert_eq!(stats.viewport_bounds, Some(viewport));
+
+        let index = build_scatter_xy_density_spatial_index(
+            &bytes,
+            glam::Vec3::new(-1.0, -1.0, 0.0),
+            glam::Vec3::new(1.0, 1.0, 0.0),
+        )
+        .unwrap();
+        let mut candidates = Vec::new();
+        scatter_density_spatial_candidates(&index, viewport, &mut candidates);
+        let (indexed_points, indexed_stats) = build_scatter_xy_density(
+            &bytes,
+            glam::Vec3::new(-1.0, -1.0, 0.0),
+            glam::Vec3::new(1.0, 1.0, 0.0),
+            SCATTER_DENSITY_GRID_WIDTH,
+            SCATTER_DENSITY_GRID_HEIGHT,
+            Some(viewport),
+            Some(&candidates),
+        )
+        .unwrap();
+        assert_eq!(indexed_points.len(), points.len());
+        assert_eq!(indexed_stats.finite_source_rows, stats.finite_source_rows);
+        assert!(indexed_stats.scanned_source_rows < stats.scanned_source_rows);
+
+        let (exact_points, exact_stats) =
+            build_scatter_xy_exact_viewport(&bytes, viewport, Some(&candidates)).unwrap();
+        assert_eq!(exact_points.len(), 2);
+        assert_eq!(exact_stats.finite_source_rows, 2);
+        assert_eq!(exact_stats.represented_source_rows, 2);
+        assert!(exact_stats.exact_visible);
+    }
+
+    #[test]
+    fn scatter_density_product_defers_spatial_index_until_requested() {
+        let product = ScatterDensityProduct::new(Vec::new(), ScatterDensityStats::default(), None);
+        assert!(product.spatial_index().is_none());
+        let index = Arc::new(ScatterDensitySpatialIndex {
+            grid_width: 1,
+            grid_height: 1,
+            data_bounds: [0.0, 0.0, 1.0, 1.0],
+            offsets: vec![0, 0],
+            source_rows: Vec::new(),
+            build_ms: 0.0,
+        });
+        assert!(product.spatial_index.set(Ok(index)).is_ok());
+        assert!(product.spatial_index().is_some());
+    }
+
+    #[test]
+    fn scatter_density_viewport_result_rejects_stale_or_incompatible_requests() {
+        assert!(scatter_density_viewport_result_is_current(
+            7,
+            7,
+            "density",
+            ScatterPayloadFormat::XyF32V0,
+        ));
+        assert!(!scatter_density_viewport_result_is_current(
+            6,
+            7,
+            "density",
+            ScatterPayloadFormat::XyF32V0,
+        ));
+        assert!(!scatter_density_viewport_result_is_current(
+            7,
+            7,
+            "exact",
+            ScatterPayloadFormat::XyF32V0,
+        ));
+        assert!(!scatter_density_viewport_result_is_current(
+            7,
+            7,
+            "density",
+            ScatterPayloadFormat::XyzF32V0,
+        ));
+        assert!(scatter_density_viewport_result_is_current(
+            8,
+            8,
+            "adaptive",
+            ScatterPayloadFormat::XyF32V0,
+        ));
+    }
+
+    #[test]
+    fn scatter_density_viewport_result_rejects_stale_source_revision() {
+        assert!(scatter_density_viewport_source_is_current(Some(7), Some(7)));
+        assert!(!scatter_density_viewport_source_is_current(
+            Some(6),
+            Some(7)
+        ));
+        assert!(!scatter_density_viewport_source_is_current(Some(7), None));
+        assert!(scatter_density_viewport_source_is_current(None, Some(7)));
+    }
+
+    #[test]
+    fn scatter_stream_revisions_are_monotonic_only_for_latest_frame_updates() {
+        assert_eq!(
+            scatter_stream_revision_action(None, 7, true),
+            ScatterStreamRevisionAction::Advance
+        );
+        assert_eq!(
+            scatter_stream_revision_action(Some(7), 7, true),
+            ScatterStreamRevisionAction::Accept
+        );
+        assert_eq!(
+            scatter_stream_revision_action(Some(7), 6, true),
+            ScatterStreamRevisionAction::DropStale
+        );
+        assert_eq!(
+            scatter_stream_revision_action(Some(7), 8, true),
+            ScatterStreamRevisionAction::Advance
+        );
+        assert_eq!(
+            scatter_stream_revision_action(Some(7), 6, false),
+            ScatterStreamRevisionAction::Accept
+        );
+    }
+
+    #[test]
+    fn scatter_derived_cache_key_canonicalizes_zero_and_tracks_configuration() {
+        let key = ScatterDerivedCacheKey {
+            store_id: "store".to_string(),
+            source_revision: 7,
+            viewport_bits: [-0.0_f32, -1.0, 0.0, 1.0].map(scatter_derived_cache_f32_bits),
+            requested_policy: "adaptive".to_string(),
+            adaptive_density_active: false,
+            grid_width: 256,
+            grid_height: 256,
+        };
+        let mut equivalent = key.clone();
+        equivalent.viewport_bits = [0.0_f32, -1.0, -0.0, 1.0].map(scatter_derived_cache_f32_bits);
+        assert_eq!(key, equivalent);
+
+        let mut changed = key.clone();
+        changed.adaptive_density_active = true;
+        assert_ne!(key, changed);
+        changed = key.clone();
+        changed.source_revision += 1;
+        assert_ne!(key, changed);
+    }
+
+    #[test]
+    fn scatter_derived_cache_evicts_least_recently_used_key() {
+        let make_key = |revision| ScatterDerivedCacheKey {
+            store_id: "store".to_string(),
+            source_revision: revision,
+            viewport_bits: [0, 0, 0, 0],
+            requested_policy: "decimated".to_string(),
+            adaptive_density_active: false,
+            grid_width: 256,
+            grid_height: 256,
+        };
+        let make_product = || {
+            Arc::new(ScatterDensityProduct::new(
+                Vec::new(),
+                ScatterDensityStats::default(),
+                None,
+            ))
+        };
+        let mut products = HashMap::new();
+        let mut lru = VecDeque::new();
+        let mut metrics = ScatterDerivedCacheMetrics::default();
+        for revision in 0..SCATTER_DERIVED_CACHE_MAX_ENTRIES as u64 {
+            insert_scatter_derived_product(
+                &mut products,
+                &mut lru,
+                &mut metrics,
+                make_key(revision),
+                make_product(),
+            );
+        }
+        touch_scatter_derived_product(&mut lru, &mut metrics, &make_key(0));
+        insert_scatter_derived_product(
+            &mut products,
+            &mut lru,
+            &mut metrics,
+            make_key(SCATTER_DERIVED_CACHE_MAX_ENTRIES as u64),
+            make_product(),
+        );
+
+        assert!(products.contains_key(&make_key(0)));
+        assert!(!products.contains_key(&make_key(1)));
+        assert_eq!(products.len(), SCATTER_DERIVED_CACHE_MAX_ENTRIES);
+        assert_eq!(lru.len(), SCATTER_DERIVED_CACHE_MAX_ENTRIES);
+        assert_eq!(metrics.evictions, 1);
+        assert_eq!(metrics.recency_updates, 1);
+    }
+
+    #[test]
+    fn scatter_decimation_is_order_independent_and_preserves_extrema() {
+        let mut bytes = Vec::new();
+        for [x, y] in [
+            [-1.0_f32, 0.0],
+            [1.0, 0.0],
+            [0.0, -1.0],
+            [0.0, 1.0],
+            [0.0, 0.0],
+            [0.001, 0.001],
+            [0.002, 0.002],
+        ] {
+            bytes.extend_from_slice(&x.to_le_bytes());
+            bytes.extend_from_slice(&y.to_le_bytes());
+        }
+        let reversed = bytes
+            .chunks_exact(8)
+            .rev()
+            .flatten()
+            .copied()
+            .collect::<Vec<_>>();
+        let bounds_min = glam::Vec3::new(-1.0, -1.0, 0.0);
+        let bounds_max = glam::Vec3::new(1.0, 1.0, 0.0);
+        let (forward_points, forward_stats) =
+            build_scatter_xy_decimated(&bytes, bounds_min, bounds_max, None, None).unwrap();
+        let (reversed_points, reversed_stats) =
+            build_scatter_xy_decimated(&reversed, bounds_min, bounds_max, None, None).unwrap();
+        let positions = |points: &[PointInstance]| {
+            points
+                .iter()
+                .map(|point| [point.position[0], point.position[1]])
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(positions(&forward_points), positions(&reversed_points));
+        assert_eq!(
+            forward_stats.representative_fingerprint,
+            reversed_stats.representative_fingerprint
+        );
+        for extreme in [[-1.0, 0.0], [1.0, 0.0], [0.0, -1.0], [0.0, 1.0]] {
+            assert!(positions(&forward_points).contains(&extreme));
+        }
+    }
+
+    #[test]
     fn decode_scatter_points_invalid_payload_preserves_old_points() {
         // A truncated XyzF32V0 payload (5 bytes — not a multiple of 12) must fail decode.
         // The old runtime.points should be untouched and the error propagated.
@@ -11549,7 +12030,18 @@ struct WgpuState {
     config: wgpu::SurfaceConfiguration,
     memory_hint: &'static str,
     backend_policy: &'static str,
+    adapter_name: String,
+    adapter_vendor: u32,
+    adapter_device: u32,
+    adapter_device_type: String,
     adapter_backend: String,
+    adapter_driver: String,
+    adapter_driver_info: String,
+    pipeline_cache_status: String,
+    pipeline_cache_path: Option<String>,
+    pipeline_cache_loaded_bytes: usize,
+    pipeline_cache_saved_bytes: usize,
+    startup_timings: GpuStartupTimings,
     present_mode_env: Option<String>,
     supported_present_modes: Vec<String>,
     _depth_texture: wgpu::Texture,
@@ -11564,6 +12056,27 @@ struct WgpuState {
     platform_color_scheme: Option<DgMediaColorScheme>,
     /// Per-widget scatter state keyed by widget id.
     scatters: HashMap<String, ScatterRuntime>,
+    /// Immutable compact point payloads interned by PointStore identity/revision.
+    scatter_point_stores: HashMap<(String, u64), Weak<[u8]>>,
+    /// Strong leases for PointStore payloads until every command in the drain batch runs.
+    scatter_point_store_batch_leases: HashMap<(String, u64), Arc<[u8]>>,
+    /// Latest accepted coalesced revision for each stable PointStore projection.
+    scatter_point_store_latest_revisions: HashMap<String, u64>,
+    scatter_streaming_cache_metrics: ScatterStreamingCacheMetrics,
+    /// Shared exact compact GPU buffers for registered PointStore revisions.
+    scatter_point_store_gpu: HashMap<(String, u64), Weak<scatter::SharedPointBuffers>>,
+    /// Shared CPU density products keyed by PointStore revision and render configuration.
+    scatter_density_products: HashMap<(String, u64, u32, u32), Arc<ScatterDensityProduct>>,
+    scatter_density_cache_metrics: ScatterDensityCacheMetrics,
+    /// Bounded viewport-derived products keyed by immutable source and view configuration.
+    scatter_derived_products: HashMap<ScatterDerivedCacheKey, Arc<ScatterDensityProduct>>,
+    scatter_derived_product_lru: VecDeque<ScatterDerivedCacheKey>,
+    scatter_derived_cache_metrics: ScatterDerivedCacheMetrics,
+    /// Weak ownership lets widget references keep immutable derived buffers alive.
+    scatter_derived_gpu: HashMap<ScatterDerivedCacheKey, Weak<scatter::SharedPointBuffers>>,
+    scatter_density_viewport_job_sender: Sender<ScatterDensityViewportJobResult>,
+    scatter_density_viewport_job_receiver: Receiver<ScatterDensityViewportJobResult>,
+    wake_proxy: EventLoopProxy<RuntimeEvent>,
     /// Blank Scatter3D widgets prebuilt while the loading screen is visible.
     scatter_widget_pool: Vec<ScatterWidget>,
     /// Per-widget line plot streaming/update metrics keyed by widget id.
@@ -11657,6 +12170,34 @@ struct WgpuState {
     animation_epoch: Instant,
     css_animations_active: bool,
     loading_screen: LoadingScreenRuntime,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct GpuStartupTimings {
+    total_ms: f64,
+    instance_surface_ms: f64,
+    adapter_request_ms: f64,
+    device_request_ms: f64,
+    surface_config_ms: f64,
+    loading_present_ms: f64,
+    scatter_resources_ms: f64,
+    renderer_init_ms: f64,
+    primitives_init_ms: f64,
+    line_plots_init_ms: f64,
+    images_init_ms: f64,
+    scatter_compositor_init_ms: f64,
+    text_init_ms: f64,
+    text_reused_loading_renderer: bool,
+    text_font_system_ms: f64,
+    text_font_system_wait_ms: f64,
+    text_swash_cache_ms: f64,
+    text_atlas_viewport_ms: f64,
+    text_base_renderer_ms: f64,
+    text_overlay_renderer_ms: f64,
+    pipeline_cache_load_ms: f64,
+    pipeline_cache_save_ms: f64,
+    state_build_ms: f64,
+    initial_layout_ms: f64,
 }
 
 struct WindowScreenshotReadback {
@@ -11753,6 +12294,19 @@ enum ScatterPayloadStatus {
     /// Payload decoded successfully but every point position was non-finite.
     AllNonFinite,
     DecodeError(String),
+    CapacityExceeded(String),
+}
+
+impl ScatterPayloadStatus {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Empty => "Empty",
+            Self::Ok => "Ok",
+            Self::AllNonFinite => "AllNonFinite",
+            Self::DecodeError(_) => "DecodeError",
+            Self::CapacityExceeded(_) => "CapacityExceeded",
+        }
+    }
 }
 
 impl Default for ScatterPayloadStatus {
@@ -11782,6 +12336,154 @@ fn loading_rect(rect: [f32; 4], color: [f32; 4], radius: f32) -> RectInstance {
 }
 
 /// Per-widget scatter runtime state.
+#[derive(Debug, Clone, Default)]
+struct ScatterDensityStats {
+    grid_width: u32,
+    grid_height: u32,
+    finite_source_rows: u64,
+    represented_source_rows: u64,
+    representative_rows: u64,
+    max_bin_count: u32,
+    build_ms: f64,
+    scanned_source_rows: u64,
+    viewport_bounds: Option<[f32; 4]>,
+    exact_visible: bool,
+    decimated: bool,
+    representative_fingerprint: u64,
+}
+
+#[derive(Default)]
+struct ScatterDensityProduct {
+    points: Vec<PointInstance>,
+    stats: ScatterDensityStats,
+    spatial_index: OnceLock<Result<Arc<ScatterDensitySpatialIndex>, String>>,
+}
+
+struct ScatterDensitySpatialIndex {
+    grid_width: u32,
+    grid_height: u32,
+    data_bounds: [f32; 4],
+    offsets: Vec<u32>,
+    source_rows: Vec<u32>,
+    build_ms: f64,
+}
+
+impl ScatterDensitySpatialIndex {
+    fn retained_bytes(&self) -> usize {
+        self.offsets
+            .len()
+            .saturating_mul(std::mem::size_of::<u32>())
+            .saturating_add(
+                self.source_rows
+                    .len()
+                    .saturating_mul(std::mem::size_of::<u32>()),
+            )
+    }
+}
+
+impl ScatterDensityProduct {
+    fn new(
+        points: Vec<PointInstance>,
+        stats: ScatterDensityStats,
+        spatial_index: Option<Arc<ScatterDensitySpatialIndex>>,
+    ) -> Self {
+        let index_cell = OnceLock::new();
+        if let Some(index) = spatial_index {
+            let _ = index_cell.set(Ok(index));
+        }
+        Self {
+            points,
+            stats,
+            spatial_index: index_cell,
+        }
+    }
+
+    fn spatial_index(&self) -> Option<&Arc<ScatterDensitySpatialIndex>> {
+        self.spatial_index
+            .get()
+            .and_then(|result| result.as_ref().ok())
+    }
+
+    fn retained_bytes(&self) -> usize {
+        self.points
+            .len()
+            .saturating_mul(std::mem::size_of::<PointInstance>())
+            .saturating_add(
+                self.spatial_index()
+                    .map_or(0, |index| index.retained_bytes()),
+            )
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct ScatterDensityCacheMetrics {
+    hits: u64,
+    misses: u64,
+    evictions: u64,
+    build_ms: f64,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ScatterStreamingCacheMetrics {
+    revision_advances: u64,
+    stale_updates_dropped: u64,
+    point_store_revisions_invalidated: u64,
+    exact_gpu_revisions_invalidated: u64,
+    density_products_invalidated: u64,
+    derived_products_invalidated: u64,
+    derived_gpu_products_invalidated: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScatterStreamRevisionAction {
+    Accept,
+    Advance,
+    DropStale,
+}
+
+fn scatter_stream_revision_action(
+    latest: Option<u64>,
+    incoming: u64,
+    coalesce: bool,
+) -> ScatterStreamRevisionAction {
+    if !coalesce {
+        return ScatterStreamRevisionAction::Accept;
+    }
+    match latest {
+        Some(latest) if incoming < latest => ScatterStreamRevisionAction::DropStale,
+        Some(latest) if incoming == latest => ScatterStreamRevisionAction::Accept,
+        _ => ScatterStreamRevisionAction::Advance,
+    }
+}
+
+struct ScatterDensityViewportJobResult {
+    widget_id: String,
+    request_revision: u64,
+    product: Result<Arc<ScatterDensityProduct>, String>,
+    job_ms: f64,
+    cache_key: Option<ScatterDerivedCacheKey>,
+    cache_hit: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ScatterDerivedCacheKey {
+    store_id: String,
+    source_revision: u64,
+    viewport_bits: [u32; 4],
+    requested_policy: String,
+    adaptive_density_active: bool,
+    grid_width: u32,
+    grid_height: u32,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ScatterDerivedCacheMetrics {
+    hits: u64,
+    misses: u64,
+    evictions: u64,
+    recency_updates: u64,
+}
+
 struct ScatterRuntime {
     widget: ScatterWidget,
     render_target: Option<ScatterRenderTarget>,
@@ -11790,8 +12492,32 @@ struct ScatterRuntime {
     /// CPU copy of point instances used for picking.
     points: Vec<PointInstance>,
     /// Last compact primary xyz payload, used to lazily rebuild `points` for picking/LOD.
-    primary_compact_xyz: Vec<u8>,
+    primary_compact_xyz: Arc<[u8]>,
+    primary_store_source: Option<(String, u64)>,
     primary_compact_colormap: String,
+    rendering_policy_requested: String,
+    rendering_policy_effective: String,
+    rendering_policy_reason: String,
+    source_retention_requested: String,
+    source_retention_effective: String,
+    source_retention_reason: String,
+    source_discarded: bool,
+    source_bytes_released_total: u64,
+    density_stats: Option<ScatterDensityStats>,
+    density_product: Option<Arc<ScatterDensityProduct>>,
+    density_product_source_revision: Option<u64>,
+    density_cache_hit: bool,
+    density_viewport_deadline: Option<Instant>,
+    density_viewport_rebuilds: u64,
+    density_viewport_request_revision: u64,
+    density_viewport_job_pending: bool,
+    density_viewport_jobs_started: u64,
+    density_viewport_jobs_completed: u64,
+    density_viewport_jobs_stale: u64,
+    density_viewport_job_errors: u64,
+    density_viewport_last_job_ms: f64,
+    derived_cache_hit: bool,
+    derived_gpu_cache_hit: bool,
     metrics: ScatterMetrics,
     /// True after the first successful data load; prevents auto-fit on live updates.
     fitted_once: bool,
@@ -11816,6 +12542,62 @@ struct ScatterRuntime {
 }
 
 impl ScatterRuntime {
+    fn supports_viewport_refinement(&self) -> bool {
+        self.payload_format == ScatterPayloadFormat::XyF32V0
+            && !self.primary_compact_xyz.is_empty()
+            && self.density_product.is_some()
+            && matches!(
+                self.rendering_policy_requested.as_str(),
+                "density" | "adaptive" | "decimated"
+            )
+    }
+
+    fn apply_source_retention(&mut self) {
+        if self.source_discarded && self.source_retention_requested == "current" {
+            self.source_retention_effective = "none".to_string();
+            self.source_retention_reason = "current_waiting_for_next_source".to_string();
+            return;
+        }
+        if self.source_retention_requested == "none"
+            && self.density_product.is_some()
+            && matches!(
+                self.rendering_policy_effective.as_str(),
+                "density" | "decimated"
+            )
+        {
+            let released = self.primary_compact_xyz.len() as u64;
+            self.primary_compact_xyz = Arc::from([]);
+            self.points.clear();
+            self.primary_pick_cache = None;
+            self.source_discarded = self.source_discarded || released > 0;
+            self.source_bytes_released_total =
+                self.source_bytes_released_total.saturating_add(released);
+            self.source_retention_effective = "none".to_string();
+            self.source_retention_reason =
+                "bounded_representation_released_exact_source".to_string();
+        } else {
+            self.source_retention_effective = "current".to_string();
+            self.source_retention_reason = if self.source_retention_requested == "none" {
+                "exact_representation_requires_current_source".to_string()
+            } else {
+                "requested_current".to_string()
+            };
+        }
+    }
+
+    fn cancel_density_viewport_job(&mut self) {
+        self.density_viewport_request_revision =
+            self.density_viewport_request_revision.wrapping_add(1);
+        self.density_viewport_deadline = None;
+    }
+
+    fn schedule_density_viewport_job(&mut self, now: Instant) {
+        self.density_viewport_request_revision =
+            self.density_viewport_request_revision.wrapping_add(1);
+        self.density_viewport_deadline =
+            Some(now + Duration::from_millis(SCATTER_DENSITY_VIEWPORT_DEBOUNCE_MS));
+    }
+
     fn has_fit_bounds(&self) -> bool {
         self.widget.point_count > 0
             || self.widget.merged_extra_bounds().is_some()
@@ -11858,6 +12640,17 @@ impl ScatterRuntime {
         self.widget.fit_to_bounds(fit_min, fit_max, queue);
         self.fitted_once = true;
         true
+    }
+
+    fn reset_camera_for_home(&mut self, queue: &wgpu::Queue) {
+        if self.widget.interaction_mode == scatter::ScatterInteractionMode::Pan2D
+            && self.apply_fit_command(None, queue)
+        {
+            self.widget.set_parallel_projection(true, queue);
+            self.widget.set_view_direction("xy", queue);
+        } else {
+            self.widget.reset_camera(queue);
+        }
     }
 
     fn apply_pending_fit_if_visible(&mut self, queue: &wgpu::Queue) -> bool {
@@ -11938,12 +12731,20 @@ impl ScatterRuntime {
         if !self.points.is_empty() || self.primary_compact_xyz.is_empty() {
             return Ok(());
         }
-        decode_scatter_points_bytes_into_colormap_with_bounds(
-            &self.primary_compact_xyz,
-            &mut self.points,
-            &self.primary_compact_colormap,
-            Some((self.data_min, self.data_max)),
-        )?;
+        match self.payload_format {
+            ScatterPayloadFormat::XyF32V0 => {
+                decode_scatter_xy_points_bytes_into(&self.primary_compact_xyz, &mut self.points)?;
+            }
+            ScatterPayloadFormat::XyzF32V0 => {
+                decode_scatter_points_bytes_into_colormap_with_bounds(
+                    &self.primary_compact_xyz,
+                    &mut self.points,
+                    &self.primary_compact_colormap,
+                    Some((self.data_min, self.data_max)),
+                )?;
+            }
+            ScatterPayloadFormat::PointInstanceV1 => {}
+        }
         self.primary_pick_cache = None;
         Ok(())
     }
@@ -12082,6 +12883,862 @@ impl ScatterRuntime {
 
         best.map(|(actor_id, idx, pt, _, _)| (actor_id, idx, pt))
     }
+}
+
+const SCATTER_DENSITY_GRID_WIDTH: usize = 256;
+const SCATTER_DENSITY_GRID_HEIGHT: usize = 256;
+const SCATTER_DENSITY_VIEWPORT_MIN_GRID: usize = 32;
+const SCATTER_DENSITY_VIEWPORT_PIXELS_PER_CELL: usize = 2;
+const SCATTER_DENSITY_INDEX_GRID_WIDTH: usize = 128;
+const SCATTER_DENSITY_INDEX_GRID_HEIGHT: usize = 128;
+const SCATTER_DENSITY_CACHE_MAX_ENTRIES: usize = 16;
+const SCATTER_DENSITY_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;
+const SCATTER_DERIVED_CACHE_MAX_ENTRIES: usize = 32;
+const SCATTER_DERIVED_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;
+
+fn scatter_derived_cache_f32_bits(value: f32) -> u32 {
+    if value == 0.0 {
+        0
+    } else {
+        value.to_bits()
+    }
+}
+
+fn scatter_density_viewport_grid(width: u32, height: u32) -> (usize, usize) {
+    let grid_width = (width as usize)
+        .div_ceil(SCATTER_DENSITY_VIEWPORT_PIXELS_PER_CELL)
+        .clamp(
+            SCATTER_DENSITY_VIEWPORT_MIN_GRID,
+            SCATTER_DENSITY_GRID_WIDTH,
+        );
+    let grid_height = (height as usize)
+        .div_ceil(SCATTER_DENSITY_VIEWPORT_PIXELS_PER_CELL)
+        .clamp(
+            SCATTER_DENSITY_VIEWPORT_MIN_GRID,
+            SCATTER_DENSITY_GRID_HEIGHT,
+        );
+    (grid_width, grid_height)
+}
+
+fn insert_scatter_derived_product(
+    products: &mut HashMap<ScatterDerivedCacheKey, Arc<ScatterDensityProduct>>,
+    lru: &mut VecDeque<ScatterDerivedCacheKey>,
+    metrics: &mut ScatterDerivedCacheMetrics,
+    key: ScatterDerivedCacheKey,
+    product: Arc<ScatterDensityProduct>,
+) {
+    lru.retain(|candidate| candidate != &key);
+    while !products.is_empty()
+        && !products.contains_key(&key)
+        && (products.len() >= SCATTER_DERIVED_CACHE_MAX_ENTRIES
+            || products
+                .values()
+                .map(|cached| cached.retained_bytes())
+                .sum::<usize>()
+                .saturating_add(product.retained_bytes())
+                > SCATTER_DERIVED_CACHE_MAX_BYTES)
+    {
+        if let Some(evicted) = lru.pop_front() {
+            products.remove(&evicted);
+            metrics.evictions += 1;
+        } else {
+            break;
+        }
+    }
+    products.insert(key.clone(), product);
+    lru.push_back(key);
+}
+
+fn touch_scatter_derived_product(
+    lru: &mut VecDeque<ScatterDerivedCacheKey>,
+    metrics: &mut ScatterDerivedCacheMetrics,
+    key: &ScatterDerivedCacheKey,
+) {
+    lru.retain(|candidate| candidate != key);
+    lru.push_back(key.clone());
+    metrics.recency_updates += 1;
+}
+const SCATTER_DENSITY_VIEWPORT_DEBOUNCE_MS: u64 = 150;
+const SCATTER_ADAPTIVE_DENSITY_ENTER_ROWS: usize = 300_000;
+const SCATTER_ADAPTIVE_DENSITY_EXIT_ROWS: usize = 200_000;
+
+#[derive(Clone, Copy, Default)]
+struct ScatterDensityCell {
+    sum_x: f64,
+    sum_y: f64,
+    count: u32,
+}
+
+fn scatter_density_grid_coordinate(value: f32, min: f32, max: f32, cells: usize) -> usize {
+    let span = (max - min).max(0.0);
+    if span > 0.0 {
+        (((value - min) / span) * cells as f32)
+            .floor()
+            .clamp(0.0, (cells - 1) as f32) as usize
+    } else {
+        0
+    }
+}
+
+fn build_scatter_xy_density_spatial_index(
+    bytes: &[u8],
+    data_min: glam::Vec3,
+    data_max: glam::Vec3,
+) -> Result<ScatterDensitySpatialIndex, DragonError> {
+    if bytes.len() % 8 != 0 {
+        return Err(DragonError::ParseError(format!(
+            "scatter density index source length {} is not a multiple of 8",
+            bytes.len()
+        )));
+    }
+    let started = Instant::now();
+    let cell_count = SCATTER_DENSITY_INDEX_GRID_WIDTH * SCATTER_DENSITY_INDEX_GRID_HEIGHT;
+    let mut counts = vec![0_u32; cell_count];
+    for chunk in bytes.chunks_exact(8) {
+        let [x, y] = read_xy_f32_v0(chunk);
+        if !x.is_finite() || !y.is_finite() {
+            continue;
+        }
+        let grid_x = scatter_density_grid_coordinate(
+            x,
+            data_min.x,
+            data_max.x,
+            SCATTER_DENSITY_INDEX_GRID_WIDTH,
+        );
+        let grid_y = scatter_density_grid_coordinate(
+            y,
+            data_min.y,
+            data_max.y,
+            SCATTER_DENSITY_INDEX_GRID_HEIGHT,
+        );
+        counts[grid_y * SCATTER_DENSITY_INDEX_GRID_WIDTH + grid_x] += 1;
+    }
+    let mut offsets = vec![0_u32; cell_count + 1];
+    for (index, count) in counts.into_iter().enumerate() {
+        offsets[index + 1] = offsets[index].saturating_add(count);
+    }
+    let mut source_rows = vec![0_u32; offsets[cell_count] as usize];
+    let mut cursors = offsets[..cell_count].to_vec();
+    for (row, chunk) in bytes.chunks_exact(8).enumerate() {
+        let [x, y] = read_xy_f32_v0(chunk);
+        if !x.is_finite() || !y.is_finite() {
+            continue;
+        }
+        let grid_x = scatter_density_grid_coordinate(
+            x,
+            data_min.x,
+            data_max.x,
+            SCATTER_DENSITY_INDEX_GRID_WIDTH,
+        );
+        let grid_y = scatter_density_grid_coordinate(
+            y,
+            data_min.y,
+            data_max.y,
+            SCATTER_DENSITY_INDEX_GRID_HEIGHT,
+        );
+        let cell = grid_y * SCATTER_DENSITY_INDEX_GRID_WIDTH + grid_x;
+        let cursor = cursors[cell] as usize;
+        source_rows[cursor] = row as u32;
+        cursors[cell] += 1;
+    }
+    Ok(ScatterDensitySpatialIndex {
+        grid_width: SCATTER_DENSITY_INDEX_GRID_WIDTH as u32,
+        grid_height: SCATTER_DENSITY_INDEX_GRID_HEIGHT as u32,
+        data_bounds: [data_min.x, data_min.y, data_max.x, data_max.y],
+        offsets,
+        source_rows,
+        build_ms: started.elapsed().as_secs_f64() * 1000.0,
+    })
+}
+
+fn scatter_density_spatial_candidates(
+    index: &ScatterDensitySpatialIndex,
+    viewport: [f32; 4],
+    output: &mut Vec<u32>,
+) {
+    output.clear();
+    let [min_x, min_y, max_x, max_y] = index.data_bounds;
+    let cell_min_x =
+        scatter_density_grid_coordinate(viewport[0], min_x, max_x, index.grid_width as usize);
+    let cell_max_x =
+        scatter_density_grid_coordinate(viewport[2], min_x, max_x, index.grid_width as usize);
+    let cell_min_y =
+        scatter_density_grid_coordinate(viewport[1], min_y, max_y, index.grid_height as usize);
+    let cell_max_y =
+        scatter_density_grid_coordinate(viewport[3], min_y, max_y, index.grid_height as usize);
+    for grid_y in cell_min_y..=cell_max_y {
+        for grid_x in cell_min_x..=cell_max_x {
+            let cell = grid_y * index.grid_width as usize + grid_x;
+            let start = index.offsets[cell] as usize;
+            let end = index.offsets[cell + 1] as usize;
+            output.extend_from_slice(&index.source_rows[start..end]);
+        }
+    }
+}
+
+fn build_scatter_xy_density(
+    bytes: &[u8],
+    data_min: glam::Vec3,
+    data_max: glam::Vec3,
+    grid_width: usize,
+    grid_height: usize,
+    viewport_bounds: Option<[f32; 4]>,
+    candidate_rows: Option<&[u32]>,
+) -> Result<(Vec<PointInstance>, ScatterDensityStats), DragonError> {
+    if bytes.len() % 8 != 0 {
+        return Err(DragonError::ParseError(format!(
+            "scatter density source length {} is not a multiple of 8 (xy float32)",
+            bytes.len()
+        )));
+    }
+    let started = Instant::now();
+    if grid_width == 0 || grid_height == 0 {
+        return Err(DragonError::ParseError(
+            "scatter density grid dimensions must be positive".to_string(),
+        ));
+    }
+    let mut cells = vec![ScatterDensityCell::default(); grid_width * grid_height];
+    let [grid_min_x, grid_min_y, grid_max_x, grid_max_y] =
+        viewport_bounds.unwrap_or([data_min.x, data_min.y, data_max.x, data_max.y]);
+    let mut finite_source_rows = 0_u64;
+    let mut add_point = |x: f32, y: f32| {
+        if !x.is_finite() || !y.is_finite() {
+            return;
+        }
+        if x < grid_min_x || x > grid_max_x || y < grid_min_y || y > grid_max_y {
+            return;
+        }
+        let grid_x = scatter_density_grid_coordinate(x, grid_min_x, grid_max_x, grid_width);
+        let grid_y = scatter_density_grid_coordinate(y, grid_min_y, grid_max_y, grid_height);
+        let cell = &mut cells[grid_y * grid_width + grid_x];
+        cell.sum_x += x as f64;
+        cell.sum_y += y as f64;
+        cell.count = cell.count.saturating_add(1);
+        finite_source_rows += 1;
+    };
+    if let Some(rows) = candidate_rows {
+        for row in rows {
+            let offset = *row as usize * 8;
+            if offset + 8 <= bytes.len() {
+                let [x, y] = read_xy_f32_v0(&bytes[offset..offset + 8]);
+                add_point(x, y);
+            }
+        }
+    } else {
+        for chunk in bytes.chunks_exact(8) {
+            let [x, y] = read_xy_f32_v0(chunk);
+            add_point(x, y);
+        }
+    }
+    let max_bin_count = cells.iter().map(|cell| cell.count).max().unwrap_or(0);
+    let log_max = (max_bin_count.max(1) as f32).ln_1p();
+    let mut points = Vec::with_capacity(cells.iter().filter(|cell| cell.count > 0).count());
+    let mut represented_source_rows = 0_u64;
+    for cell in cells.into_iter().filter(|cell| cell.count > 0) {
+        let count = cell.count as f64;
+        let intensity = (cell.count as f32).ln_1p() / log_max;
+        points.push(PointInstance {
+            position: [
+                (cell.sum_x / count) as f32,
+                (cell.sum_y / count) as f32,
+                0.0,
+            ],
+            size: 2.0 + intensity.sqrt() * 5.0,
+            // Density products retain geometry and normalized count intensity.
+            // Presentation colormaps are applied by the point shader.
+            color: [intensity, intensity, intensity],
+            alpha: 0.9,
+        });
+        represented_source_rows += cell.count as u64;
+    }
+    let stats = ScatterDensityStats {
+        grid_width: grid_width as u32,
+        grid_height: grid_height as u32,
+        finite_source_rows,
+        represented_source_rows,
+        representative_rows: points.len() as u64,
+        max_bin_count,
+        build_ms: started.elapsed().as_secs_f64() * 1000.0,
+        scanned_source_rows: candidate_rows.map_or(bytes.len() / 8, |rows| rows.len()) as u64,
+        viewport_bounds,
+        exact_visible: false,
+        decimated: false,
+        representative_fingerprint: scatter_representative_fingerprint(&points),
+    };
+    Ok((points, stats))
+}
+
+fn set_scatter_derived_product(
+    widget: &mut ScatterWidget,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    product: &ScatterDensityProduct,
+    colormap: &str,
+) {
+    widget.set_derived_points(device, queue, &product.points);
+    widget.set_density_colormap_mode(
+        !product.stats.decimated && !product.stats.exact_visible,
+        colormap,
+        queue,
+    );
+}
+
+fn scatter_derived_gpu_key(
+    rt: &ScatterRuntime,
+    product: &ScatterDensityProduct,
+) -> Option<ScatterDerivedCacheKey> {
+    if product.stats.exact_visible {
+        return None;
+    }
+    rt.primary_store_source
+        .as_ref()
+        .map(|(store_id, revision)| ScatterDerivedCacheKey {
+            store_id: store_id.clone(),
+            source_revision: *revision,
+            viewport_bits: product
+                .stats
+                .viewport_bounds
+                .unwrap_or([rt.data_min.x, rt.data_min.y, rt.data_max.x, rt.data_max.y])
+                .map(scatter_derived_cache_f32_bits),
+            requested_policy: if product.stats.decimated {
+                "decimated"
+            } else {
+                "density"
+            }
+            .to_string(),
+            adaptive_density_active: false,
+            grid_width: product.stats.grid_width,
+            grid_height: product.stats.grid_height,
+        })
+}
+
+fn set_scatter_derived_product_with_gpu_cache(
+    rt: &mut ScatterRuntime,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    product: &ScatterDensityProduct,
+    derived_gpu: &mut HashMap<ScatterDerivedCacheKey, Weak<scatter::SharedPointBuffers>>,
+) {
+    derived_gpu.retain(|_, buffers| buffers.strong_count() > 0);
+    rt.derived_gpu_cache_hit = false;
+    let cache_key = scatter_derived_gpu_key(rt, product);
+    if let Some((key, shared)) = cache_key.as_ref().and_then(|key| {
+        derived_gpu
+            .get(key)
+            .and_then(Weak::upgrade)
+            .map(|shared| (key, shared))
+    }) {
+        rt.widget.set_shared_buffers(
+            shared,
+            rt.data_min,
+            rt.data_max,
+            &rt.primary_compact_colormap,
+            queue,
+        );
+        rt.derived_gpu_cache_hit = true;
+        // Refresh the weak entry in case it was left over from an older owner.
+        if let Some(shared) = rt.widget.promote_primary_to_shared() {
+            derived_gpu.insert(key.clone(), Arc::downgrade(&shared));
+        }
+        rt.widget.set_density_colormap_mode(
+            !product.stats.decimated,
+            &rt.primary_compact_colormap,
+            queue,
+        );
+        return;
+    }
+    set_scatter_derived_product(
+        &mut rt.widget,
+        device,
+        queue,
+        product,
+        &rt.primary_compact_colormap,
+    );
+    if let (Some(key), Some(shared)) = (cache_key, rt.widget.promote_primary_to_shared()) {
+        derived_gpu.insert(key, Arc::downgrade(&shared));
+    }
+}
+
+fn build_scatter_xy_exact_viewport(
+    bytes: &[u8],
+    viewport_bounds: [f32; 4],
+    candidate_rows: Option<&[u32]>,
+) -> Result<(Vec<PointInstance>, ScatterDensityStats), DragonError> {
+    if bytes.len() % 8 != 0 {
+        return Err(DragonError::ParseError(format!(
+            "scatter exact viewport source length {} is not a multiple of 8 (xy float32)",
+            bytes.len()
+        )));
+    }
+    let started = Instant::now();
+    let mut points = Vec::with_capacity(candidate_rows.map_or(0, |rows| rows.len()));
+    let mut add_point = |x: f32, y: f32| {
+        if x.is_finite()
+            && y.is_finite()
+            && x >= viewport_bounds[0]
+            && x <= viewport_bounds[2]
+            && y >= viewport_bounds[1]
+            && y <= viewport_bounds[3]
+        {
+            points.push(PointInstance {
+                position: [x, y, 0.0],
+                size: 3.0,
+                color: [0.267, 0.005, 0.329],
+                alpha: 1.0,
+            });
+        }
+    };
+    if let Some(rows) = candidate_rows {
+        for row in rows {
+            let offset = *row as usize * 8;
+            if offset + 8 <= bytes.len() {
+                let [x, y] = read_xy_f32_v0(&bytes[offset..offset + 8]);
+                add_point(x, y);
+            }
+        }
+    } else {
+        for chunk in bytes.chunks_exact(8) {
+            let [x, y] = read_xy_f32_v0(chunk);
+            add_point(x, y);
+        }
+    }
+    let visible_rows = points.len() as u64;
+    Ok((
+        points,
+        ScatterDensityStats {
+            finite_source_rows: visible_rows,
+            represented_source_rows: visible_rows,
+            representative_rows: visible_rows,
+            build_ms: started.elapsed().as_secs_f64() * 1000.0,
+            scanned_source_rows: candidate_rows.map_or(bytes.len() / 8, |rows| rows.len()) as u64,
+            viewport_bounds: Some(viewport_bounds),
+            exact_visible: true,
+            ..ScatterDensityStats::default()
+        },
+    ))
+}
+
+#[derive(Clone, Copy)]
+struct ScatterDecimationCandidate {
+    x: f32,
+    y: f32,
+    score: f32,
+}
+
+fn scatter_decimation_candidate_is_better(
+    candidate: ScatterDecimationCandidate,
+    current: ScatterDecimationCandidate,
+) -> bool {
+    candidate.score.total_cmp(&current.score).is_lt()
+        || (candidate.score.to_bits() == current.score.to_bits()
+            && (candidate.x.total_cmp(&current.x).is_lt()
+                || (candidate.x.to_bits() == current.x.to_bits()
+                    && candidate.y.total_cmp(&current.y).is_lt())))
+}
+
+fn scatter_representative_fingerprint(points: &[PointInstance]) -> u64 {
+    let mut fingerprint = 0xcbf2_9ce4_8422_2325_u64;
+    for point in points {
+        for bits in [point.position[0].to_bits(), point.position[1].to_bits()] {
+            fingerprint ^= bits as u64;
+            fingerprint = fingerprint.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    fingerprint
+}
+
+fn build_scatter_xy_decimated(
+    bytes: &[u8],
+    data_min: glam::Vec3,
+    data_max: glam::Vec3,
+    viewport_bounds: Option<[f32; 4]>,
+    candidate_rows: Option<&[u32]>,
+) -> Result<(Vec<PointInstance>, ScatterDensityStats), DragonError> {
+    if bytes.len() % 8 != 0 {
+        return Err(DragonError::ParseError(format!(
+            "scatter decimation source length {} is not a multiple of 8 (xy float32)",
+            bytes.len()
+        )));
+    }
+    let started = Instant::now();
+    let [min_x, min_y, max_x, max_y] =
+        viewport_bounds.unwrap_or([data_min.x, data_min.y, data_max.x, data_max.y]);
+    let mut cells = vec![None; SCATTER_DENSITY_GRID_WIDTH * SCATTER_DENSITY_GRID_HEIGHT];
+    let mut extrema: [Option<ScatterDecimationCandidate>; 4] = [None; 4];
+    let mut finite_source_rows = 0_u64;
+    let mut add_point = |x: f32, y: f32| {
+        if !x.is_finite() || !y.is_finite() || x < min_x || x > max_x || y < min_y || y > max_y {
+            return;
+        }
+        finite_source_rows += 1;
+        let grid_x = scatter_density_grid_coordinate(x, min_x, max_x, SCATTER_DENSITY_GRID_WIDTH);
+        let grid_y = scatter_density_grid_coordinate(y, min_y, max_y, SCATTER_DENSITY_GRID_HEIGHT);
+        let span_x = (max_x - min_x).max(f32::EPSILON);
+        let span_y = (max_y - min_y).max(f32::EPSILON);
+        let normalized_x = (x - min_x) / span_x * SCATTER_DENSITY_GRID_WIDTH as f32;
+        let normalized_y = (y - min_y) / span_y * SCATTER_DENSITY_GRID_HEIGHT as f32;
+        let dx = normalized_x - (grid_x as f32 + 0.5);
+        let dy = normalized_y - (grid_y as f32 + 0.5);
+        let candidate = ScatterDecimationCandidate {
+            x,
+            y,
+            score: dx * dx + dy * dy,
+        };
+        let cell = &mut cells[grid_y * SCATTER_DENSITY_GRID_WIDTH + grid_x];
+        if cell.is_none_or(|current| scatter_decimation_candidate_is_better(candidate, current)) {
+            *cell = Some(candidate);
+        }
+        let extrema_better = [
+            extrema[0].is_none_or(|current| {
+                x.total_cmp(&current.x).is_lt()
+                    || (x.to_bits() == current.x.to_bits() && y.total_cmp(&current.y).is_lt())
+            }),
+            extrema[1].is_none_or(|current| {
+                x.total_cmp(&current.x).is_gt()
+                    || (x.to_bits() == current.x.to_bits() && y.total_cmp(&current.y).is_lt())
+            }),
+            extrema[2].is_none_or(|current| {
+                y.total_cmp(&current.y).is_lt()
+                    || (y.to_bits() == current.y.to_bits() && x.total_cmp(&current.x).is_lt())
+            }),
+            extrema[3].is_none_or(|current| {
+                y.total_cmp(&current.y).is_gt()
+                    || (y.to_bits() == current.y.to_bits() && x.total_cmp(&current.x).is_lt())
+            }),
+        ];
+        for (index, better) in extrema_better.into_iter().enumerate() {
+            if better {
+                extrema[index] = Some(candidate);
+            }
+        }
+    };
+    if let Some(rows) = candidate_rows {
+        for row in rows {
+            let offset = *row as usize * 8;
+            if offset + 8 <= bytes.len() {
+                let [x, y] = read_xy_f32_v0(&bytes[offset..offset + 8]);
+                add_point(x, y);
+            }
+        }
+    } else {
+        for chunk in bytes.chunks_exact(8) {
+            let [x, y] = read_xy_f32_v0(chunk);
+            add_point(x, y);
+        }
+    }
+    let mut selected = cells.into_iter().flatten().collect::<Vec<_>>();
+    let mut selected_coordinates = selected
+        .iter()
+        .map(|point| (point.x.to_bits(), point.y.to_bits()))
+        .collect::<HashSet<_>>();
+    for extreme in extrema.into_iter().flatten() {
+        if selected_coordinates.insert((extreme.x.to_bits(), extreme.y.to_bits())) {
+            selected.push(extreme);
+        }
+    }
+    let mut points = Vec::with_capacity(selected.len());
+    for point in selected {
+        points.push(PointInstance {
+            position: [point.x, point.y, 0.0],
+            size: 3.0,
+            color: [0.267, 0.005, 0.329],
+            alpha: 1.0,
+        });
+    }
+    let representative_fingerprint = scatter_representative_fingerprint(&points);
+    Ok((
+        points,
+        ScatterDensityStats {
+            grid_width: SCATTER_DENSITY_GRID_WIDTH as u32,
+            grid_height: SCATTER_DENSITY_GRID_HEIGHT as u32,
+            finite_source_rows,
+            represented_source_rows: finite_source_rows,
+            representative_rows: selected_coordinates.len() as u64,
+            build_ms: started.elapsed().as_secs_f64() * 1000.0,
+            scanned_source_rows: candidate_rows.map_or(bytes.len() / 8, |rows| rows.len()) as u64,
+            viewport_bounds,
+            decimated: true,
+            representative_fingerprint,
+            ..ScatterDensityStats::default()
+        },
+    ))
+}
+
+fn adaptive_scatter_density_selected(source_rows: usize, density_active: bool) -> bool {
+    source_rows
+        >= if density_active {
+            SCATTER_ADAPTIVE_DENSITY_EXIT_ROWS
+        } else {
+            SCATTER_ADAPTIVE_DENSITY_ENTER_ROWS
+        }
+}
+
+fn scatter_density_viewport_result_is_current(
+    result_revision: u64,
+    requested_revision: u64,
+    rendering_policy_requested: &str,
+    payload_format: ScatterPayloadFormat,
+) -> bool {
+    result_revision == requested_revision
+        && matches!(
+            rendering_policy_requested,
+            "density" | "adaptive" | "decimated"
+        )
+        && payload_format == ScatterPayloadFormat::XyF32V0
+}
+
+fn scatter_density_viewport_source_is_current(
+    result_source_revision: Option<u64>,
+    current_source_revision: Option<u64>,
+) -> bool {
+    result_source_revision.is_none() || result_source_revision == current_source_revision
+}
+
+fn apply_scatter_rendering_policy(
+    rt: &mut ScatterRuntime,
+    requested: &str,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    density_products: &mut HashMap<(String, u64, u32, u32), Arc<ScatterDensityProduct>>,
+    cache_metrics: &mut ScatterDensityCacheMetrics,
+    derived_products: &mut HashMap<ScatterDerivedCacheKey, Arc<ScatterDensityProduct>>,
+    derived_product_lru: &mut VecDeque<ScatterDerivedCacheKey>,
+    derived_cache_metrics: &mut ScatterDerivedCacheMetrics,
+    derived_gpu: &mut HashMap<ScatterDerivedCacheKey, Weak<scatter::SharedPointBuffers>>,
+) -> bool {
+    rt.cancel_density_viewport_job();
+    rt.derived_cache_hit = false;
+    rt.derived_gpu_cache_hit = false;
+    rt.rendering_policy_requested = requested.to_string();
+    if rt.source_discarded && requested != rt.rendering_policy_effective {
+        rt.rendering_policy_reason =
+            "source_retention_none_resubmit_points_to_change_representation".to_string();
+        return false;
+    }
+    let source_rows = rt.primary_compact_xyz.len() / 8;
+    let derived_was_active = rt.density_product.is_some();
+    let density_was_active = rt.rendering_policy_effective == "density";
+    if requested == "decimated"
+        && rt.payload_format == ScatterPayloadFormat::XyF32V0
+        && source_rows > 0
+    {
+        let cache_key = rt
+            .primary_store_source
+            .as_ref()
+            .map(|(store_id, revision)| ScatterDerivedCacheKey {
+                store_id: store_id.clone(),
+                source_revision: *revision,
+                viewport_bits: [rt.data_min.x, rt.data_min.y, rt.data_max.x, rt.data_max.y]
+                    .map(scatter_derived_cache_f32_bits),
+                requested_policy: "decimated".to_string(),
+                adaptive_density_active: false,
+                grid_width: SCATTER_DENSITY_GRID_WIDTH as u32,
+                grid_height: SCATTER_DENSITY_GRID_HEIGHT as u32,
+            });
+        let cached = cache_key
+            .as_ref()
+            .and_then(|key| derived_products.get(key))
+            .cloned();
+        let product = if let Some(product) = cached {
+            derived_cache_metrics.hits += 1;
+            touch_scatter_derived_product(
+                derived_product_lru,
+                derived_cache_metrics,
+                cache_key
+                    .as_ref()
+                    .expect("cached decimation has a cache key"),
+            );
+            Ok((product, true))
+        } else {
+            build_scatter_xy_decimated(
+                &rt.primary_compact_xyz,
+                rt.data_min,
+                rt.data_max,
+                None,
+                None,
+            )
+            .map(|(points, stats)| {
+                let product = Arc::new(ScatterDensityProduct::new(points, stats, None));
+                if let Some(key) = cache_key.clone() {
+                    derived_cache_metrics.misses += 1;
+                    insert_scatter_derived_product(
+                        derived_products,
+                        derived_product_lru,
+                        derived_cache_metrics,
+                        key,
+                        product.clone(),
+                    );
+                }
+                (product, false)
+            })
+        };
+        match product {
+            Ok((product, cache_hit)) => {
+                set_scatter_derived_product_with_gpu_cache(
+                    rt,
+                    device,
+                    queue,
+                    &product,
+                    derived_gpu,
+                );
+                rt.rendering_policy_effective = "decimated".to_string();
+                rt.rendering_policy_reason = "requested_decimated".to_string();
+                rt.density_stats = Some(product.stats.clone());
+                rt.density_product = Some(product);
+                rt.density_product_source_revision = rt
+                    .primary_store_source
+                    .as_ref()
+                    .map(|(_, revision)| *revision);
+                rt.density_cache_hit = false;
+                rt.derived_cache_hit = cache_hit;
+                rt.apply_source_retention();
+                return true;
+            }
+            Err(error) => {
+                rt.rendering_policy_effective = "exact".to_string();
+                rt.rendering_policy_reason =
+                    format!("decimation_build_failed_exact_fallback:{error}");
+                rt.density_stats = None;
+                rt.density_product = None;
+                rt.density_product_source_revision = None;
+                rt.density_cache_hit = false;
+                return false;
+            }
+        }
+    }
+    let wants_density = requested == "density"
+        || (requested == "adaptive"
+            && adaptive_scatter_density_selected(source_rows, density_was_active));
+    if wants_density && rt.payload_format == ScatterPayloadFormat::XyF32V0 && source_rows > 0 {
+        let cache_key = rt
+            .primary_store_source
+            .as_ref()
+            .map(|(store_id, revision)| {
+                (
+                    store_id.clone(),
+                    *revision,
+                    SCATTER_DENSITY_GRID_WIDTH as u32,
+                    SCATTER_DENSITY_GRID_HEIGHT as u32,
+                )
+            });
+        let cached = cache_key
+            .as_ref()
+            .and_then(|key| density_products.get(key))
+            .cloned();
+        let product = if let Some(product) = cached {
+            cache_metrics.hits += 1;
+            Ok((product, true))
+        } else {
+            build_scatter_xy_density(
+                &rt.primary_compact_xyz,
+                rt.data_min,
+                rt.data_max,
+                SCATTER_DENSITY_GRID_WIDTH,
+                SCATTER_DENSITY_GRID_HEIGHT,
+                None,
+                None,
+            )
+            .map(|(points, stats)| {
+                if cache_key.is_some() {
+                    cache_metrics.misses += 1;
+                    cache_metrics.build_ms += stats.build_ms;
+                }
+                // The viewport accelerator is intentionally deferred. Initial density
+                // presentation should not wait for a second full-source index pass.
+                let product = Arc::new(ScatterDensityProduct::new(points, stats, None));
+                if let Some(key) = cache_key {
+                    while !density_products.is_empty()
+                        && !density_products.contains_key(&key)
+                        && (density_products.len() >= SCATTER_DENSITY_CACHE_MAX_ENTRIES
+                            || density_products
+                                .values()
+                                .map(|cached| cached.retained_bytes())
+                                .sum::<usize>()
+                                .saturating_add(product.retained_bytes())
+                                > SCATTER_DENSITY_CACHE_MAX_BYTES)
+                    {
+                        if let Some(evicted) = density_products.keys().next().cloned() {
+                            density_products.remove(&evicted);
+                            cache_metrics.evictions += 1;
+                        }
+                    }
+                    density_products.insert(key, product.clone());
+                }
+                (product, false)
+            })
+        };
+        match product {
+            Ok((product, cache_hit)) => {
+                set_scatter_derived_product_with_gpu_cache(
+                    rt,
+                    device,
+                    queue,
+                    &product,
+                    derived_gpu,
+                );
+                rt.rendering_policy_effective = "density".to_string();
+                rt.rendering_policy_reason = if requested == "adaptive" {
+                    if density_was_active {
+                        "adaptive_density_retained_above_exit_threshold"
+                    } else {
+                        "adaptive_density_entered_above_enter_threshold"
+                    }
+                } else {
+                    "requested_density"
+                }
+                .to_string();
+                rt.density_stats = Some(product.stats.clone());
+                rt.density_product = Some(product);
+                rt.density_product_source_revision = rt
+                    .primary_store_source
+                    .as_ref()
+                    .map(|(_, revision)| *revision);
+                rt.density_cache_hit = cache_hit;
+                rt.apply_source_retention();
+                return true;
+            }
+            Err(error) => {
+                rt.rendering_policy_effective = "exact".to_string();
+                rt.rendering_policy_reason = format!("density_build_failed_exact_fallback:{error}");
+                rt.density_stats = None;
+                rt.density_product = None;
+                rt.density_product_source_revision = None;
+                rt.density_cache_hit = false;
+                return false;
+            }
+        }
+    }
+
+    if derived_was_active
+        && rt.payload_format == ScatterPayloadFormat::XyF32V0
+        && !rt.primary_compact_xyz.is_empty()
+    {
+        if let Err(error) = rt
+            .widget
+            .set_xy_points_raw(device, queue, &rt.primary_compact_xyz)
+        {
+            rt.rendering_policy_reason = format!("exact_restore_failed:{error}");
+            return false;
+        }
+    }
+    rt.rendering_policy_effective = "exact".to_string();
+    rt.rendering_policy_reason = match requested {
+        "exact" => "requested_exact",
+        "adaptive" if rt.payload_format != ScatterPayloadFormat::XyF32V0 => {
+            "adaptive_exact_fallback_density_requires_xy"
+        }
+        "adaptive" if density_was_active => "adaptive_exact_below_density_exit_threshold",
+        "adaptive" => "adaptive_exact_below_density_enter_threshold",
+        "density" => "density_exact_fallback_density_requires_xy",
+        "decimated" => "decimated_exact_fallback_requires_xy",
+        _ => "invalid_policy_exact_fallback",
+    }
+    .to_string();
+    rt.density_stats = None;
+    rt.density_product = None;
+    rt.density_product_source_revision = None;
+    rt.density_cache_hit = false;
+    true
 }
 
 #[derive(Debug, Clone)]
@@ -12774,9 +14431,9 @@ impl WgpuState {
         depth_view: &wgpu::TextureView,
         theme: &Theme,
         spec: &LoadingScreenSpec,
-    ) -> Result<(bool, f64), DragonError> {
+    ) -> Result<(bool, f64, Option<TextRendererDg>), DragonError> {
         if !spec.enabled {
-            return Ok((false, 0.0));
+            return Ok((false, 0.0, None));
         }
         let t0 = Instant::now();
         let background = spec
@@ -12799,11 +14456,11 @@ impl WgpuState {
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 surface.configure(device, config);
-                return Ok((false, 0.0));
+                return Ok((false, 0.0, None));
             }
             wgpu::CurrentSurfaceTexture::Timeout
             | wgpu::CurrentSurfaceTexture::Occluded
-            | wgpu::CurrentSurfaceTexture::Validation => return Ok((false, 0.0)),
+            | wgpu::CurrentSurfaceTexture::Validation => return Ok((false, 0.0, None)),
         };
         let view = texture
             .texture
@@ -12821,8 +14478,14 @@ impl WgpuState {
         ];
         let mut card_fill = theme.surface;
         card_fill[3] = 0.94;
-        let mut prims =
-            PrimitivesRenderer::new(device, queue, config.format, config.width, config.height);
+        let mut prims = PrimitivesRenderer::new(
+            device,
+            queue,
+            config.format,
+            config.width,
+            config.height,
+            None,
+        );
         let mut instances = vec![loading_rect(card, card_fill, 14.0)];
         if spec.show_progress {
             let mut track = theme.border;
@@ -12937,7 +14600,7 @@ impl WgpuState {
         }
         queue.submit(std::iter::once(encoder.finish()));
         texture.present();
-        Ok((true, t0.elapsed().as_secs_f64() * 1000.0))
+        Ok((true, t0.elapsed().as_secs_f64() * 1000.0, Some(text)))
     }
 
     async fn new(
@@ -12945,6 +14608,25 @@ impl WgpuState {
         spec: AppSpec,
         wake_proxy: EventLoopProxy<RuntimeEvent>,
     ) -> Result<(Self, f64), DragonError> {
+        let gpu_total_t0 = Instant::now();
+        let has_widget_tree = spec.widget_tree.is_some();
+        let startup_needs_line_plots = spec
+            .widget_tree
+            .as_ref()
+            .is_some_and(|tree| subtree_contains_widget_kind(tree, WidgetKind::LinePlot));
+        let startup_needs_images = spec.widget_tree.as_ref().is_some_and(|tree| {
+            subtree_contains_widget_kind(tree, WidgetKind::Image)
+                || subtree_contains_widget_kind(tree, WidgetKind::ImageButton)
+        });
+        // Font discovery is CPU-only and otherwise dominates the warm renderer
+        // constructor. Start it before wgpu adapter/device requests so the two
+        // independent startup paths overlap.
+        // The startup loading screen creates the same text resources and hands
+        // its renderer to the application after presenting, so it does not
+        // need a parallel prepared FontSystem.
+        let prepared_font_system_task = (has_widget_tree && !spec.loading_screen.enabled)
+            .then(|| std::thread::spawn(TextRendererDg::prepare_font_system));
+        let instance_surface_t0 = Instant::now();
         let size = window.inner_size();
         let width = size.width.max(1);
         let height = size.height.max(1);
@@ -12960,7 +14642,9 @@ impl WgpuState {
         let surface = instance
             .create_surface(Arc::clone(&window))
             .map_err(|e| DragonError::GpuInit(format!("surface: {e}")))?;
+        let instance_surface_ms = instance_surface_t0.elapsed().as_secs_f64() * 1000.0;
 
+        let adapter_request_t0 = Instant::now();
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
@@ -12969,14 +14653,24 @@ impl WgpuState {
             })
             .await
             .map_err(|e| DragonError::GpuInit(format!("adapter: {e}")))?;
-        let adapter_backend = adapter.get_info().backend.to_string();
+        let adapter_request_ms = adapter_request_t0.elapsed().as_secs_f64() * 1000.0;
+        let adapter_info = adapter.get_info();
+        let requested_pipeline_cache_path = pipeline_cache_path(&adapter_info);
+        let pipeline_cache_supported = requested_pipeline_cache_path.is_some()
+            && adapter.features().contains(wgpu::Features::PIPELINE_CACHE);
+        let required_features = if pipeline_cache_supported {
+            wgpu::Features::PIPELINE_CACHE
+        } else {
+            wgpu::Features::empty()
+        };
 
         let memory_hint_env = std::env::var("DRAGONGUI_WGPU_MEMORY_HINT").ok();
         let (memory_hints, memory_hint) = choose_wgpu_memory_hints(memory_hint_env.as_deref());
+        let device_request_t0 = Instant::now();
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("dragongui"),
-                required_features: wgpu::Features::empty(),
+                required_features,
                 required_limits: wgpu::Limits::default(),
                 experimental_features: wgpu::ExperimentalFeatures::default(),
                 memory_hints,
@@ -12984,7 +14678,28 @@ impl WgpuState {
             })
             .await
             .map_err(|e| DragonError::GpuInit(format!("device: {e}")))?;
+        let device_request_ms = device_request_t0.elapsed().as_secs_f64() * 1000.0;
 
+        let pipeline_cache_load_t0 = Instant::now();
+        let pipeline_cache_data = requested_pipeline_cache_path
+            .as_ref()
+            .and_then(|path| std::fs::read(path).ok());
+        let pipeline_cache_loaded_bytes = pipeline_cache_data.as_ref().map_or(0, Vec::len);
+        let pipeline_cache = pipeline_cache_supported.then(|| {
+            // SAFETY: persisted bytes are written only from PipelineCache::get_data.
+            // wgpu validates its own header, adapter identity, driver, and version;
+            // fallback=true discards stale or corrupted data instead of using it.
+            unsafe {
+                device.create_pipeline_cache(&wgpu::PipelineCacheDescriptor {
+                    label: Some("dragongui-pipeline-cache"),
+                    data: pipeline_cache_data.as_deref(),
+                    fallback: true,
+                })
+            }
+        });
+        let pipeline_cache_load_ms = pipeline_cache_load_t0.elapsed().as_secs_f64() * 1000.0;
+
+        let surface_config_t0 = Instant::now();
         let mut config = surface
             .get_default_config(&adapter, width, height)
             .ok_or_else(|| DragonError::GpuInit("unsupported surface format".into()))?;
@@ -13017,23 +14732,12 @@ impl WgpuState {
             }
         }
         surface.configure(&device, &config);
+        let surface_config_ms = surface_config_t0.elapsed().as_secs_f64() * 1000.0;
 
         let (depth_texture, depth_view) = create_depth_texture(&device, width, height);
         let theme = spec.theme.unwrap_or_else(Theme::dark);
         let mut loading_screen = LoadingScreenRuntime::new(spec.loading_screen.clone());
-        let (loading_shown, loading_present_ms) = Self::render_startup_loading_frame(
-            &surface,
-            &device,
-            &queue,
-            &config,
-            &depth_view,
-            &theme,
-            &loading_screen.spec,
-        )?;
-        if loading_screen.spec.enabled && !loading_shown {
-            window.set_visible(true);
-        }
-        let (loading_shown, loading_present_ms) = if loading_screen.spec.enabled && !loading_shown {
+        let (initial_loading_shown, initial_loading_present_ms, initial_loading_text) =
             Self::render_startup_loading_frame(
                 &surface,
                 &device,
@@ -13042,10 +14746,28 @@ impl WgpuState {
                 &depth_view,
                 &theme,
                 &loading_screen.spec,
-            )?
-        } else {
-            (loading_shown, loading_present_ms)
-        };
+            )?;
+        if loading_screen.spec.enabled && !initial_loading_shown {
+            window.set_visible(true);
+        }
+        let (loading_shown, loading_present_ms, loading_text) =
+            if loading_screen.spec.enabled && !initial_loading_shown {
+                Self::render_startup_loading_frame(
+                    &surface,
+                    &device,
+                    &queue,
+                    &config,
+                    &depth_view,
+                    &theme,
+                    &loading_screen.spec,
+                )?
+            } else {
+                (
+                    initial_loading_shown,
+                    initial_loading_present_ms,
+                    initial_loading_text,
+                )
+            };
         if loading_shown {
             loading_screen.shown = true;
             loading_screen.frames = 1;
@@ -13066,6 +14788,7 @@ impl WgpuState {
         }
 
         // Build one ScatterRuntime per Scatter3D node in the tree.
+        let scatter_resources_t0 = Instant::now();
         let mut scatters: HashMap<String, ScatterRuntime> = HashMap::new();
         let mut total_upload_ms = 0.0_f64;
         if let Some(tree) = &spec.widget_tree {
@@ -13111,6 +14834,9 @@ impl WgpuState {
                         Ok(bytes) => {
                             let mut pts = Vec::new();
                             let result = match data_format {
+                                ScatterPayloadFormat::XyF32V0 => {
+                                    decode_scatter_xy_points_bytes_into(&bytes, &mut pts)
+                                }
                                 ScatterPayloadFormat::XyzF32V0 => {
                                     decode_scatter_points_bytes_into_colormap(
                                         &bytes, &mut pts, &colormap,
@@ -13160,8 +14886,32 @@ impl WgpuState {
                         last_direct_scene_revision: 0,
                         quality_last_change: Instant::now(),
                         points: pts,
-                        primary_compact_xyz: Vec::new(),
+                        primary_compact_xyz: Arc::from([]),
+                        primary_store_source: None,
                         primary_compact_colormap: colormap.clone(),
+                        rendering_policy_requested: "exact".to_string(),
+                        rendering_policy_effective: "exact".to_string(),
+                        rendering_policy_reason: "requested_exact".to_string(),
+                        source_retention_requested: "current".to_string(),
+                        source_retention_effective: "current".to_string(),
+                        source_retention_reason: "requested_current".to_string(),
+                        source_discarded: false,
+                        source_bytes_released_total: 0,
+                        density_stats: None,
+                        density_product: None,
+                        density_product_source_revision: None,
+                        density_cache_hit: false,
+                        density_viewport_deadline: None,
+                        density_viewport_rebuilds: 0,
+                        density_viewport_request_revision: 0,
+                        density_viewport_job_pending: false,
+                        density_viewport_jobs_started: 0,
+                        density_viewport_jobs_completed: 0,
+                        density_viewport_jobs_stale: 0,
+                        density_viewport_job_errors: 0,
+                        density_viewport_last_job_ms: 0.0,
+                        derived_cache_hit: false,
+                        derived_gpu_cache_hit: false,
                         metrics: ScatterMetrics::default(),
                         fitted_once: matches!(status, ScatterPayloadStatus::Ok),
                         data_min,
@@ -13181,28 +14931,104 @@ impl WgpuState {
         }
         let upload_ms = total_upload_ms;
         loading_screen.startup_resource_ms = upload_ms;
+        let scatter_resources_ms = scatter_resources_t0.elapsed().as_secs_f64() * 1000.0;
 
-        let primitives = spec
-            .widget_tree
+        let prepared_font_system_wait_t0 = Instant::now();
+        let prepared_font_system = prepared_font_system_task
+            .map(|task| task.join().expect("font-system initialization panicked"));
+        let text_font_system_wait_ms =
+            prepared_font_system_wait_t0.elapsed().as_secs_f64() * 1000.0;
+        let prepared_font_system = std::sync::Mutex::new(prepared_font_system);
+        let text_reused_loading_renderer = has_widget_tree && loading_text.is_some();
+        let loading_text = std::sync::Mutex::new(loading_text);
+
+        let renderer_init_t0 = Instant::now();
+        let surface_format = config.format;
+        let (
+            (primitives, primitives_init_ms),
+            (line_plots, line_plots_init_ms),
+            (images, images_init_ms),
+            (scatter_compositor, scatter_compositor_init_ms),
+            (text, text_init_ms),
+        ) = std::thread::scope(|scope| {
+            let primitives_task = scope.spawn(|| {
+                let t0 = Instant::now();
+                let renderer = has_widget_tree.then(|| {
+                    PrimitivesRenderer::new(
+                        &device,
+                        &queue,
+                        surface_format,
+                        width,
+                        height,
+                        pipeline_cache.as_ref(),
+                    )
+                });
+                (renderer, t0.elapsed().as_secs_f64() * 1000.0)
+            });
+            let line_plots_task = scope.spawn(|| {
+                let t0 = Instant::now();
+                let renderer = startup_needs_line_plots
+                    .then(|| LinePlotRenderer::new(&device, &queue, surface_format, width, height));
+                (renderer, t0.elapsed().as_secs_f64() * 1000.0)
+            });
+            let images_task = scope.spawn(|| {
+                let t0 = Instant::now();
+                let renderer = startup_needs_images
+                    .then(|| ImageRenderer::new(&device, &queue, surface_format, width, height));
+                (renderer, t0.elapsed().as_secs_f64() * 1000.0)
+            });
+            let scatter_compositor_task = scope.spawn(|| {
+                let t0 = Instant::now();
+                let renderer = ScatterCompositeRenderer::new(&device, surface_format);
+                (renderer, t0.elapsed().as_secs_f64() * 1000.0)
+            });
+            let text_task = scope.spawn(|| {
+                let t0 = Instant::now();
+                let prepared = prepared_font_system
+                    .lock()
+                    .expect("prepared font-system lock poisoned")
+                    .take();
+                let loading_renderer = loading_text
+                    .lock()
+                    .expect("loading text-renderer lock poisoned")
+                    .take();
+                let renderer = if !has_widget_tree {
+                    None
+                } else if let Some(renderer) = loading_renderer {
+                    Some(renderer)
+                } else if let Some(prepared) = prepared {
+                    Some(TextRendererDg::new_with_prepared_font_system(
+                        &device,
+                        &queue,
+                        surface_format,
+                        prepared,
+                    ))
+                } else {
+                    Some(TextRendererDg::new(&device, &queue, surface_format))
+                };
+                (renderer, t0.elapsed().as_secs_f64() * 1000.0)
+            });
+            (
+                primitives_task
+                    .join()
+                    .expect("primitive renderer init panicked"),
+                line_plots_task
+                    .join()
+                    .expect("line plot renderer init panicked"),
+                images_task.join().expect("image renderer init panicked"),
+                scatter_compositor_task
+                    .join()
+                    .expect("scatter compositor init panicked"),
+                text_task.join().expect("text renderer init panicked"),
+            )
+        });
+        let renderer_init_ms = renderer_init_t0.elapsed().as_secs_f64() * 1000.0;
+        let text_init_detail = text
             .as_ref()
-            .map(|_| PrimitivesRenderer::new(&device, &queue, config.format, width, height));
+            .map(TextRendererDg::init_timings)
+            .unwrap_or_default();
 
-        let line_plots = spec
-            .widget_tree
-            .as_ref()
-            .map(|_| LinePlotRenderer::new(&device, &queue, config.format, width, height));
-
-        let images = spec
-            .widget_tree
-            .as_ref()
-            .map(|_| ImageRenderer::new(&device, &queue, config.format, width, height));
-        let scatter_compositor = ScatterCompositeRenderer::new(&device, config.format);
-
-        let text = spec
-            .widget_tree
-            .as_ref()
-            .map(|_| TextRendererDg::new(&device, &queue, config.format));
-
+        let state_build_t0 = Instant::now();
         let mut resources = ResourceRegistry::default();
         if let Some(tree) = &spec.widget_tree {
             resources.sync_from_tree(tree);
@@ -13242,6 +15068,16 @@ impl WgpuState {
         }
         debug_assert_eq!(widget_kinds.len(), widget_paths.len());
 
+        let initial_pipeline_cache_status = if !pipeline_cache_supported {
+            "unsupported_or_disabled"
+        } else if pipeline_cache_loaded_bytes > 0 {
+            "loaded"
+        } else {
+            "cold"
+        };
+
+        let (scatter_density_viewport_job_sender, scatter_density_viewport_job_receiver) =
+            mpsc::channel();
         let mut state = Self {
             surface,
             device,
@@ -13249,7 +15085,42 @@ impl WgpuState {
             config,
             memory_hint,
             backend_policy,
-            adapter_backend,
+            adapter_name: adapter_info.name,
+            adapter_vendor: adapter_info.vendor,
+            adapter_device: adapter_info.device,
+            adapter_device_type: format!("{:?}", adapter_info.device_type),
+            adapter_backend: adapter_info.backend.to_string(),
+            adapter_driver: adapter_info.driver,
+            adapter_driver_info: adapter_info.driver_info,
+            pipeline_cache_status: initial_pipeline_cache_status.to_string(),
+            pipeline_cache_path: requested_pipeline_cache_path
+                .as_ref()
+                .map(|path| path.to_string_lossy().into_owned()),
+            pipeline_cache_loaded_bytes,
+            pipeline_cache_saved_bytes: 0,
+            startup_timings: GpuStartupTimings {
+                instance_surface_ms,
+                adapter_request_ms,
+                device_request_ms,
+                surface_config_ms,
+                loading_present_ms,
+                scatter_resources_ms,
+                renderer_init_ms,
+                primitives_init_ms,
+                line_plots_init_ms,
+                images_init_ms,
+                scatter_compositor_init_ms,
+                text_init_ms,
+                text_reused_loading_renderer,
+                text_font_system_ms: text_init_detail.font_system_ms,
+                text_font_system_wait_ms,
+                text_swash_cache_ms: text_init_detail.swash_cache_ms,
+                text_atlas_viewport_ms: text_init_detail.atlas_viewport_ms,
+                text_base_renderer_ms: text_init_detail.base_renderer_ms,
+                text_overlay_renderer_ms: text_init_detail.overlay_renderer_ms,
+                pipeline_cache_load_ms,
+                ..GpuStartupTimings::default()
+            },
             present_mode_env,
             supported_present_modes,
             _depth_texture: depth_texture,
@@ -13263,6 +15134,20 @@ impl WgpuState {
             scale_factor,
             platform_color_scheme: window.theme().map(winit_theme_color_scheme),
             scatters,
+            scatter_point_stores: HashMap::new(),
+            scatter_point_store_batch_leases: HashMap::new(),
+            scatter_point_store_latest_revisions: HashMap::new(),
+            scatter_streaming_cache_metrics: ScatterStreamingCacheMetrics::default(),
+            scatter_point_store_gpu: HashMap::new(),
+            scatter_density_products: HashMap::new(),
+            scatter_density_cache_metrics: ScatterDensityCacheMetrics::default(),
+            scatter_derived_products: HashMap::new(),
+            scatter_derived_product_lru: VecDeque::new(),
+            scatter_derived_cache_metrics: ScatterDerivedCacheMetrics::default(),
+            scatter_derived_gpu: HashMap::new(),
+            scatter_density_viewport_job_sender,
+            scatter_density_viewport_job_receiver,
+            wake_proxy: wake_proxy.clone(),
             scatter_widget_pool: Vec::new(),
             line_plot_metrics: HashMap::new(),
             visible_scatter_order: Vec::new(),
@@ -13358,7 +15243,37 @@ impl WgpuState {
             loading_screen,
         };
 
+        state.startup_timings.state_build_ms = state_build_t0.elapsed().as_secs_f64() * 1000.0;
+        let initial_layout_t0 = Instant::now();
         state.apply_layout();
+        state.startup_timings.initial_layout_ms =
+            initial_layout_t0.elapsed().as_secs_f64() * 1000.0;
+        let pipeline_cache_save_t0 = Instant::now();
+        if let (Some(cache), Some(path)) = (
+            pipeline_cache.as_ref(),
+            requested_pipeline_cache_path.as_ref(),
+        ) {
+            if let Some(data) = cache.get_data() {
+                let parent_ready = path
+                    .parent()
+                    .is_none_or(|parent| std::fs::create_dir_all(parent).is_ok());
+                if parent_ready && std::fs::write(path, &data).is_ok() {
+                    state.pipeline_cache_saved_bytes = data.len();
+                    state.pipeline_cache_status = if pipeline_cache_loaded_bytes > 0 {
+                        "loaded_and_saved".to_string()
+                    } else {
+                        "created_and_saved".to_string()
+                    };
+                } else {
+                    state.pipeline_cache_status = "save_failed".to_string();
+                }
+            } else {
+                state.pipeline_cache_status = "backend_returned_no_data".to_string();
+            }
+        }
+        state.startup_timings.pipeline_cache_save_ms =
+            pipeline_cache_save_t0.elapsed().as_secs_f64() * 1000.0;
+        state.startup_timings.total_ms = gpu_total_t0.elapsed().as_secs_f64() * 1000.0;
 
         Ok((state, upload_ms))
     }
@@ -13410,6 +15325,33 @@ impl WgpuState {
         self.styles_dirty = true;
     }
 
+    fn ensure_optional_renderers_for_tree(&mut self) {
+        let Some(tree) = self.widget_tree.as_ref() else {
+            return;
+        };
+        if self.line_plots.is_none() && subtree_contains_widget_kind(tree, WidgetKind::LinePlot) {
+            self.line_plots = Some(LinePlotRenderer::new(
+                &self.device,
+                &self.queue,
+                self.config.format,
+                self.config.width,
+                self.config.height,
+            ));
+        }
+        if self.images.is_none()
+            && (subtree_contains_widget_kind(tree, WidgetKind::Image)
+                || subtree_contains_widget_kind(tree, WidgetKind::ImageButton))
+        {
+            self.images = Some(ImageRenderer::new(
+                &self.device,
+                &self.queue,
+                self.config.format,
+                self.config.width,
+                self.config.height,
+            ));
+        }
+    }
+
     fn set_platform_color_scheme(&mut self, scheme: DgMediaColorScheme) {
         if self.platform_color_scheme == Some(scheme) {
             return;
@@ -13422,6 +15364,7 @@ impl WgpuState {
     /// Recompute layout and push scatter viewport + primitives + text to GPU.
     fn apply_layout(&mut self) {
         let total_t0 = Instant::now();
+        self.ensure_optional_renderers_for_tree();
         let style_t0 = Instant::now();
         self.reapply_stylesheets_for_current_viewport();
         let style_ms = style_t0.elapsed().as_secs_f64() * 1000.0;
@@ -16837,6 +18780,9 @@ impl WgpuState {
                         Ok(bytes) => {
                             let mut pts = Vec::new();
                             let result = match data_format {
+                                ScatterPayloadFormat::XyF32V0 => {
+                                    decode_scatter_xy_points_bytes_into(&bytes, &mut pts)
+                                }
                                 ScatterPayloadFormat::XyzF32V0 => {
                                     decode_scatter_points_bytes_into_colormap(
                                         &bytes, &mut pts, &colormap,
@@ -16893,8 +18839,32 @@ impl WgpuState {
                         last_direct_scene_revision: 0,
                         quality_last_change: Instant::now(),
                         points: pts,
-                        primary_compact_xyz: Vec::new(),
+                        primary_compact_xyz: Arc::from([]),
+                        primary_store_source: None,
                         primary_compact_colormap: colormap.clone(),
+                        rendering_policy_requested: "exact".to_string(),
+                        rendering_policy_effective: "exact".to_string(),
+                        rendering_policy_reason: "requested_exact".to_string(),
+                        source_retention_requested: "current".to_string(),
+                        source_retention_effective: "current".to_string(),
+                        source_retention_reason: "requested_current".to_string(),
+                        source_discarded: false,
+                        source_bytes_released_total: 0,
+                        density_stats: None,
+                        density_product: None,
+                        density_product_source_revision: None,
+                        density_cache_hit: false,
+                        density_viewport_deadline: None,
+                        density_viewport_rebuilds: 0,
+                        density_viewport_request_revision: 0,
+                        density_viewport_job_pending: false,
+                        density_viewport_jobs_started: 0,
+                        density_viewport_jobs_completed: 0,
+                        density_viewport_jobs_stale: 0,
+                        density_viewport_job_errors: 0,
+                        density_viewport_last_job_ms: 0.0,
+                        derived_cache_hit: false,
+                        derived_gpu_cache_hit: false,
                         metrics: ScatterMetrics::default(),
                         fitted_once: matches!(status, ScatterPayloadStatus::Ok),
                         data_min,
@@ -18340,10 +20310,534 @@ impl WgpuState {
         self.resources.release(id)
     }
 
+    fn start_due_scatter_density_viewport_jobs(&mut self, now: Instant) -> Option<Instant> {
+        let due_ids = self
+            .scatters
+            .iter()
+            .filter_map(|(id, rt)| {
+                rt.density_viewport_deadline
+                    .filter(|deadline| *deadline <= now && !rt.density_viewport_job_pending)
+                    .map(|_| id.clone())
+            })
+            .collect::<Vec<_>>();
+        for id in due_ids {
+            let Some(rt) = self.scatters.get_mut(&id) else {
+                continue;
+            };
+            rt.density_viewport_deadline = None;
+            if !rt.supports_viewport_refinement() {
+                continue;
+            }
+            let Some(raw) = rt.widget.visible_xy_bounds() else {
+                continue;
+            };
+            let viewport = [
+                raw[0].max(rt.data_min.x),
+                raw[1].max(rt.data_min.y),
+                raw[2].min(rt.data_max.x),
+                raw[3].min(rt.data_max.y),
+            ];
+            if viewport[0] > viewport[2] || viewport[1] > viewport[3] {
+                continue;
+            }
+            let request_revision = rt.density_viewport_request_revision;
+            let source = rt.primary_compact_xyz.clone();
+            let data_min = rt.data_min;
+            let data_max = rt.data_max;
+            let requested_policy = rt.rendering_policy_requested.clone();
+            let density_was_active = rt.rendering_policy_effective == "density";
+            let base_product = rt.density_product.clone();
+            let viewport_covers_full_bounds = viewport[0] <= data_min.x
+                && viewport[1] <= data_min.y
+                && viewport[2] >= data_max.x
+                && viewport[3] >= data_max.y;
+            let (viewport_grid_width, viewport_grid_height) =
+                scatter_density_viewport_grid(rt.widget.width, rt.widget.height);
+            let (product_grid_width, product_grid_height) =
+                if requested_policy == "decimated" || viewport_covers_full_bounds {
+                    (SCATTER_DENSITY_GRID_WIDTH, SCATTER_DENSITY_GRID_HEIGHT)
+                } else {
+                    (viewport_grid_width, viewport_grid_height)
+                };
+            let derived_cache_key = rt
+                .primary_store_source
+                .as_ref()
+                .map(|(store_id, revision)| ScatterDerivedCacheKey {
+                    store_id: store_id.clone(),
+                    source_revision: *revision,
+                    viewport_bits: viewport.map(scatter_derived_cache_f32_bits),
+                    requested_policy: requested_policy.clone(),
+                    adaptive_density_active: density_was_active,
+                    grid_width: product_grid_width as u32,
+                    grid_height: product_grid_height as u32,
+                });
+            let cached_derived = derived_cache_key
+                .as_ref()
+                .and_then(|key| self.scatter_derived_products.get(key))
+                .cloned();
+            if cached_derived.is_some() {
+                if let Some(key) = derived_cache_key.as_ref() {
+                    touch_scatter_derived_product(
+                        &mut self.scatter_derived_product_lru,
+                        &mut self.scatter_derived_cache_metrics,
+                        key,
+                    );
+                }
+            }
+            let cached_full_product = if requested_policy != "decimated" {
+                rt.primary_store_source
+                    .as_ref()
+                    .and_then(|(store_id, revision)| {
+                        self.scatter_density_products
+                            .get(&(
+                                store_id.clone(),
+                                *revision,
+                                SCATTER_DENSITY_GRID_WIDTH as u32,
+                                SCATTER_DENSITY_GRID_HEIGHT as u32,
+                            ))
+                            .cloned()
+                    })
+            } else {
+                None
+            };
+            let build_index = rt.primary_store_source.is_some();
+            let sender = self.scatter_density_viewport_job_sender.clone();
+            let wake_proxy = self.wake_proxy.clone();
+            let worker_id = id.clone();
+            let benchmark_delay_ms = std::env::var("DRAGONGUI_BENCH_SCATTER_VIEWPORT_JOB_DELAY_MS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(0)
+                .min(5_000);
+            rt.density_viewport_job_pending = true;
+            rt.density_viewport_jobs_started += 1;
+            if let Some(product) = cached_derived {
+                self.scatter_derived_cache_metrics.hits += 1;
+                let _ = sender.send(ScatterDensityViewportJobResult {
+                    widget_id: worker_id,
+                    request_revision,
+                    product: Ok(product),
+                    job_ms: 0.0,
+                    cache_key: derived_cache_key,
+                    cache_hit: true,
+                });
+                let _ = wake_proxy.send_event(RuntimeEvent::Wake);
+                continue;
+            }
+            if derived_cache_key.is_some() {
+                self.scatter_derived_cache_metrics.misses += 1;
+            }
+            let spawn_result = std::thread::Builder::new()
+                .name("dragongui-density-viewport".to_string())
+                .spawn(move || {
+                    let started = Instant::now();
+                    if benchmark_delay_ms > 0 {
+                        std::thread::sleep(Duration::from_millis(benchmark_delay_ms));
+                    }
+                    let product = (|| -> Result<Arc<ScatterDensityProduct>, String> {
+                        if viewport_covers_full_bounds {
+                            if let Some(product) = cached_full_product {
+                                return Ok(product);
+                            }
+                        }
+                        let spatial_index = if let Some(index) = base_product
+                            .as_ref()
+                            .and_then(|product| product.spatial_index())
+                        {
+                            Some(index.clone())
+                        } else if build_index {
+                            if let Some(product) = base_product.as_ref() {
+                                Some(
+                                    product
+                                        .spatial_index
+                                        .get_or_init(|| {
+                                            build_scatter_xy_density_spatial_index(
+                                                &source, data_min, data_max,
+                                            )
+                                            .map(Arc::new)
+                                            .map_err(|error| error.to_string())
+                                        })
+                                        .as_ref()
+                                        .map_err(Clone::clone)?
+                                        .clone(),
+                                )
+                            } else {
+                                Some(Arc::new(
+                                    build_scatter_xy_density_spatial_index(
+                                        &source, data_min, data_max,
+                                    )
+                                    .map_err(|error| error.to_string())?,
+                                ))
+                            }
+                        } else {
+                            None
+                        };
+                        let mut candidates = Vec::new();
+                        if let Some(index) = spatial_index.as_ref() {
+                            scatter_density_spatial_candidates(index, viewport, &mut candidates);
+                        }
+                        let candidate_rows = spatial_index.as_ref().map(|_| candidates.as_slice());
+                        let (points, stats) = if requested_policy == "decimated" {
+                            build_scatter_xy_decimated(
+                                &source,
+                                data_min,
+                                data_max,
+                                Some(viewport),
+                                candidate_rows,
+                            )
+                            .map_err(|error| error.to_string())?
+                        } else {
+                            let (density_points, density_stats) = build_scatter_xy_density(
+                                &source,
+                                data_min,
+                                data_max,
+                                product_grid_width,
+                                product_grid_height,
+                                Some(viewport),
+                                candidate_rows,
+                            )
+                            .map_err(|error| error.to_string())?;
+                            let use_density = requested_policy != "adaptive"
+                                || adaptive_scatter_density_selected(
+                                    density_stats.finite_source_rows as usize,
+                                    density_was_active,
+                                );
+                            if use_density {
+                                (density_points, density_stats)
+                            } else {
+                                build_scatter_xy_exact_viewport(&source, viewport, candidate_rows)
+                                    .map_err(|error| error.to_string())?
+                            }
+                        };
+                        Ok(Arc::new(ScatterDensityProduct::new(
+                            points,
+                            stats,
+                            spatial_index,
+                        )))
+                    })();
+                    let _ = sender.send(ScatterDensityViewportJobResult {
+                        widget_id: worker_id,
+                        request_revision,
+                        product,
+                        job_ms: started.elapsed().as_secs_f64() * 1000.0,
+                        cache_key: derived_cache_key,
+                        cache_hit: false,
+                    });
+                    let _ = wake_proxy.send_event(RuntimeEvent::Wake);
+                });
+            if spawn_result.is_err() {
+                rt.density_viewport_job_pending = false;
+                rt.density_viewport_job_errors += 1;
+            }
+        }
+        self.scatters
+            .values()
+            .filter(|rt| !rt.density_viewport_job_pending)
+            .filter_map(|rt| rt.density_viewport_deadline)
+            .min()
+    }
+
+    fn drain_scatter_density_viewport_jobs(&mut self) -> bool {
+        let mut changed = false;
+        while let Ok(result) = self.scatter_density_viewport_job_receiver.try_recv() {
+            let Some(rt) = self.scatters.get_mut(&result.widget_id) else {
+                continue;
+            };
+            rt.density_viewport_job_pending = false;
+            rt.density_viewport_last_job_ms = result.job_ms;
+            let result_source_revision = result.cache_key.as_ref().map(|key| key.source_revision);
+            let current_source_revision = rt
+                .primary_store_source
+                .as_ref()
+                .map(|(_, revision)| *revision);
+            if !scatter_density_viewport_result_is_current(
+                result.request_revision,
+                rt.density_viewport_request_revision,
+                &rt.rendering_policy_requested,
+                rt.payload_format,
+            ) || !scatter_density_viewport_source_is_current(
+                result_source_revision,
+                current_source_revision,
+            ) {
+                rt.density_viewport_jobs_stale += 1;
+                continue;
+            }
+            let product = match result.product {
+                Ok(product) => product,
+                Err(_) => {
+                    rt.density_viewport_job_errors += 1;
+                    continue;
+                }
+            };
+            if !result.cache_hit {
+                if let Some(key) = result.cache_key {
+                    insert_scatter_derived_product(
+                        &mut self.scatter_derived_products,
+                        &mut self.scatter_derived_product_lru,
+                        &mut self.scatter_derived_cache_metrics,
+                        key,
+                        product.clone(),
+                    );
+                }
+            }
+            set_scatter_derived_product_with_gpu_cache(
+                rt,
+                &self.device,
+                &self.queue,
+                &product,
+                &mut self.scatter_derived_gpu,
+            );
+            if product.stats.decimated {
+                rt.rendering_policy_effective = "decimated".to_string();
+                rt.rendering_policy_reason = "requested_decimated".to_string();
+            } else if product.stats.exact_visible {
+                rt.rendering_policy_effective = "exact".to_string();
+                rt.rendering_policy_reason =
+                    "adaptive_exact_visible_below_density_exit_threshold".to_string();
+            } else if rt.rendering_policy_requested == "adaptive" {
+                rt.rendering_policy_reason = if rt.rendering_policy_effective == "exact" {
+                    "adaptive_density_entered_above_enter_threshold"
+                } else {
+                    "adaptive_density_retained_above_exit_threshold"
+                }
+                .to_string();
+                rt.rendering_policy_effective = "density".to_string();
+            }
+            rt.density_stats = Some(product.stats.clone());
+            rt.density_product = Some(product);
+            rt.density_product_source_revision = result_source_revision;
+            rt.density_cache_hit = false;
+            rt.derived_cache_hit = result.cache_hit;
+            rt.density_viewport_rebuilds += 1;
+            rt.density_viewport_jobs_completed += 1;
+            changed = true;
+
+            let protected_cache_key =
+                rt.primary_store_source
+                    .as_ref()
+                    .map(|(store_id, revision)| {
+                        (
+                            store_id.clone(),
+                            *revision,
+                            SCATTER_DENSITY_GRID_WIDTH as u32,
+                            SCATTER_DENSITY_GRID_HEIGHT as u32,
+                        )
+                    });
+            while self
+                .scatter_density_products
+                .values()
+                .map(|cached| cached.retained_bytes())
+                .sum::<usize>()
+                > SCATTER_DENSITY_CACHE_MAX_BYTES
+                && self.scatter_density_products.len() > 1
+            {
+                let evicted = self.scatter_density_products.iter().find_map(|(key, _)| {
+                    (Some(key) != protected_cache_key.as_ref()).then(|| key.clone())
+                });
+                let Some(evicted) = evicted else {
+                    break;
+                };
+                self.scatter_density_products.remove(&evicted);
+                self.scatter_density_cache_metrics.evictions += 1;
+            }
+        }
+        changed
+    }
+
+    fn accept_scatter_stream_revision(
+        &mut self,
+        store_id: &str,
+        revision: u64,
+        coalesce: bool,
+    ) -> bool {
+        match scatter_stream_revision_action(
+            self.scatter_point_store_latest_revisions
+                .get(store_id)
+                .copied(),
+            revision,
+            coalesce,
+        ) {
+            ScatterStreamRevisionAction::Accept => true,
+            ScatterStreamRevisionAction::DropStale => {
+                self.scatter_streaming_cache_metrics.stale_updates_dropped = self
+                    .scatter_streaming_cache_metrics
+                    .stale_updates_dropped
+                    .saturating_add(1);
+                false
+            }
+            ScatterStreamRevisionAction::Advance => {
+                self.scatter_point_store_latest_revisions
+                    .insert(store_id.to_string(), revision);
+                self.scatter_streaming_cache_metrics.revision_advances = self
+                    .scatter_streaming_cache_metrics
+                    .revision_advances
+                    .saturating_add(1);
+                self.invalidate_obsolete_scatter_store_products(store_id, revision);
+                true
+            }
+        }
+    }
+
+    fn invalidate_obsolete_scatter_store_products(&mut self, store_id: &str, revision: u64) {
+        let before = self.scatter_point_stores.len();
+        self.scatter_point_stores
+            .retain(|(id, candidate_revision), _| {
+                id != store_id || *candidate_revision == revision
+            });
+        self.scatter_streaming_cache_metrics
+            .point_store_revisions_invalidated = self
+            .scatter_streaming_cache_metrics
+            .point_store_revisions_invalidated
+            .saturating_add((before - self.scatter_point_stores.len()) as u64);
+
+        let before = self.scatter_point_store_gpu.len();
+        self.scatter_point_store_gpu
+            .retain(|(id, candidate_revision), _| {
+                id != store_id || *candidate_revision == revision
+            });
+        self.scatter_streaming_cache_metrics
+            .exact_gpu_revisions_invalidated = self
+            .scatter_streaming_cache_metrics
+            .exact_gpu_revisions_invalidated
+            .saturating_add((before - self.scatter_point_store_gpu.len()) as u64);
+
+        let before = self.scatter_density_products.len();
+        self.scatter_density_products
+            .retain(|(id, candidate_revision, _, _), _| {
+                id != store_id || *candidate_revision == revision
+            });
+        self.scatter_streaming_cache_metrics
+            .density_products_invalidated = self
+            .scatter_streaming_cache_metrics
+            .density_products_invalidated
+            .saturating_add((before - self.scatter_density_products.len()) as u64);
+
+        let before = self.scatter_derived_products.len();
+        self.scatter_derived_products
+            .retain(|key, _| key.store_id != store_id || key.source_revision == revision);
+        self.scatter_streaming_cache_metrics
+            .derived_products_invalidated = self
+            .scatter_streaming_cache_metrics
+            .derived_products_invalidated
+            .saturating_add((before - self.scatter_derived_products.len()) as u64);
+        self.scatter_derived_product_lru
+            .retain(|key| key.store_id != store_id || key.source_revision == revision);
+
+        let before = self.scatter_derived_gpu.len();
+        self.scatter_derived_gpu
+            .retain(|key, _| key.store_id != store_id || key.source_revision == revision);
+        self.scatter_streaming_cache_metrics
+            .derived_gpu_products_invalidated = self
+            .scatter_streaming_cache_metrics
+            .derived_gpu_products_invalidated
+            .saturating_add((before - self.scatter_derived_gpu.len()) as u64);
+    }
+
     fn set_scatter_points_packed(
         &mut self,
         id: &str,
         xyz: Vec<u8>,
+        store_source: Option<(String, u64)>,
+        telemetry: Option<ScatterTelemetry>,
+        colormap: String,
+        data_format: ScatterPayloadFormat,
+        fit: bool,
+    ) -> Result<bool, DragonError> {
+        let (xyz, retained_source): (Arc<[u8]>, Option<(String, u64)>) =
+            if let Some((store_id, revision)) = store_source {
+                self.scatter_point_stores
+                    .retain(|_, payload| payload.strong_count() > 0);
+                let key = (store_id, revision);
+                let payload = self
+                    .scatter_point_stores
+                    .get(&key)
+                    .and_then(Weak::upgrade)
+                    .unwrap_or_else(|| {
+                        let payload: Arc<[u8]> = Arc::from(xyz);
+                        self.scatter_point_stores
+                            .insert(key.clone(), Arc::downgrade(&payload));
+                        payload
+                    });
+                self.scatter_point_store_batch_leases
+                    .insert(key.clone(), payload.clone());
+                (payload, Some(key))
+            } else {
+                (Arc::from(xyz), None)
+            };
+        let cache_key = retained_source.clone();
+        let result = self.set_scatter_points_shared(
+            id,
+            xyz,
+            retained_source,
+            None,
+            telemetry,
+            colormap,
+            data_format,
+            fit,
+        );
+        if matches!(result, Ok(true))
+            && matches!(
+                data_format,
+                ScatterPayloadFormat::XyF32V0 | ScatterPayloadFormat::XyzF32V0
+            )
+        {
+            if let (Some(key), Some(runtime)) = (cache_key, self.scatters.get_mut(id)) {
+                if let Some(shared) = runtime.widget.promote_primary_to_shared() {
+                    self.scatter_point_store_gpu
+                        .insert(key, Arc::downgrade(&shared));
+                }
+            }
+        }
+        result
+    }
+
+    fn set_scatter_point_store_reference(
+        &mut self,
+        id: &str,
+        store_id: String,
+        revision: u64,
+        colormap: String,
+        data_format: ScatterPayloadFormat,
+        fit: bool,
+    ) -> Result<bool, DragonError> {
+        let key = (store_id, revision);
+        let Some(payload) = self.scatter_point_stores.get(&key).and_then(Weak::upgrade) else {
+            return Err(DragonError::Runtime(format!(
+                "PointStore revision is not registered: {}@{}",
+                key.0, key.1
+            )));
+        };
+        let shared_gpu = self
+            .scatter_point_store_gpu
+            .get(&key)
+            .and_then(Weak::upgrade);
+        let result = self.set_scatter_points_shared(
+            id,
+            payload,
+            Some(key.clone()),
+            shared_gpu,
+            None,
+            colormap,
+            data_format,
+            fit,
+        );
+        if matches!(result, Ok(true)) {
+            if let Some(runtime) = self.scatters.get_mut(id) {
+                if let Some(shared) = runtime.widget.promote_primary_to_shared() {
+                    self.scatter_point_store_gpu
+                        .insert(key, Arc::downgrade(&shared));
+                }
+            }
+        }
+        result
+    }
+
+    fn set_scatter_points_shared(
+        &mut self,
+        id: &str,
+        xyz: Arc<[u8]>,
+        retained_source: Option<(String, u64)>,
+        shared_gpu: Option<Arc<scatter::SharedPointBuffers>>,
         telemetry: Option<ScatterTelemetry>,
         colormap: String,
         data_format: ScatterPayloadFormat,
@@ -18386,7 +20880,8 @@ impl WgpuState {
             if maybe_bounds.is_none() && point_count > 0 {
                 runtime.payload_format = data_format;
                 runtime.points.clear();
-                runtime.primary_compact_xyz.clear();
+                runtime.primary_compact_xyz = Arc::from([]);
+                runtime.primary_store_source = None;
                 runtime.primary_pick_cache = None;
                 runtime.payload_status = ScatterPayloadStatus::AllNonFinite;
                 runtime.primary_hover_meta = Vec::new();
@@ -18440,16 +20935,26 @@ impl WgpuState {
                 };
                 return Ok(true);
             }
-            if let Some(upload_timings) =
+            let raw_upload =
                 runtime
                     .widget
-                    .set_point_instances_raw(&self.device, &self.queue, &xyz)
-            {
+                    .set_point_instances_raw(&self.device, &self.queue, &xyz);
+            let raw_upload = match raw_upload {
+                Ok(upload) => upload,
+                Err(error) => {
+                    let message = error.to_string();
+                    runtime.payload_status =
+                        ScatterPayloadStatus::CapacityExceeded(message.clone());
+                    return Err(DragonError::ScatterCapacity(message));
+                }
+            };
+            if let Some(upload_timings) = raw_upload {
                 let (data_min, data_max) =
                     maybe_bounds.unwrap_or((glam::Vec3::ZERO, glam::Vec3::ZERO));
                 runtime.payload_format = data_format;
                 runtime.points.clear();
-                runtime.primary_compact_xyz.clear();
+                runtime.primary_compact_xyz = Arc::from([]);
+                runtime.primary_store_source = None;
                 runtime.primary_pick_cache = None;
                 runtime.primary_hover_meta = Vec::new();
                 runtime.primary_hover_columns = Vec::new();
@@ -18520,32 +21025,85 @@ impl WgpuState {
             }
         }
 
-        if data_format == ScatterPayloadFormat::XyzF32V0 {
-            let point_count = xyz.len() / 12;
+        if matches!(
+            data_format,
+            ScatterPayloadFormat::XyF32V0 | ScatterPayloadFormat::XyzF32V0
+        ) {
+            let point_count = xyz.len()
+                / if data_format == ScatterPayloadFormat::XyF32V0 {
+                    8
+                } else {
+                    12
+                };
             let telemetry_bounds = telemetry
                 .as_ref()
                 .and_then(|t| t.bounds)
                 .map(|(min, max)| (glam::Vec3::from_array(min), glam::Vec3::from_array(max)));
-            if point_count == 0 || telemetry_bounds.is_some() {
+            let bounds_t0 = Instant::now();
+            let scanned_bounds = if telemetry_bounds.is_none() && point_count > 0 {
+                Some(if data_format == ScatterPayloadFormat::XyF32V0 {
+                    bounds_from_xy_f32_v0(&xyz)?
+                } else {
+                    bounds_from_xyz_f32_v0(&xyz)?
+                })
+            } else {
+                None
+            };
+            let bounds_ms = if scanned_bounds.is_some() {
+                bounds_t0.elapsed().as_secs_f64() * 1000.0
+            } else {
+                0.0
+            };
+            let compact_bounds = telemetry_bounds.or_else(|| scanned_bounds.flatten());
+            if point_count == 0 || compact_bounds.is_some() {
                 let (data_min, data_max) =
-                    telemetry_bounds.unwrap_or((glam::Vec3::ZERO, glam::Vec3::ZERO));
+                    compact_bounds.unwrap_or((glam::Vec3::ZERO, glam::Vec3::ZERO));
                 let effective_colormap = if runtime.widget.chrome.scalar_bar.visible {
                     runtime.widget.chrome.scalar_bar.colormap.clone()
                 } else {
                     colormap.clone()
                 };
-                if let Some(upload_timings) = runtime.widget.set_xyz_points_raw(
-                    &self.device,
-                    &self.queue,
-                    &xyz,
-                    data_min,
-                    data_max,
-                    &effective_colormap,
-                ) {
+                let compact_upload = if let Some(shared) = shared_gpu.clone() {
+                    Ok(Some(runtime.widget.set_shared_buffers(
+                        shared,
+                        data_min,
+                        data_max,
+                        &effective_colormap,
+                        &self.queue,
+                    )))
+                } else if data_format == ScatterPayloadFormat::XyF32V0 {
+                    runtime
+                        .widget
+                        .set_xy_points_raw(&self.device, &self.queue, &xyz)
+                } else {
+                    runtime.widget.set_xyz_points_raw(
+                        &self.device,
+                        &self.queue,
+                        &xyz,
+                        data_min,
+                        data_max,
+                        &effective_colormap,
+                        retained_source
+                            .is_some()
+                            .then(scatter_point_store_chunk_rows),
+                    )
+                };
+                let compact_upload = match compact_upload {
+                    Ok(upload) => upload,
+                    Err(error) => {
+                        let message = error.to_string();
+                        runtime.payload_status =
+                            ScatterPayloadStatus::CapacityExceeded(message.clone());
+                        return Err(DragonError::ScatterCapacity(message));
+                    }
+                };
+                if let Some(upload_timings) = compact_upload {
                     let payload_bytes = xyz.len();
                     runtime.payload_format = data_format;
                     runtime.points.clear();
                     runtime.primary_compact_xyz = xyz;
+                    runtime.primary_store_source = retained_source.clone();
+                    runtime.source_discarded = false;
                     runtime.primary_compact_colormap = effective_colormap;
                     runtime.primary_pick_cache = None;
                     runtime.primary_hover_meta = Vec::new();
@@ -18597,7 +21155,7 @@ impl WgpuState {
                         last_pack_ms: pack_ms,
                         last_queue_latency_ms: queue_latency_ms,
                         last_decode_ms: 0.0,
-                        last_bounds_ms: 0.0,
+                        last_bounds_ms: bounds_ms,
                         last_upload_ms: upload_timings.primary_ms
                             + upload_timings.lod_ms
                             + grid_ms
@@ -18613,6 +21171,19 @@ impl WgpuState {
                         last_render_cache_hit: runtime.metrics.last_render_cache_hit,
                         ..runtime.metrics.clone()
                     };
+                    let requested_policy = runtime.rendering_policy_requested.clone();
+                    apply_scatter_rendering_policy(
+                        runtime,
+                        &requested_policy,
+                        &self.device,
+                        &self.queue,
+                        &mut self.scatter_density_products,
+                        &mut self.scatter_density_cache_metrics,
+                        &mut self.scatter_derived_products,
+                        &mut self.scatter_derived_product_lru,
+                        &mut self.scatter_derived_cache_metrics,
+                        &mut self.scatter_derived_gpu,
+                    );
                     return Ok(true);
                 }
             }
@@ -18621,6 +21192,9 @@ impl WgpuState {
         let decode_t0 = Instant::now();
         let mut decoded = std::mem::take(&mut runtime.points);
         let result = match data_format {
+            ScatterPayloadFormat::XyF32V0 => {
+                decode_scatter_xy_points_bytes_into(&xyz, &mut decoded)
+            }
             ScatterPayloadFormat::XyzF32V0 => {
                 let telemetry_bounds = telemetry
                     .as_ref()
@@ -18658,7 +21232,8 @@ impl WgpuState {
             runtime.payload_format = data_format;
             decoded.clear();
             runtime.points = decoded;
-            runtime.primary_compact_xyz.clear();
+            runtime.primary_compact_xyz = Arc::from([]);
+            runtime.primary_store_source = None;
             runtime.primary_pick_cache = None;
             runtime.payload_status = ScatterPayloadStatus::AllNonFinite;
             runtime.primary_hover_meta = Vec::new();
@@ -18716,15 +21291,20 @@ impl WgpuState {
         let (data_min, data_max) = maybe_bounds.unwrap_or((glam::Vec3::ZERO, glam::Vec3::ZERO));
         runtime.payload_format = data_format;
         runtime.points = decoded;
-        if data_format == ScatterPayloadFormat::XyzF32V0 {
+        if matches!(
+            data_format,
+            ScatterPayloadFormat::XyF32V0 | ScatterPayloadFormat::XyzF32V0
+        ) {
             runtime.primary_compact_xyz = xyz.clone();
+            runtime.primary_store_source = retained_source;
             runtime.primary_compact_colormap = if runtime.widget.chrome.scalar_bar.visible {
                 runtime.widget.chrome.scalar_bar.colormap.clone()
             } else {
                 colormap.clone()
             };
         } else {
-            runtime.primary_compact_xyz.clear();
+            runtime.primary_compact_xyz = Arc::from([]);
+            runtime.primary_store_source = None;
         }
         runtime.primary_pick_cache = None;
         runtime.primary_hover_meta = Vec::new();
@@ -19375,11 +21955,224 @@ impl WgpuState {
         );
         map.insert(
             "payload_status".to_string(),
-            json!(format!("{:?}", rt.payload_status)),
+            json!(rt.payload_status.as_str()),
+        );
+        map.insert(
+            "capacity_error".to_string(),
+            match rt.widget.last_capacity_error() {
+                Some(error) => json!({
+                    "requested_points": error.requested_points,
+                    "required_bytes": error.required_bytes,
+                    "max_buffer_size": error.max_buffer_size,
+                    "stride_bytes": error.stride_bytes,
+                    "representation": error.representation,
+                    "suggested_remedies": [
+                        "use compact attributes",
+                        "set rendering='adaptive'",
+                        "split the data into smaller exact chunks",
+                    ],
+                    "message": error.to_string(),
+                }),
+                None => Value::Null,
+            },
         );
         map.insert(
             "effective_draw_point_count".to_string(),
             json!(rt.widget.effective_draw_point_count()),
+        );
+        let source_rows = rt.metrics.last_point_count as u64;
+        let render_rows = rt.widget.effective_draw_point_count() as u64;
+        let memory = rt.widget.gpu_memory_stats();
+        let density = rt.density_stats.as_ref().map(|stats| {
+            let spatial_index = rt
+                .density_product
+                .as_ref()
+                .and_then(|product| product.spatial_index());
+            json!({
+                "grid_width": stats.grid_width,
+                "grid_height": stats.grid_height,
+                "finite_source_rows": stats.finite_source_rows,
+                "represented_source_rows": stats.represented_source_rows,
+                "source_rows_conserved": stats.finite_source_rows
+                    == stats.represented_source_rows,
+                "representative_rows": stats.representative_rows,
+                "max_bin_count": stats.max_bin_count,
+                "presentation_colormap": rt.primary_compact_colormap,
+                "viewport_pixel_size": [rt.widget.width, rt.widget.height],
+                "grid_resolution_policy": if stats.viewport_bounds.is_some() && !stats.decimated {
+                    "one_cell_per_two_physical_pixels_clamped_32_256"
+                } else {
+                    "fixed_256"
+                },
+                "build_ms": stats.build_ms,
+                "scanned_source_rows": stats.scanned_source_rows,
+                "scope": if stats.viewport_bounds.is_some() { "viewport" } else { "full" },
+                "viewport_bounds": stats.viewport_bounds,
+                "viewport_rebuilds": rt.density_viewport_rebuilds,
+                "viewport_debounce_ms": SCATTER_DENSITY_VIEWPORT_DEBOUNCE_MS,
+                "spatial_index_used": stats.viewport_bounds.is_some() && spatial_index.is_some(),
+                "spatial_index_grid": spatial_index.map(|index| [index.grid_width, index.grid_height]),
+                "spatial_index_bytes": spatial_index.map_or(0, |index| index.retained_bytes()),
+                "spatial_index_build_ms": spatial_index.map_or(0.0, |index| index.build_ms),
+                "spatial_index_status": if spatial_index.is_some() {
+                    "ready"
+                } else if rt.primary_store_source.is_some() {
+                    "deferred"
+                } else {
+                    "unavailable"
+                },
+                "viewport_job_pending": rt.density_viewport_job_pending,
+                "viewport_job_request_revision": rt.density_viewport_request_revision,
+                "source_revision": rt.density_product_source_revision,
+                "viewport_jobs_started": rt.density_viewport_jobs_started,
+                "viewport_jobs_completed": rt.density_viewport_jobs_completed,
+                "viewport_jobs_stale": rt.density_viewport_jobs_stale,
+                "viewport_job_errors": rt.density_viewport_job_errors,
+                "viewport_job_ms": rt.density_viewport_last_job_ms,
+                "viewport_representation": if stats.decimated {
+                    "decimated"
+                } else if stats.exact_visible {
+                    "exact"
+                } else {
+                    "density"
+                },
+                "representative": if stats.decimated {
+                    "nearest_source_row_to_cell_center_plus_extrema"
+                } else if stats.exact_visible {
+                    "source_row"
+                } else {
+                    "count_weighted_centroid"
+                },
+                "representative_fingerprint": stats.representative_fingerprint,
+                "weight": if stats.decimated || stats.exact_visible { "one_per_visible_row" } else { "source_row_count" },
+            })
+        });
+        let decimated_product = rt
+            .density_stats
+            .as_ref()
+            .is_some_and(|stats| stats.decimated);
+        let viewport_exact = rt
+            .density_stats
+            .as_ref()
+            .is_some_and(|stats| stats.viewport_bounds.is_some() && stats.exact_visible);
+        let has_viewport_product = rt
+            .density_stats
+            .as_ref()
+            .is_some_and(|stats| stats.viewport_bounds.is_some());
+        map.insert(
+            "representation".to_string(),
+            json!({
+                "selected": if decimated_product {
+                    "decimated_grid_source_points_v1"
+                } else if viewport_exact {
+                    "exact_viewport_point_instance_v1"
+                } else if rt.rendering_policy_effective == "density" {
+                    "density_grid_point_instance_v1"
+                } else {
+                    rt.widget.primary_representation()
+                },
+                "reason": if decimated_product {
+                    "cpu_xy_spatial_nearest_cell_center_plus_extrema"
+                } else if viewport_exact {
+                    "cpu_xy_viewport_exact_visible_points"
+                } else if rt.rendering_policy_effective == "density" {
+                    if rt.density_stats.as_ref().is_some_and(|stats| stats.viewport_bounds.is_some()) {
+                        "cpu_xy_viewport_density_grid_count_weighted_centroids"
+                    } else {
+                        "cpu_xy_density_grid_count_weighted_centroids"
+                    }
+                } else {
+                    rt.widget.representation_reason()
+                },
+                "policy_requested": rt.rendering_policy_requested,
+                "policy_effective": rt.rendering_policy_effective,
+                "policy_reason": rt.rendering_policy_reason,
+                "source_retention_requested": rt.source_retention_requested,
+                "source_retention_effective": rt.source_retention_effective,
+                "source_retention_reason": rt.source_retention_reason,
+                "source_bytes_retained": rt.primary_compact_xyz.len(),
+                "source_bytes_released_total": rt.source_bytes_released_total,
+                "adaptive_density_enter_rows": SCATTER_ADAPTIVE_DENSITY_ENTER_ROWS,
+                "adaptive_density_exit_rows": SCATTER_ADAPTIVE_DENSITY_EXIT_ROWS,
+                "source_rows": source_rows,
+                "render_rows": render_rows,
+                "reduction_ratio": if source_rows == 0 {
+                    1.0
+                } else {
+                    render_rows as f64 / source_rows as f64
+                },
+                "source_payload_bytes": rt.metrics.last_payload_bytes,
+                "density": density,
+                "chunk_count": rt.widget.primary_chunk_count(),
+                "chunk_source_offsets": rt.widget.primary_chunk_source_offsets(),
+                "visible_chunk_count": rt.widget.visible_primary_chunk_count(),
+                "visible_candidate_rows": if decimated_product || has_viewport_product || rt.rendering_policy_effective == "density" {
+                    rt.density_stats.as_ref().map_or(source_rows, |stats| stats.finite_source_rows)
+                } else {
+                    rt.widget.visible_primary_candidate_rows()
+                },
+                "culled_chunk_count": rt.widget.primary_chunk_count()
+                    .saturating_sub(rt.widget.visible_primary_chunk_count()),
+                "culled_source_rows": if decimated_product || has_viewport_product || rt.rendering_policy_effective == "density" {
+                    source_rows.saturating_sub(
+                        rt.density_stats.as_ref().map_or(source_rows, |stats| stats.finite_source_rows)
+                    )
+                } else {
+                    source_rows.saturating_sub(rt.widget.visible_primary_candidate_rows())
+                },
+                "retained_cpu_bytes": rt.points.len()
+                    .saturating_mul(std::mem::size_of::<PointInstance>())
+                    .saturating_add(rt.primary_compact_xyz.len())
+                    .saturating_add(rt.density_product.as_ref().map_or(0, |product| {
+                        product
+                            .points
+                            .len()
+                            .saturating_mul(std::mem::size_of::<PointInstance>())
+                            .saturating_add(
+                                product
+                                    .spatial_index()
+                                    .map_or(0, |index| index.retained_bytes()),
+                            )
+                    })),
+                "density_cache_hit": rt.density_cache_hit,
+                "derived_cache_hit": rt.derived_cache_hit,
+                "derived_gpu_cache_hit": rt.derived_gpu_cache_hit,
+                "primary_stride_bytes": match rt.widget.primary_representation() {
+                    "chunked_xy_f32_v0" => 8,
+                    "compact_xy_f32_v0" => 8,
+                    "chunked_xyz_f32_v0" => 12,
+                    "compact_xyz_f32_v0" => 12,
+                    "empty" => 0,
+                    _ => std::mem::size_of::<PointInstance>(),
+                },
+            }),
+        );
+        map.insert(
+            "point_store_source".to_string(),
+            match &rt.primary_store_source {
+                Some((store_id, revision)) => json!({
+                    "store_id": store_id,
+                    "revision": revision,
+                    "payload_bytes": rt.primary_compact_xyz.len(),
+                    "scatter_references": Arc::strong_count(&rt.primary_compact_xyz),
+                }),
+                None => Value::Null,
+            },
+        );
+        map.insert(
+            "gpu_memory".to_string(),
+            json!({
+                "primary_allocated_bytes": memory.primary_allocated_bytes,
+                "primary_used_bytes": memory.primary_used_bytes,
+                "primary_shared": memory.primary_shared,
+                "lod_allocated_bytes": memory.lod_allocated_bytes,
+                "lod_used_bytes": memory.lod_used_bytes,
+                "actor_allocated_bytes": memory.actor_allocated_bytes,
+                "chrome_allocated_bytes": memory.chrome_allocated_bytes,
+                "mesh_allocated_bytes": memory.mesh_allocated_bytes,
+                "uniform_allocated_bytes": memory.uniform_allocated_bytes,
+                "total_allocated_bytes": memory.total_allocated_bytes,
+            }),
         );
         map.insert(
             "auto_point_size".to_string(),
@@ -19590,6 +22383,92 @@ impl WgpuState {
             .iter()
             .map(|(id, rt)| (id.clone(), Self::scatter_runtime_snapshot(None, rt, true)))
             .collect::<serde_json::Map<_, _>>();
+        let point_store_payload_bytes = self
+            .scatter_point_stores
+            .values()
+            .filter_map(Weak::upgrade)
+            .map(|payload| payload.len())
+            .sum::<usize>();
+        let point_store_scatter_references = self
+            .scatter_point_stores
+            .values()
+            .filter_map(Weak::upgrade)
+            .map(|payload| Arc::strong_count(&payload).saturating_sub(1))
+            .sum::<usize>();
+        let point_store_revision_count = self
+            .scatter_point_stores
+            .values()
+            .filter(|payload| payload.strong_count() > 0)
+            .count();
+        let point_store_gpu_unique_allocated_bytes = self
+            .scatter_point_store_gpu
+            .values()
+            .filter_map(Weak::upgrade)
+            .map(|buffers| buffers.allocated_bytes())
+            .sum::<u64>();
+        let point_store_gpu_scatter_references = self
+            .scatter_point_store_gpu
+            .values()
+            .filter_map(Weak::upgrade)
+            .map(|buffers| Arc::strong_count(&buffers).saturating_sub(1))
+            .sum::<usize>();
+        let point_store_gpu_unique_used_bytes = self
+            .scatter_point_store_gpu
+            .values()
+            .filter_map(Weak::upgrade)
+            .map(|buffers| buffers.used_bytes())
+            .sum::<u64>();
+        let derived_gpu_entries = self
+            .scatter_derived_gpu
+            .values()
+            .filter(|buffers| buffers.strong_count() > 0)
+            .count();
+        let derived_gpu_unique_allocated_bytes = self
+            .scatter_derived_gpu
+            .values()
+            .filter_map(Weak::upgrade)
+            .map(|buffers| buffers.allocated_bytes())
+            .sum::<u64>();
+        let derived_gpu_unique_used_bytes = self
+            .scatter_derived_gpu
+            .values()
+            .filter_map(Weak::upgrade)
+            .map(|buffers| buffers.used_bytes())
+            .sum::<u64>();
+        let derived_gpu_scatter_references = self
+            .scatter_derived_gpu
+            .values()
+            .filter_map(Weak::upgrade)
+            .map(|buffers| Arc::strong_count(&buffers).saturating_sub(1))
+            .sum::<usize>();
+        let density_cache_entries = self.scatter_density_products.len();
+        let density_cache_unique_bytes = self
+            .scatter_density_products
+            .values()
+            .map(|product| product.retained_bytes())
+            .sum::<usize>();
+        let derived_cache_entries = self.scatter_derived_products.len();
+        // Products can share an Arc-backed spatial index, so this is a conservative
+        // retained-byte total rather than a deduplicated allocator measurement.
+        let derived_cache_retained_bytes = self
+            .scatter_derived_products
+            .values()
+            .map(|product| product.retained_bytes())
+            .sum::<usize>();
+        let density_spatial_index_unique_bytes = self
+            .scatter_density_products
+            .values()
+            .map(|product| {
+                product
+                    .spatial_index()
+                    .map_or(0, |index| index.retained_bytes())
+            })
+            .sum::<usize>();
+        let density_spatial_index_build_ms = self
+            .scatter_density_products
+            .values()
+            .map(|product| product.spatial_index().map_or(0.0, |index| index.build_ms))
+            .sum::<f64>();
         let line_plot = self
             .line_plot_metrics
             .iter()
@@ -19730,7 +22609,30 @@ impl WgpuState {
                 "surface_format": format!("{:?}", self.config.format),
                 "memory_hint": self.memory_hint,
                 "backend_policy": self.backend_policy,
+                "adapter": {
+                    "name": &self.adapter_name,
+                    "vendor": self.adapter_vendor,
+                    "device": self.adapter_device,
+                    "device_type": &self.adapter_device_type,
+                    "backend": &self.adapter_backend,
+                    "driver": &self.adapter_driver,
+                    "driver_info": &self.adapter_driver_info,
+                },
                 "adapter_backend": &self.adapter_backend,
+                "device_limits": {
+                    "max_buffer_size": self.device.limits().max_buffer_size,
+                    "max_storage_buffer_binding_size": self.device.limits().max_storage_buffer_binding_size,
+                    "max_uniform_buffer_binding_size": self.device.limits().max_uniform_buffer_binding_size,
+                    "max_vertex_buffers": self.device.limits().max_vertex_buffers,
+                    "max_vertex_attributes": self.device.limits().max_vertex_attributes,
+                    "max_vertex_buffer_array_stride": self.device.limits().max_vertex_buffer_array_stride,
+                },
+                "pipeline_cache": {
+                    "status": &self.pipeline_cache_status,
+                    "path": self.pipeline_cache_path.as_deref(),
+                    "loaded_bytes": self.pipeline_cache_loaded_bytes,
+                    "saved_bytes": self.pipeline_cache_saved_bytes,
+                },
                 "present_mode": surface_present_mode_name(self.config.present_mode),
                 "present_mode_env": self.present_mode_env.as_deref(),
                 "supported_present_modes": &self.supported_present_modes,
@@ -19785,7 +22687,7 @@ impl WgpuState {
                     }
                     snapshot
                 }),
-                "line_plot_renderer": self.line_plots.as_ref().map(|line_plots| {
+            "line_plot_renderer": self.line_plots.as_ref().map(|line_plots| {
                     let stats = line_plots.stats();
                     let decimation_mode = match stats.decimation_mode {
                         1 => "auto",
@@ -19809,8 +22711,9 @@ impl WgpuState {
                         "last_emit_ms": stats.last_emit_ms,
                         "last_upload_ms": stats.last_upload_ms,
                         "last_encode_ms": self.last_line_plot_encode_ms,
-                    })
-                }),
+                })
+            }),
+            "image_renderer_ready": self.images.is_some(),
                 "has_text": self.text.is_some(),
                 "text": self.text.as_ref().map(|text| text.debug_stats()),
                 "text_owner_geometry": self
@@ -19848,6 +22751,49 @@ impl WgpuState {
             "resources": {
                 "scatter": scatter,
                 "scatters": scatters,
+                "point_stores": {
+                    "revision_count": point_store_revision_count,
+                    "stream_latest_projection_count": self.scatter_point_store_latest_revisions.len(),
+                    "stream_revision_advances": self.scatter_streaming_cache_metrics.revision_advances,
+                    "stream_stale_updates_dropped": self.scatter_streaming_cache_metrics.stale_updates_dropped,
+                    "stream_point_store_revisions_invalidated": self.scatter_streaming_cache_metrics.point_store_revisions_invalidated,
+                    "stream_exact_gpu_revisions_invalidated": self.scatter_streaming_cache_metrics.exact_gpu_revisions_invalidated,
+                    "stream_density_products_invalidated": self.scatter_streaming_cache_metrics.density_products_invalidated,
+                    "stream_derived_products_invalidated": self.scatter_streaming_cache_metrics.derived_products_invalidated,
+                    "stream_derived_gpu_products_invalidated": self.scatter_streaming_cache_metrics.derived_gpu_products_invalidated,
+                    "unique_payload_bytes": point_store_payload_bytes,
+                    "scatter_references": point_store_scatter_references,
+                    "gpu_unique_allocated_bytes": point_store_gpu_unique_allocated_bytes,
+                    "gpu_unique_used_bytes": point_store_gpu_unique_used_bytes,
+                    "gpu_scatter_references": point_store_gpu_scatter_references,
+                    "density_cache_entries": density_cache_entries,
+                    "density_cache_unique_bytes": density_cache_unique_bytes,
+                    "density_cache_hits": self.scatter_density_cache_metrics.hits,
+                    "density_cache_misses": self.scatter_density_cache_metrics.misses,
+                    "density_cache_evictions": self.scatter_density_cache_metrics.evictions,
+                    "density_cache_build_ms": self.scatter_density_cache_metrics.build_ms,
+                    "density_cache_max_entries": SCATTER_DENSITY_CACHE_MAX_ENTRIES,
+                    "density_cache_max_bytes": SCATTER_DENSITY_CACHE_MAX_BYTES,
+                    "derived_cache_entries": derived_cache_entries,
+                    "derived_cache_retained_bytes": derived_cache_retained_bytes,
+                    "derived_cache_hits": self.scatter_derived_cache_metrics.hits,
+                    "derived_cache_misses": self.scatter_derived_cache_metrics.misses,
+                    "derived_cache_evictions": self.scatter_derived_cache_metrics.evictions,
+                    "derived_cache_recency_updates": self.scatter_derived_cache_metrics.recency_updates,
+                    "derived_cache_eviction_policy": "lru",
+                    "derived_cache_device_tier_keyed": false,
+                    "derived_cache_device_tier_reason": "cpu_product_output_is_device_invariant_v1",
+                    "derived_gpu_entries": derived_gpu_entries,
+                    "derived_gpu_weak_entries": self.scatter_derived_gpu.len(),
+                    "derived_gpu_unique_allocated_bytes": derived_gpu_unique_allocated_bytes,
+                    "derived_gpu_unique_used_bytes": derived_gpu_unique_used_bytes,
+                    "derived_gpu_scatter_references": derived_gpu_scatter_references,
+                    "derived_gpu_scope": "density_and_decimated_point_instance_v1",
+                    "derived_cache_max_entries": SCATTER_DERIVED_CACHE_MAX_ENTRIES,
+                    "derived_cache_max_bytes": SCATTER_DERIVED_CACHE_MAX_BYTES,
+                    "density_spatial_index_unique_bytes": density_spatial_index_unique_bytes,
+                    "density_spatial_index_build_ms": density_spatial_index_build_ms,
+                },
                 "line_plot": line_plot,
                 "line_plots": line_plots,
                 "registry": self.resources.snapshot(),
@@ -21951,6 +24897,10 @@ struct DragonApp {
     last_command_drain_batches: u64,
     last_command_drain_commands: u64,
     last_command_drain_pending: u64,
+    startup_started_at: Instant,
+    event_loop_resumed_ms: f64,
+    window_creation_ms: f64,
+    first_application_present_ms: Option<f64>,
     startup_real_redraw_deadline: Option<Instant>,
     pending_window_screenshot_requests: Vec<u64>,
     synthetic_input_profile: Option<SyntheticInputProfile>,
@@ -22413,6 +25363,10 @@ impl DragonApp {
             last_command_drain_batches: 0,
             last_command_drain_commands: 0,
             last_command_drain_pending: 0,
+            startup_started_at: Instant::now(),
+            event_loop_resumed_ms: 0.0,
+            window_creation_ms: 0.0,
+            first_application_present_ms: None,
             startup_real_redraw_deadline: None,
             pending_window_screenshot_requests: Vec::new(),
             synthetic_input_profile: SyntheticInputProfile::from_env(),
@@ -22755,6 +25709,39 @@ impl DragonApp {
         runtime.insert(
             "startup_readiness".to_string(),
             json!(self.startup_readiness.label()),
+        );
+        let gpu_startup = self.gpu.as_ref().map(|gpu| gpu.startup_timings);
+        runtime.insert(
+            "startup_phases".to_string(),
+            json!({
+                "event_loop_resumed_ms": self.event_loop_resumed_ms,
+                "window_creation_ms": self.window_creation_ms,
+                "gpu_total_ms": gpu_startup.map(|timing| timing.total_ms),
+                "instance_surface_ms": gpu_startup.map(|timing| timing.instance_surface_ms),
+                "adapter_request_ms": gpu_startup.map(|timing| timing.adapter_request_ms),
+                "device_request_ms": gpu_startup.map(|timing| timing.device_request_ms),
+                "surface_config_ms": gpu_startup.map(|timing| timing.surface_config_ms),
+                "loading_present_ms": gpu_startup.map(|timing| timing.loading_present_ms),
+                "scatter_resources_ms": gpu_startup.map(|timing| timing.scatter_resources_ms),
+                "renderer_init_ms": gpu_startup.map(|timing| timing.renderer_init_ms),
+                "primitives_init_ms": gpu_startup.map(|timing| timing.primitives_init_ms),
+                "line_plots_init_ms": gpu_startup.map(|timing| timing.line_plots_init_ms),
+                "images_init_ms": gpu_startup.map(|timing| timing.images_init_ms),
+                "scatter_compositor_init_ms": gpu_startup.map(|timing| timing.scatter_compositor_init_ms),
+                "text_init_ms": gpu_startup.map(|timing| timing.text_init_ms),
+                "text_reused_loading_renderer": gpu_startup.map(|timing| timing.text_reused_loading_renderer),
+                "text_font_system_ms": gpu_startup.map(|timing| timing.text_font_system_ms),
+                "text_font_system_wait_ms": gpu_startup.map(|timing| timing.text_font_system_wait_ms),
+                "text_swash_cache_ms": gpu_startup.map(|timing| timing.text_swash_cache_ms),
+                "text_atlas_viewport_ms": gpu_startup.map(|timing| timing.text_atlas_viewport_ms),
+                "text_base_renderer_ms": gpu_startup.map(|timing| timing.text_base_renderer_ms),
+                "text_overlay_renderer_ms": gpu_startup.map(|timing| timing.text_overlay_renderer_ms),
+                "pipeline_cache_load_ms": gpu_startup.map(|timing| timing.pipeline_cache_load_ms),
+                "pipeline_cache_save_ms": gpu_startup.map(|timing| timing.pipeline_cache_save_ms),
+                "state_build_ms": gpu_startup.map(|timing| timing.state_build_ms),
+                "initial_layout_ms": gpu_startup.map(|timing| timing.initial_layout_ms),
+                "first_application_present_ms": self.first_application_present_ms,
+            }),
         );
         runtime.insert(
             "deferred_startup_python_task_drain".to_string(),
@@ -23181,6 +26168,8 @@ impl DragonApp {
             return false;
         }
         self.startup_readiness = StartupReadiness::ApplicationFramePresented;
+        self.first_application_present_ms =
+            Some(self.startup_started_at.elapsed().as_secs_f64() * 1000.0);
         if !self.deferred_startup_python_task_drain {
             return false;
         }
@@ -23292,6 +26281,7 @@ impl DragonApp {
             let flush_t0 = Instant::now();
             if let Some(gpu) = self.gpu.as_mut() {
                 request_redraw |= gpu.flush_deferred_rebuilds();
+                gpu.scatter_point_store_batch_leases.clear();
             }
             flush_ms += flush_t0.elapsed().as_secs_f64() * 1000.0;
             if batch_had_scatter_points {
@@ -23674,7 +26664,7 @@ impl DragonApp {
                     xyz.len(),
                     payload_format.as_str()
                 ));
-                let (dirty, outcome, redraw) = {
+                let (dirty, outcome, redraw, capacity_error) = {
                     let Some(gpu) = &mut self.gpu else {
                         return self.record_runtime_command(
                             "SetScatterPointsPacked",
@@ -23688,26 +26678,173 @@ impl DragonApp {
                     match gpu.set_scatter_points_packed(
                         &id,
                         xyz,
+                        None,
                         telemetry,
                         colormap,
                         payload_format,
                         fit,
                     ) {
-                        Ok(true) => (Some(Dirty::GpuData), "applied".to_string(), true),
+                        Ok(true) => (Some(Dirty::GpuData), "applied".to_string(), true, None),
                         Ok(false) => {
                             eprintln!(
                                 "DragonGUI: dropping stale scatter point update for widget {id:?}"
                             );
-                            (None, "stale_widget".to_string(), false)
+                            (None, "stale_widget".to_string(), false, None)
                         }
                         Err(err) => {
                             eprintln!("DragonGUI: failed to apply scatter point update: {err}");
-                            (None, format!("error: {err}"), false)
+                            let capacity_error =
+                                matches!(err, DragonError::ScatterCapacity(_)).then_some(err);
+                            (
+                                None,
+                                capacity_error.as_ref().map_or_else(
+                                    || "error".to_string(),
+                                    |error| format!("error: {error}"),
+                                ),
+                                false,
+                                capacity_error,
+                            )
                         }
                     }
                 };
+                if let Some(error) = capacity_error {
+                    self.error = Some(error);
+                }
                 self.record_runtime_command(
                     "SetScatterPointsPacked",
+                    Some(id),
+                    detail,
+                    dirty,
+                    &outcome,
+                    redraw,
+                )
+            }
+            Command::SetScatterStorePointsPacked {
+                id,
+                xyz,
+                store_id,
+                revision,
+                telemetry,
+                colormap,
+                payload_format,
+                fit,
+                coalesce,
+            } => {
+                let detail = Some(format!(
+                    "store_id={store_id}, revision={revision}, payload_bytes={}, format={}",
+                    xyz.len(),
+                    payload_format.as_str()
+                ));
+                let (dirty, outcome, redraw, capacity_error) = {
+                    let Some(gpu) = &mut self.gpu else {
+                        return self.record_runtime_command(
+                            "SetScatterStorePointsPacked",
+                            Some(id),
+                            detail,
+                            None,
+                            "gpu_not_ready",
+                            false,
+                        );
+                    };
+                    if !gpu.accept_scatter_stream_revision(&store_id, revision, coalesce) {
+                        (None, "stale_source_revision".to_string(), false, None)
+                    } else {
+                        match gpu.set_scatter_points_packed(
+                            &id,
+                            xyz,
+                            Some((store_id, revision)),
+                            telemetry,
+                            colormap,
+                            payload_format,
+                            fit,
+                        ) {
+                            Ok(true) => (Some(Dirty::GpuData), "applied".to_string(), true, None),
+                            Ok(false) => (None, "stale_widget".to_string(), false, None),
+                            Err(err) => {
+                                let capacity_error =
+                                    matches!(err, DragonError::ScatterCapacity(_)).then_some(err);
+                                (
+                                    None,
+                                    capacity_error.as_ref().map_or_else(
+                                        || "error".to_string(),
+                                        |error| format!("error: {error}"),
+                                    ),
+                                    false,
+                                    capacity_error,
+                                )
+                            }
+                        }
+                    }
+                };
+                if let Some(error) = capacity_error {
+                    self.error = Some(error);
+                }
+                self.record_runtime_command(
+                    "SetScatterStorePointsPacked",
+                    Some(id),
+                    detail,
+                    dirty,
+                    &outcome,
+                    redraw,
+                )
+            }
+            Command::SetScatterPointStoreReference {
+                id,
+                store_id,
+                revision,
+                colormap,
+                payload_format,
+                fit,
+                coalesce,
+            } => {
+                let detail = Some(format!(
+                    "store_id={store_id}, revision={revision}, fit={fit}"
+                ));
+                let (dirty, outcome, redraw, capacity_error) = {
+                    let Some(gpu) = &mut self.gpu else {
+                        return self.record_runtime_command(
+                            "SetScatterPointStoreReference",
+                            Some(id),
+                            detail,
+                            None,
+                            "gpu_not_ready",
+                            false,
+                        );
+                    };
+                    if !gpu.accept_scatter_stream_revision(&store_id, revision, coalesce) {
+                        (None, "stale_source_revision".to_string(), false, None)
+                    } else {
+                        match gpu.set_scatter_point_store_reference(
+                            &id,
+                            store_id,
+                            revision,
+                            colormap,
+                            payload_format,
+                            fit,
+                        ) {
+                            Ok(true) => (Some(Dirty::GpuData), "applied".to_string(), true, None),
+                            Ok(false) => (None, "stale_widget".to_string(), false, None),
+                            Err(err) => {
+                                let capacity_error =
+                                    matches!(err, DragonError::ScatterCapacity(_)).then_some(err);
+                                (
+                                    None,
+                                    capacity_error.as_ref().map_or_else(
+                                        || "error".to_string(),
+                                        |error| format!("error: {error}"),
+                                    ),
+                                    false,
+                                    capacity_error,
+                                )
+                            }
+                        }
+                    }
+                };
+                if let Some(error) = capacity_error {
+                    self.error = Some(error);
+                }
+                self.record_runtime_command(
+                    "SetScatterPointStoreReference",
                     Some(id),
                     detail,
                     dirty,
@@ -23987,7 +27124,10 @@ impl DragonApp {
             Command::ResetScatterCamera { id } => {
                 let redraw = self.gpu.as_mut().is_some_and(|gpu| {
                     if let Some(rt) = gpu.scatters.get_mut(&id) {
-                        rt.widget.reset_camera(&gpu.queue);
+                        rt.reset_camera_for_home(&gpu.queue);
+                        if rt.supports_viewport_refinement() {
+                            rt.schedule_density_viewport_job(Instant::now());
+                        }
                         let (bmn, bmx) = rt.merged_bounds();
                         rt.widget.refresh_grid(bmn, bmx, &gpu.device, &gpu.queue);
                         rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
@@ -24055,6 +27195,9 @@ impl DragonApp {
                         rt.widget.fit_to_bounds(bmn, bmx, &gpu.queue);
                         rt.fitted_once = true;
                     }
+                    if rt.supports_viewport_refinement() {
+                        rt.schedule_density_viewport_job(Instant::now());
+                    }
                     let (bmn, bmx) = rt.merged_bounds();
                     rt.widget.refresh_grid(bmn, bmx, &gpu.device, &gpu.queue);
                     rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
@@ -24116,6 +27259,9 @@ impl DragonApp {
                             parallel,
                         };
                         rt.widget.set_camera_state(state, &gpu.queue);
+                        if rt.supports_viewport_refinement() {
+                            rt.schedule_density_viewport_job(Instant::now());
+                        }
                         let (bmn, bmx) = rt.merged_bounds();
                         rt.widget.refresh_grid(bmn, bmx, &gpu.device, &gpu.queue);
                         rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
@@ -25160,7 +28306,8 @@ impl DragonApp {
                     };
                     // Clear primary buffer.
                     rt.points.clear();
-                    rt.primary_compact_xyz.clear();
+                    rt.primary_compact_xyz = Arc::from([]);
+                    rt.primary_store_source = None;
                     rt.data_min = glam::Vec3::ZERO;
                     rt.data_max = glam::Vec3::ZERO;
                     rt.widget.set_points(&gpu.device, &gpu.queue, &[]);
@@ -25337,6 +28484,73 @@ impl DragonApp {
                     redraw,
                 )
             }
+            Command::SetScatterRenderingPolicy { id, requested } => {
+                let requested_for_detail = requested.clone();
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let WgpuState {
+                        scatters,
+                        device,
+                        queue,
+                        scatter_density_products,
+                        scatter_density_cache_metrics,
+                        scatter_derived_products,
+                        scatter_derived_product_lru,
+                        scatter_derived_cache_metrics,
+                        scatter_derived_gpu,
+                        ..
+                    } = gpu;
+                    let Some(rt) = scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    apply_scatter_rendering_policy(
+                        rt,
+                        &requested,
+                        device,
+                        queue,
+                        scatter_density_products,
+                        scatter_density_cache_metrics,
+                        scatter_derived_products,
+                        scatter_derived_product_lru,
+                        scatter_derived_cache_metrics,
+                        scatter_derived_gpu,
+                    )
+                });
+                self.record_runtime_command(
+                    "SetScatterRenderingPolicy",
+                    Some(id),
+                    Some(requested_for_detail),
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::SetScatterSourceRetention { id, requested } => {
+                let requested_for_detail = requested.clone();
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.source_retention_requested = requested;
+                    rt.apply_source_retention();
+                    true
+                });
+                self.record_runtime_command(
+                    "SetScatterSourceRetention",
+                    Some(id),
+                    Some(requested_for_detail),
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
             Command::SetScatterLod {
                 id,
                 enabled,
@@ -25472,6 +28686,34 @@ impl DragonApp {
                         "no-op: scatter not found"
                     },
                     redraw,
+                )
+            }
+            Command::SelectScatterRectangleNormalized { id, rect } => {
+                let payload = self.gpu.as_mut().and_then(|gpu| {
+                    let runtime = gpu.scatters.get(&id)?;
+                    let pixel_rect = [
+                        rect[0] * runtime.widget.width as f32,
+                        rect[1] * runtime.widget.height as f32,
+                        rect[2] * runtime.widget.width as f32,
+                        rect[3] * runtime.widget.height as f32,
+                    ];
+                    gpu.scatter_select_payload(&id, pixel_rect)
+                });
+                let selected = payload.is_some();
+                if let Some(payload) = payload {
+                    self.emit_change(&id, ChangeValue::Text(payload));
+                }
+                self.record_runtime_command(
+                    "SelectScatterRectangleNormalized",
+                    Some(id),
+                    Some(format!("{rect:?}")),
+                    None,
+                    if selected {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found or source unavailable"
+                    },
+                    false,
                 )
             }
             Command::SetScatterHoverTooltip { id, enabled } => {
@@ -25712,6 +28954,9 @@ impl DragonApp {
                         return false;
                     };
                     rt.widget.set_parallel_scale(half_w, half_h, &gpu.queue);
+                    if rt.supports_viewport_refinement() {
+                        rt.schedule_density_viewport_job(Instant::now());
+                    }
                     let (bmn, bmx) = rt.merged_bounds();
                     rt.widget.refresh_grid(bmn, bmx, &gpu.device, &gpu.queue);
                     rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
@@ -27796,7 +31041,10 @@ impl DragonApp {
                     .or_else(|| gpu.visible_scatter_order.first().cloned());
                 if let Some(id) = target_id {
                     if let Some(runtime) = gpu.scatters.get_mut(&id) {
-                        runtime.widget.reset_camera(&gpu.queue);
+                        runtime.reset_camera_for_home(&gpu.queue);
+                        if runtime.supports_viewport_refinement() {
+                            runtime.schedule_density_viewport_job(Instant::now());
+                        }
                         self.request_redraw();
                     }
                 }
@@ -28174,6 +31422,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
         if self.window.is_some() {
             return;
         }
+        self.event_loop_resumed_ms = self.startup_started_at.elapsed().as_secs_f64() * 1000.0;
 
         let mut spec = match self.spec.take() {
             Some(s) => s,
@@ -28221,6 +31470,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
             attrs = attrs.with_position(position);
         }
 
+        let window_creation_t0 = Instant::now();
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Arc::new(w),
             Err(e) => {
@@ -28229,6 +31479,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                 return;
             }
         };
+        self.window_creation_ms = window_creation_t0.elapsed().as_secs_f64() * 1000.0;
 
         match pollster::block_on(WgpuState::new(
             Arc::clone(&window),
@@ -28264,6 +31515,10 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                     event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
                 }
                 self.drain_runtime_commands();
+                if self.error.is_some() {
+                    event_loop.exit();
+                    return;
+                }
                 if delay.is_none() {
                     self.request_application_frame();
                 }
@@ -28275,7 +31530,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
         }
     }
 
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: RuntimeEvent) {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: RuntimeEvent) {
         match event {
             RuntimeEvent::Wake => {
                 if self.command_drain_continuation_pending {
@@ -28291,8 +31546,14 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                         gpu.sync_html_reports();
                     }
                 }
+                if let Some(gpu) = self.gpu.as_mut() {
+                    gpu.drain_scatter_density_viewport_jobs();
+                }
                 if self.startup_real_redraw_deadline.is_none() {
                     self.request_application_frame();
+                }
+                if self.error.is_some() {
+                    event_loop.exit();
                 }
             }
             RuntimeEvent::ResizeLogical { width, height } => {
@@ -28316,6 +31577,9 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
         let mut request_redraw = self.flush_deferred_popup_commands();
         let mut next_deadline = None;
         if let Some(gpu) = &mut self.gpu {
+            let density_dirty = gpu.drain_scatter_density_viewport_jobs();
+            let density_deadline = gpu.start_due_scatter_density_viewport_jobs(Instant::now());
+            request_redraw |= density_dirty;
             let transition_text_dirty = gpu.active_style_transitions_affect_text();
             let toast_dirty = gpu.expire_toasts();
             let transition_dirty = gpu.tick_hover_transitions()
@@ -28352,6 +31616,13 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                 request_redraw = true;
             }
             next_deadline = gpu.next_toast_deadline();
+            if let Some(deadline) = density_deadline {
+                next_deadline = Some(
+                    next_deadline
+                        .map(|current| current.min(deadline))
+                        .unwrap_or(deadline),
+                );
+            }
             if gpu.has_style_transitions() || gpu.has_css_animations() {
                 let transition_deadline = Instant::now() + Duration::from_millis(16);
                 next_deadline = Some(
@@ -29388,6 +32659,12 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                         }
                                     }
                                     runtime.widget.update_camera(&gpu.queue);
+                                    if runtime.supports_viewport_refinement()
+                                        && runtime.widget.interaction_mode
+                                            == scatter::ScatterInteractionMode::Pan2D
+                                    {
+                                        runtime.schedule_density_viewport_job(Instant::now());
+                                    }
                                     let (bmn, bmx) = runtime.merged_bounds();
                                     runtime
                                         .widget
@@ -29741,8 +33018,14 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                         let mut needs_redraw = false;
                         if let Some(gpu) = &mut self.gpu {
                             if let Some(rt) = gpu.scatters.get_mut(&sid) {
-                                rt.widget.camera.zoom(scroll_y);
+                                rt.widget.zoom_at_position(pos, scroll_y);
                                 rt.widget.update_camera(&gpu.queue);
+                                if rt.supports_viewport_refinement()
+                                    && rt.widget.interaction_mode
+                                        == scatter::ScatterInteractionMode::Pan2D
+                                {
+                                    rt.schedule_density_viewport_job(Instant::now());
+                                }
                                 let (bmn, bmx) = rt.merged_bounds();
                                 rt.widget.refresh_grid(bmn, bmx, &gpu.device, &gpu.queue);
                                 rt.widget.refresh_overlays(&gpu.device, &gpu.queue);

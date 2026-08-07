@@ -346,6 +346,8 @@ _MODEL_SYMBOLS = (
     "AgentEnvelopeParser",
     "AgentRouterQueue",
     "AgentSession",
+    "PointStore",
+    "PointStoreOwnership",
     "NodeGraphObjectRegistry",
     "NodeGraphRuntimeSession",
 )
@@ -376,6 +378,7 @@ _RUNTIME_SYMBOLS = (
     "Theme",
     "ToastHandle",
     "BackendUnavailableError",
+    "ScatterCapacityError",
     "backend_info",
     "native_backend_available",
     "toast",
@@ -486,9 +489,11 @@ _SIGNATURE_OVERRIDES = {
     "unlink_cameras": "unlink_cameras(*scatters: Scatter3D) -> None",
     "BUILTIN_ICONS": "BUILTIN_ICONS: frozenset[str]",
     "ICON_ALIASES": "ICON_ALIASES: Mapping[str, str]",
+    "PointStoreOwnership": "PointStoreOwnership = Literal['borrowed', 'copied', 'moved']",
 }
 
 _SYMBOL_NOTES = {
+    "ScatterCapacityError": "Raised when an exact scatter GPU representation exceeds the selected device's buffer limit. The message includes requested points, required bytes, the device limit, layout stride, and suggested remedies.",
     "App": "Owns the native runtime bridge, stylesheets, loading screen, toasts, and thread-safe scheduling.",
     "Window": "Top-level application shell passed to `app.run(window)`; supports native or retained client decorations.",
     "AppShell": "Bounded top-level layout for sidebar plus flexible body apps.",
@@ -525,6 +530,8 @@ _SYMBOL_NOTES = {
     "LimitsBar": "Read-only telemetry display with ordered alarm zones and a live position marker.",
     "Scatter3D": "3D point cloud widget with packed data paths, camera controls, and live updates.",
     "ScatterPlot2D": "2D point cloud widget for dense scalar/color plots.",
+    "PointStore": "Reusable exact columns, revisions, shared XY/XYZ payloads, exact row queries, and conservative query_box_chunks()/query_frustum_chunks() bounds rejection.",
+    "PointStoreOwnership": "Ownership policy for PointStore columns: borrowed, copied, or moved.",
     "Heatmap": "Matrix visualization with scalar color and optional cell labels.",
     "BarChart": "Categorical bar chart with vertical and horizontal modes.",
     "PieChart": (
@@ -623,10 +630,12 @@ _PUBLIC_PARAMETER_CHOICE_VALUES: dict[str, dict[str, tuple[str, ...]]] = {
     "Heatmap": {"colormap": _COLORMAP_VALUES},
     "Scatter3D": {
         "colormap": _COLORMAP_VALUES,
+        "rendering": ("adaptive", "decimated", "density", "exact"),
         "scalar_bar_colormap": _COLORMAP_VALUES,
     },
     "ScatterPlot2D": {
         "colormap": _COLORMAP_VALUES,
+        "rendering": ("adaptive", "decimated", "density", "exact"),
         "scalar_bar_colormap": _COLORMAP_VALUES,
     },
     "PieChart": {
@@ -669,6 +678,7 @@ _METHOD_CHOICE_VALUES: dict[str, dict[str, tuple[str, ...]]] = {
         "update_label.anchor": ("bottom", "center", "left", "right", "top"),
         "show_legend.position": ("bottom-left", "bottom-right", "top-left", "top-right"),
         "set_point_style.style": ("circle", "gaussian", "square"),
+        "set_rendering.rendering": ("adaptive", "decimated", "density", "exact"),
         "flatten_view.plane": ("xy", "xy-", "xz", "xz-", "yz", "yz-"),
         "set_colormap.colormap": _COLORMAP_VALUES,
         "show_scalar_bar.colormap": _COLORMAP_VALUES,
@@ -1183,11 +1193,19 @@ _PARAMETER_NOTES = {
     "Scatter3D": (
         "`frame`, `x`, `y`, and `z` define point columns.",
         "Use prepared payloads for high-frequency or high-count updates.",
+        "`rendering='decimated'` keeps deterministic spatial source representatives; "
+        "`density` uses a CPU density grid for compact 2D data. 3D derived modes fall "
+        "back observably to exact rendering; `adaptive` selects density for dense 2D sources. "
+        "PointStore-backed full-view decimation and settled viewport products are "
+        "reused from a bounded CPU-product cache.",
         "`on_pick(ScatterPick)` receives selected point information.",
     ),
     "ScatterPlot2D": (
         "`frame`, `x`, and `y` define point columns.",
         "Use for flat dense plots; use `Scatter3D` only when orbit/depth is needed.",
+        "`rendering` accepts `exact`, `decimated`, `density`, or `adaptive`; decimated "
+        "keeps spatial source representatives, density uses count-weighted grid centroids, "
+        "and adaptive selects density for sufficiently dense sources.",
     ),
     "Heatmap": (
         "`matrix` must be rectangular 2D numeric data.",
@@ -1375,6 +1393,7 @@ def _object_for_symbol(name: str) -> Any | None:
     from . import dialogs as dialogs_module
     from . import icons as icons_module
     from . import notifications as notifications_module
+    from . import point_store as point_store_module
     from . import node_graph as node_graph_module
     from . import runtime as runtime_module
     from . import theme as theme_module
@@ -1393,6 +1412,7 @@ def _object_for_symbol(name: str) -> Any | None:
         icons_module,
         diagnostics_module,
         notifications_module,
+        point_store_module,
         node_graph_module,
         runtime_module,
         theme_module,
@@ -3160,6 +3180,35 @@ Live/performance methods:
 - `create_live_frame(mode="primary")`
 - `set_points(..., fit=True)`
 - `set_lod(enabled=True, threshold=200000, factor=8)`
+- `set_rendering("exact" | "decimated" | "density" | "adaptive")`; decimated
+  keeps deterministic source points nearest spatial-cell centers plus extrema;
+  density builds a CPU grid for compact 2D sources. PointStore revisions cache
+  the density product across
+  plots and policy toggles. A 128x128 exact-row candidate index is deferred
+  until the first settled viewport refinement, then shared by those plots.
+  After a 150 ms debounce, index construction and visible-window aggregation
+  run on a background worker. Only the latest camera/source request is uploaded;
+  stale results are discarded and newer requests coalesce behind active work.
+  PointStore-backed full-view decimation is shared across plots, and revisited
+  PointStore-backed viewports reuse derived products keyed by source revision,
+  exact view bounds, policy, adaptive state, and grid. Density colormap changes
+  reuse cached centroid/count-intensity geometry and recolor only the bounded
+  upload copy. Settled density selects one cell per two physical viewport pixels
+  on each axis, clamped to 32..256, and keys the effective dimensions. Full-view
+  density and decimation stay fixed at 256x256. Device tier is omitted while
+  CPU product output remains device-invariant. This
+  cache uses least-recently-used eviction and is bounded to 32 entries and 64
+  MiB; debug telemetry exposes per-scatter hits and global hit/miss/recency/
+  eviction counts. The separate full-density cache is
+  bounded to 16 entries and 64 MiB, including lazy indexes.
+  CPU products are shared. Byte-identical decimation products also share one
+  immutable GPU buffer across plots. Density keeps per-widget GPU uploads because
+  presentation colormaps are baked into those bounded copies. The GPU cache uses
+  weak ownership, so active widgets preserve buffers and unused products release.
+  Adaptive enters density at 300,000 visible rows and uses exact visible points
+  at or below 200,000, retaining the current mode between those thresholds.
+  Returning to full bounds reuses cached density; explicit density does not
+  switch to exact. Unsupported payloads report an observable exact fallback.
 - `set_auto_point_size(True)`
 - `set_interactive_render_scale(0.75)`
 - `set_auto_quality(True, target_fps=10)`
@@ -3169,6 +3218,9 @@ Interaction helpers:
   `view_isometric()`, `set_camera(state)`, `get_camera()`.
 - `enable_point_picking`, `enable_rectangle_picking`, `enable_lasso_picking`,
   and `disable_picking`.
+- `select_rectangle((x0, y0, x1, y1))` programmatically selects authoritative
+  source rows in normalized viewport coordinates and delivers results through
+  `selected`, `selected_indices`, `selected_index_values`, and `on_select`.
 """,
     )
     charts = _section(
@@ -4780,8 +4832,9 @@ Useful tools:
 - Feature probes in `examples/css_feature_probes` isolate widgets and layout cases.
 
 Renderer tuning:
-- On Windows, DragonGUI defaults to the DirectX 12 WGPU backend. Other
-  platforms use WGPU's automatic backend selection.
+- DragonGUI uses WGPU's automatic backend selection on every platform. On
+  Windows this commonly selects Vulkan when available because its pipeline
+  startup is substantially faster than DX12 on some drivers.
 - `DRAGONGUI_WGPU_BACKEND=auto|dx12|vulkan|gl` overrides backend selection.
   `dx12` is Windows-only. `gl` can use substantially less memory on some
   systems, but may reduce live-update throughput and may not support window
@@ -4789,9 +4842,14 @@ Renderer tuning:
 - DragonGUI defaults to WGPU's memory-oriented allocator. Set
   `DRAGONGUI_WGPU_MEMORY_HINT=performance` only after measuring that its larger
   allocation blocks benefit the target workload.
+- Vulkan pipeline compilation is cached between runs. Set
+  `DRAGONGUI_PIPELINE_CACHE=off` to disable it or
+  `DRAGONGUI_PIPELINE_CACHE_DIR=...` to choose the cache directory. WGPU
+  validates adapter, driver, and cache-version compatibility before reuse.
 - `app.debug_snapshot()` exposes `renderer.backend_policy`,
-  `renderer.adapter_backend`, and `renderer.memory_hint` so tests can verify
-  the effective configuration rather than assuming it.
+  `renderer.adapter_backend`, `renderer.memory_hint`, and
+  `renderer.pipeline_cache` so tests can verify the effective configuration
+  rather than assuming it.
 
 When layout looks wrong, inspect the scroll owner, fixed sizes, `flex_grow`,
 wrapping containers, and whether an overlay is being inserted as normal content.

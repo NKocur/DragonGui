@@ -142,10 +142,39 @@ same retained registry. See `examples/icon_theme_demo.py`.
 | `Image(path, fit="contain", width=None, height=None)` | Image widget. `fit` may be `contain`, `cover`, or `stretch`; width/height must be positive when supplied. Supports `set_path()`, `reload()`, and `set_fit()`. |
 | `Histogram(data, value=None, bins=30, bin_edges=None, range=None, mode="count", cumulative=False)` | Static single-series histogram. Filters non-finite values, supports integer bins or explicit bin edges, and serializes pre-binned edges/counts for native rendering. Modes are `count`, `density`, `probability`, and `percent`. Supports axis/tick labels and optional toolbar buttons for fit, pan, wheel zoom, box zoom, grid, and axes. |
 | `PieChart(data=None, labels=None, values=None, category=None, value=None, aggregate="count", donut=False)` | Categorical pie/donut chart. Accepts direct labels/values or frame-backed category aggregation. Supports top-N grouping, custom colors, legend placement, slice labels, donut center text, and optional chart toolbar chrome. Use `set_data()`, `set_frame_data()`, and presentation setters such as `set_donut()`, `set_center_text()`, `set_toolbar_visible()`, and `set_legend_position()` for live updates. Supports `PieChart::label`. |
-| `Scatter3D(frame, x, y, z, colormap="viridis", on_pick=None)` | GPU 3D scatter plot. Uses frame metadata and packed float32 xyz data when NumPy/addressable columns are available. Emits `ScatterPick` callbacks for point clicks. Supports `set_points(..., fit=True)` when replacing the scene, `create_live_frame(mode="primary")` for retained full-frame sensor replacement, `live.replace_prepared(...)` for GUI-callback prepared frames, `live.enqueue_prepared(...)` for producer-thread latest-frame streams, plus `set_colormap()`, `set_auto_point_size()`, `set_lod()`, `set_interactive_render_scale()`, `set_auto_quality()`, `show_grid()`, and `set_grid_options(sticky=True, all_edges=False)` for live updates. |
+| `Scatter3D(frame, x, y, z, colormap="viridis", rendering="exact", on_pick=None)` | GPU scatter plot. Compact 2D sources support `rendering="decimated"`, which deterministically keeps one authored point near each 256×256 cell center plus missing extrema, and `rendering="density"`, a cached count-weighted centroid grid. A 128×128 exact-row candidate index is deferred until settled viewport refinement. After a 150 ms debounce, visible-window work runs in the background; only the latest camera/source revision is uploaded and superseded requests are coalesced. `adaptive` uses density from 300k visible rows and exact visible points at or below 200k, with hysteresis between; returning to full bounds reuses cached density immediately. Explicit density and decimated modes remain fixed. The density cache is bounded to 16 entries and 64 MiB. Unsupported 3D derived requests fall back observably to exact rendering. Emits `ScatterPick` callbacks for point clicks. Supports `set_points(..., fit=True)` when replacing the scene, `create_live_frame(mode="primary")` for retained full-frame sensor replacement, `live.replace_prepared(...)` for GUI-callback prepared frames, `live.enqueue_prepared(...)` for producer-thread latest-frame streams, plus `set_rendering()`, `set_colormap()`, `set_auto_point_size()`, `set_lod()`, `set_interactive_render_scale()`, `set_auto_quality()`, `show_grid()`, and `set_grid_options(sticky=True, all_edges=False)` for live updates. |
 | `DataFrameTable(frame, page_size=100, sample_rows=DEFAULT_TABLE_SAMPLE_ROWS, on_select=None)` | Virtualized table for dataframe-like objects. Extracts metadata, cell samples, and optional column buffers. Emits selection callbacks with `TableSelection` from mouse or keyboard selection. Supports `set_frame()`. Supports `DataFrameTable::header`, `row`, `row-selected`, and `grid-line`. |
 
+`Scatter3D` and `ScatterPlot2D` also accept `source_retention="current"`
+(default) or `"none"`. The latter releases native exact-source bytes after a
+bounded 2D density/decimated product is ready; use `set_source_retention()` to
+change the policy live. Exact and fallback representations keep their source.
+
 Supported `Scatter3D` colormaps:
+
+PointStore-backed full-view decimation and settled viewport products are reused
+when the source revision, exact view bounds, requested policy, adaptive state,
+and grid match. Density colormap changes reuse cached geometry/count intensity
+and apply the active colormap in the point shader. This derived cache uses
+viewport-aware density grids at one cell per two physical pixels, clamped to
+32..256; equivalent viewport sizes share the same effective-grid key. CPU
+products do not currently vary by device tier, so device identity is not part
+of that key. The cache uses
+least-recently-used eviction, is bounded
+to 32 entries and 64 MiB, and is
+observable through debug-snapshot hit, miss, recency-update, eviction, entry,
+policy, and byte counters.
+CPU geometry is shared. Byte-identical decimation and presentation-neutral
+density products also share one immutable GPU buffer across plots. Each density
+widget keeps its own shader colormap uniform, so different presentation styles
+do not duplicate geometry. Weak cache ownership lets unused buffers release
+without invalidating active widgets.
+For live PointStore replacement, coalesced updates are revision-aware rather
+than arrival-order-only. The command queue retains the highest pending revision
+for each widget/store projection, preserves packed-registration order ahead of
+dependent references, and the runtime drops delayed revisions older than its
+accepted watermark. Advancing the watermark invalidates only obsolete products
+for that projection; active widgets retain safe strong references.
 
 ```text
 viridis, plasma, inferno, magma, coolwarm, hot, gray, grey,
