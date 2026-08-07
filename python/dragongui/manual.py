@@ -7,7 +7,7 @@ from typing import Any, Iterable
 
 
 _HELP_SCHEMA_VERSION = 1
-_LIBRARY_VERSION_FALLBACK = "1.0.3"
+_LIBRARY_VERSION_FALLBACK = "1.0.4"
 
 
 def _library_version() -> str:

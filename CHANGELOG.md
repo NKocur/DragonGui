@@ -3,7 +3,7 @@
 All notable changes to DragonGUI are documented here. The project follows
 [Semantic Versioning](https://semver.org/) from version 1.0.0 onward.
 
-## [1.0.3] - 2026-08-06
+## [1.0.4] - 2026-08-06
 
 Release maintenance update.
 
@@ -34,4 +34,4 @@ First stable production release.
   3.12 and 3.13.
 
 [1.0.0]: https://github.com/NKocur/DragonGui/releases/tag/v1.0.0
-[1.0.3]: https://github.com/NKocur/DragonGui/releases/tag/v1.0.3
+[1.0.4]: https://github.com/NKocur/DragonGui/releases/tag/v1.0.4

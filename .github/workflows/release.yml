@@ -138,8 +138,9 @@ jobs:
       - run: python -m pip install --no-index --find-links dist dragongui
       - name: Verify native import
         run: >-
-          python -c "import dragongui as dg; info = dg.backend_info();
-          print(info); assert dg.__version__ == '1.0.0'; assert info['native']"
+          python -c "from importlib.metadata import version; import dragongui as dg;
+          info = dg.backend_info(); print(info);
+          assert dg.__version__ == version('dragongui'); assert info['native']"
 
   sdist-smoke:
     name: Rebuild source distribution
