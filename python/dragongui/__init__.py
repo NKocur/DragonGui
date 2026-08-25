@@ -70,6 +70,7 @@ from .theme import Theme
 from .terminal import Terminal, TerminalEvent
 from .vdom import Patch, ResourceRef, VNode
 from .widgets import (
+    AccelerationBars,
     Badge,
     ArrowButton,
     AppShell,
@@ -134,6 +135,7 @@ from .widgets import (
     PropertyGrid,
     RadioButton,
     RadioGroup,
+    RangeHistogram,
     RangeSlider,
     Scatter3D,
     ScatterPlot2D,
@@ -197,6 +199,7 @@ def unlink_cameras(*scatters: "Scatter3D") -> None:
 
 
 __all__ = [
+    "AccelerationBars",
     "App",
     "AgentEnvelopeParseEvent",
     "AgentEnvelopeParser",
@@ -312,6 +315,7 @@ __all__ = [
     "PropertyGrid",
     "RadioButton",
     "RadioGroup",
+    "RangeHistogram",
     "RangeSlider",
     "Scatter3D",
     "ScatterPlot2D",
@@ -379,6 +383,6 @@ __all__ = [
     "thread_role",
 ]
 
-__version__ = "1.0.4"
+__version__ = "1.0.5"
 
 

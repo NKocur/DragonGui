@@ -156,6 +156,7 @@ def _snapshot_fingerprint(
                 failure.thread_role,
                 failure.exc_type,
                 failure.exc_msg,
+                getattr(failure, "repeat_count", 1),
             )
             for failure in snap.recent_failures
         )
@@ -564,7 +565,8 @@ def _thread_table(snap: DiagnosticsSnapshot) -> None:
 def _failure_table(snap: DiagnosticsSnapshot) -> None:
     with VLayout(key="failures-table", style={**_S_TABLE, "gap": 4}):
         for index, failure in enumerate(snap.recent_failures):
-            row_key = f"failure-{failure.ts_ms}-{index}"
+            incident_ts = getattr(failure, "first_ts_ms", failure.ts_ms)
+            row_key = f"failure-{incident_ts}-{index}"
             with HLayout(key=f"{row_key}-row", style=_S_FAILURE_ROW):
                 LED(
                     "failure",
@@ -578,7 +580,14 @@ def _failure_table(snap: DiagnosticsSnapshot) -> None:
                     style=_S_FAILURE_COPY,
                 ):
                     Label(
-                        f"{failure.exc_type}: {failure.exc_msg}",
+                        (
+                            f"{failure.exc_type}: {failure.exc_msg}"
+                            + (
+                                f" ×{getattr(failure, 'repeat_count', 1)}"
+                                if getattr(failure, "repeat_count", 1) > 1
+                                else ""
+                            )
+                        ),
                         key=f"{row_key}-message",
                         style=_S_DANGER,
                         wrap=False,

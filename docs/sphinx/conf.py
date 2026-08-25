@@ -20,7 +20,7 @@ copyright = "2026, DragonGUI contributors"
 try:
     release = importlib_metadata.version("dragongui")
 except importlib_metadata.PackageNotFoundError:
-    release = "1.0.4"
+    release = "1.0.5"
 
 extensions = [
     "myst_parser",

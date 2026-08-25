@@ -3,6 +3,21 @@
 All notable changes to DragonGUI are documented here. The project follows
 [Semantic Versioning](https://semver.org/) from version 1.0.0 onward.
 
+## [1.0.5] - 2026-08-25
+
+### Added
+
+- `RangeHistogram` and `AccelerationBars` widgets for compact telemetry views.
+- Display-only box overlays for heatmaps.
+
+### Fixed
+
+- Made all 3D scatter points write depth so camera rotation no longer lets
+  upload order determine which point appears in front.
+- Clamped scatter scissor rectangles after surface resizes.
+- Handled empty 2D scatter payloads with explicit colors.
+- Aggregated repeated diagnostics while retaining the total failure count.
+
 ## [1.0.4] - 2026-08-06
 
 Release maintenance update.
@@ -35,3 +50,4 @@ First stable production release.
 
 [1.0.0]: https://github.com/NKocur/DragonGui/releases/tag/v1.0.0
 [1.0.4]: https://github.com/NKocur/DragonGui/releases/tag/v1.0.4
+[1.0.5]: https://github.com/NKocur/DragonGui/releases/tag/v1.0.5

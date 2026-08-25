@@ -120,6 +120,8 @@ class TaskFailure:
         "exc_type",
         "exc_msg",
         "tb_short",
+        "first_ts_ms",
+        "repeat_count",
     )
 
     def __init__(
@@ -131,6 +133,8 @@ class TaskFailure:
     ) -> None:
         t = threading.current_thread()
         self.ts_ms = int(time.time() * 1000)
+        self.first_ts_ms = self.ts_ms
+        self.repeat_count = 1
         self.callable_repr = callable_repr
         self.thread_name = origin.name if origin is not None else t.name
         self.thread_role = origin.role if origin is not None else None
@@ -189,6 +193,7 @@ class DiagnosticsCollector:
         self._enqueued_total: int = 0
         self._enqueue_rate = _RateCounter()
         self._failures: deque[TaskFailure] = deque(maxlen=50)
+        self._failure_count: int = 0
         self._last_thread_prune = 0.0
 
     def configure(self, history_seconds: int) -> None:
@@ -333,9 +338,28 @@ class DiagnosticsCollector:
             while self._queue_samples and self._queue_samples[0][0] < cutoff:
                 self._queue_samples.popleft()
 
-    def record_failure(self, failure: TaskFailure) -> None:
+    def record_failure(self, failure: TaskFailure) -> int:
         with self._lock:
+            self._failure_count += 1
+            if self._failures:
+                previous = self._failures[-1]
+                same_failure = (
+                    previous.callable_repr == failure.callable_repr
+                    and previous.thread_name == failure.thread_name
+                    and previous.thread_role == failure.thread_role
+                    and previous.exc_type == failure.exc_type
+                    and previous.exc_msg == failure.exc_msg
+                    and previous.tb_short == failure.tb_short
+                )
+                # Collapse a hot stream of the same failing UI task into one
+                # row while retaining the total occurrence count. A later
+                # recurrence remains a separate incident for chronology.
+                if same_failure and failure.ts_ms - previous.ts_ms <= 5_000:
+                    previous.ts_ms = failure.ts_ms
+                    previous.repeat_count += 1
+                    return previous.repeat_count
             self._failures.append(failure)
+            return 1
 
     def snapshot(
         self,
@@ -387,7 +411,7 @@ class DiagnosticsCollector:
                 snap.queue_samples = depths[::step][-40:]
 
             if include_failures:
-                snap.failure_count = len(self._failures)
+                snap.failure_count = self._failure_count
                 snap.recent_failures = list(self._failures)[-5:]
 
             if include_threads:
@@ -512,7 +536,7 @@ def record_task_failure(
     task: Any,
     exc: BaseException,
     origin: ThreadOrigin | None = None,
-) -> None:
+) -> int:
     """Called by the runtime when a call_soon_threadsafe task raises an exception."""
     try:
         name = (
@@ -521,6 +545,6 @@ def record_task_failure(
             or repr(task)
         )
         failure = TaskFailure(str(name)[:80], exc, traceback.format_exc(), origin)
-        _get_collector().record_failure(failure)
+        return _get_collector().record_failure(failure)
     except Exception:
-        pass
+        return 1

@@ -4863,6 +4863,153 @@ fn palette_color(index: usize, theme: &Theme) -> [f32; 4] {
         .unwrap_or(theme.accent)
 }
 
+fn emit_range_histogram(
+    out: &mut Vec<RectInstance>,
+    node: &WidgetNode,
+    state: &WidgetState,
+    theme: &Theme,
+    sf: f32,
+    rect: [f32; 4],
+    styled_bg: Option<[f32; 4]>,
+    styled_border: Option<[f32; 4]>,
+    styled_accent: Option<[f32; 4]>,
+    radii: [f32; 4],
+    border_w: f32,
+) {
+    let props = &node.props.range_histogram;
+    emit_bordered_rect_radii(
+        out,
+        rect,
+        styled_border.unwrap_or(theme.border),
+        styled_bg.unwrap_or(theme.surface),
+        radii,
+        border_w,
+    );
+    let pad = 8.0 * sf;
+    let label_offset = if props.label.is_some() {
+        18.0 * sf
+    } else {
+        0.0
+    };
+    let plot = [
+        rect[0] + pad,
+        rect[1] + pad + label_offset,
+        (rect[2] - pad * 2.0).max(0.0),
+        (rect[3] - pad * 2.0 - label_offset).max(0.0),
+    ];
+    if plot[2] <= 1.0 || plot[3] <= 1.0 || props.counts.is_empty() {
+        return;
+    }
+    let maximum = props
+        .counts
+        .iter()
+        .copied()
+        .fold(0.0_f32, f32::max)
+        .max(1.0);
+    let bin_w = plot[2] / props.counts.len() as f32;
+    let accent = styled_accent.unwrap_or(theme.accent);
+    let selection = state
+        .range_val
+        .get(&node.id)
+        .copied()
+        .unwrap_or((props.selected_min, props.selected_max));
+    for (index, count) in props.counts.iter().copied().enumerate() {
+        let height = plot[3] * (count.max(0.0) / maximum).clamp(0.0, 1.0);
+        let center = props
+            .edges
+            .get(index)
+            .zip(props.edges.get(index + 1))
+            .map(|(a, b)| (*a + *b) * 0.5)
+            .unwrap_or(props.range_min);
+        let selected = center >= selection.0 && center <= selection.1;
+        let color = if selected {
+            accent
+        } else {
+            mix(accent, theme.surface, 0.72)
+        };
+        out.push(inst_radii(
+            [
+                plot[0] + index as f32 * bin_w + 0.5 * sf,
+                plot[1] + plot[3] - height,
+                (bin_w - sf).max(0.5),
+                height,
+            ],
+            color,
+            [1.0 * sf; 4],
+        ));
+    }
+    let span = (props.range_max - props.range_min).max(f32::EPSILON);
+    for value in [selection.0, selection.1] {
+        let t = ((value - props.range_min) / span).clamp(0.0, 1.0);
+        let handle_x = plot[0] + t * plot[2];
+        out.push(inst_radii(
+            [handle_x - sf, plot[1], 2.0 * sf, plot[3]],
+            theme.text,
+            [sf; 4],
+        ));
+    }
+}
+
+fn emit_acceleration_bars(
+    out: &mut Vec<RectInstance>,
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    rect: [f32; 4],
+    styled_bg: Option<[f32; 4]>,
+    styled_border: Option<[f32; 4]>,
+    radii: [f32; 4],
+    border_w: f32,
+) {
+    emit_bordered_rect_radii(
+        out,
+        rect,
+        styled_border.unwrap_or(theme.border),
+        styled_bg.unwrap_or(theme.surface),
+        radii,
+        border_w,
+    );
+    let props = &node.props.acceleration_bars;
+    let pad = 10.0 * sf;
+    let row_h = ((rect[3] - pad * 2.0) / 3.0).max(1.0);
+    let label_gutter = if props.show_values {
+        70.0 * sf
+    } else {
+        20.0 * sf
+    };
+    let track_x = rect[0] + pad + label_gutter;
+    let track_w = (rect[2] - pad * 2.0 - label_gutter).max(0.0);
+    let center = track_x + track_w * 0.5;
+    let values = [props.x, props.y, props.z];
+    let colors = [
+        [0.93, 0.31, 0.31, 1.0],
+        [0.32, 0.78, 0.43, 1.0],
+        [0.31, 0.55, 0.95, 1.0],
+    ];
+    for index in 0..3 {
+        let y = rect[1] + pad + index as f32 * row_h + row_h * 0.28;
+        let h = (row_h * 0.44).max(2.0 * sf);
+        out.push(inst_radii(
+            [track_x, y, track_w, h],
+            mix(theme.surface_alt, theme.border, 0.35),
+            [h * 0.5; 4],
+        ));
+        out.push(inst_radii(
+            [center - 0.5 * sf, y - 2.0 * sf, sf, h + 4.0 * sf],
+            theme.muted_text,
+            [0.5 * sf; 4],
+        ));
+        let normalized = (values[index] / props.range_g.max(f32::EPSILON)).clamp(-1.0, 1.0);
+        let width = normalized.abs() * track_w * 0.5;
+        let x = if normalized < 0.0 {
+            center - width
+        } else {
+            center
+        };
+        out.push(inst_radii([x, y, width, h], colors[index], [h * 0.5; 4]));
+    }
+}
+
 fn emit_histogram(
     out: &mut Vec<RectInstance>,
     node: &WidgetNode,
@@ -6165,6 +6312,56 @@ fn emit_heatmap(
                 [0.0; 4],
             ));
         }
+    }
+
+    for overlay in &node.props.heatmap.boxes {
+        let x0_cell = overlay.x0.min(overlay.x1).clamp(0.0, cols as f32);
+        let x1_cell = overlay.x0.max(overlay.x1).clamp(0.0, cols as f32);
+        let y0_cell = overlay.y0.min(overlay.y1).clamp(0.0, rows as f32);
+        let y1_cell = overlay.y0.max(overlay.y1).clamp(0.0, rows as f32);
+        if x1_cell <= x0_cell || y1_cell <= y0_cell {
+            continue;
+        }
+        let x0 = plot[0] + plot[2] * x0_cell / cols as f32;
+        let x1 = plot[0] + plot[2] * x1_cell / cols as f32;
+        let y0 = plot[1] + plot[3] * y0_cell / rows as f32;
+        let y1 = plot[1] + plot[3] * y1_cell / rows as f32;
+        let color = overlay
+            .color
+            .as_ref()
+            .and_then(|color| resolve_color(&Some(color.clone()), theme))
+            .unwrap_or(theme.accent);
+        let line_width = (overlay.line_width * sf).max(1.0);
+        out.push(inst_radii(
+            [x0, y0, (x1 - x0).max(line_width), line_width],
+            color,
+            [0.0; 4],
+        ));
+        out.push(inst_radii(
+            [
+                x0,
+                (y1 - line_width).max(y0),
+                (x1 - x0).max(line_width),
+                line_width,
+            ],
+            color,
+            [0.0; 4],
+        ));
+        out.push(inst_radii(
+            [x0, y0, line_width, (y1 - y0).max(line_width)],
+            color,
+            [0.0; 4],
+        ));
+        out.push(inst_radii(
+            [
+                (x1 - line_width).max(x0),
+                y0,
+                line_width,
+                (y1 - y0).max(line_width),
+            ],
+            color,
+            [0.0; 4],
+        ));
     }
 
     if let Some(bar) = heatmap_scalar_bar_rect(node, sf, rect) {
@@ -13903,6 +14100,32 @@ fn emit_rects_inner(
                 styled_bg.or(paint_fallback.background),
                 styled_border.or(paint_fallback.border_color),
                 styled_accent,
+                radii,
+                border_w,
+            ),
+
+            WidgetKind::RangeHistogram => emit_range_histogram(
+                out,
+                node,
+                state,
+                theme,
+                sf,
+                [x, y, w, h],
+                styled_bg.or(paint_fallback.background),
+                styled_border.or(paint_fallback.border_color),
+                styled_accent,
+                radii,
+                border_w,
+            ),
+
+            WidgetKind::AccelerationBars => emit_acceleration_bars(
+                out,
+                node,
+                theme,
+                sf,
+                [x, y, w, h],
+                styled_bg.or(paint_fallback.background),
+                styled_border.or(paint_fallback.border_color),
                 radii,
                 border_w,
             ),

@@ -368,6 +368,12 @@ def _pack_point_instances(
         ys = np.asarray(_get_frame_col(frame, y_col), dtype=np.float32)
         zs = np.asarray(_get_frame_col(frame, z_col), dtype=np.float32)
         n = len(xs)
+        if n == 0:
+            # Empty live frames are a normal way to clear a scatter.  Return a
+            # valid zero-point packet before color normalization: operations
+            # such as ``arr.max()`` are undefined for empty explicit RGB/RGBA
+            # arrays and previously turned a harmless clear into a task error.
+            return b""
 
         # --- colors ---
         rgb: Any = None
@@ -8839,6 +8845,145 @@ class Histogram(Widget):
         }
 
 
+RangeHistogramCallback = Callable[[tuple[float, float]], None]
+
+
+def _range_histogram_values(values: Sequence[object], name: str) -> tuple[float, ...]:
+    if isinstance(values, (str, bytes, bytearray)):
+        raise TypeError(f"{name} must be a sequence of numbers")
+    try:
+        return tuple(float(value) for value in values)
+    except (TypeError, ValueError) as exc:
+        raise TypeError(f"{name} must be a sequence of numbers") from exc
+
+
+def _pack_f32_values(values: Sequence[float]) -> bytes:
+    return struct.pack(f"<{len(values)}f", *values)
+
+
+class RangeHistogram(Widget):
+    """Compact histogram with draggable minimum and maximum filter handles."""
+
+    kind = "range_histogram"
+
+    def __init__(
+        self,
+        edges: Sequence[object],
+        counts: Sequence[object],
+        *,
+        range_min: float,
+        range_max: float,
+        selected_min: float | None = None,
+        selected_max: float | None = None,
+        on_change: RangeHistogramCallback | None = None,
+        label: str | None = None,
+        width: int | float | None = 180,
+        height: int | float | None = 112,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.edges = _range_histogram_values(edges, "RangeHistogram edges")
+        self.counts = _range_histogram_values(counts, "RangeHistogram counts")
+        self._validate_bins(self.edges, self.counts)
+        self.range_min = float(range_min)
+        self.range_max = float(range_max)
+        if not math.isfinite(self.range_min) or not math.isfinite(self.range_max):
+            raise ValueError("RangeHistogram range bounds must be finite")
+        if self.range_max <= self.range_min:
+            raise ValueError("RangeHistogram range_max must be greater than range_min")
+        self.selected_min = self._clamp(
+            self.range_min if selected_min is None else selected_min
+        )
+        self.selected_max = self._clamp(
+            self.range_max if selected_max is None else selected_max
+        )
+        if self.selected_min > self.selected_max:
+            self.selected_min, self.selected_max = self.selected_max, self.selected_min
+        self.on_change = on_change
+        self.label = None if label is None else str(label)
+        self.width = (
+            None if width is None else _positive_finite_value(width, "RangeHistogram width")
+        )
+        self.height = (
+            None if height is None else _positive_finite_value(height, "RangeHistogram height")
+        )
+        super().__init__(
+            id=id,
+            key=key,
+            class_=class_,
+            style=style,
+            tooltip=tooltip,
+            parent=parent,
+        )
+
+    @staticmethod
+    def _validate_bins(edges: tuple[float, ...], counts: tuple[float, ...]) -> None:
+        if len(edges) != len(counts) + 1:
+            raise ValueError("RangeHistogram edges length must equal counts length + 1")
+        if len(edges) < 2:
+            raise ValueError("RangeHistogram requires at least one bin")
+        if any(not math.isfinite(value) for value in edges):
+            raise ValueError("RangeHistogram edges must be finite")
+        if any(right <= left for left, right in zip(edges, edges[1:])):
+            raise ValueError("RangeHistogram edges must be strictly increasing")
+        if any((not math.isfinite(value)) or value < 0.0 for value in counts):
+            raise ValueError("RangeHistogram counts must be finite and non-negative")
+
+    def _clamp(self, value: float) -> float:
+        value_f = float(value)
+        if not math.isfinite(value_f):
+            raise ValueError("RangeHistogram selected value must be finite")
+        return min(max(value_f, self.range_min), self.range_max)
+
+    def set_range(self, selected_min: float, selected_max: float) -> None:
+        lo = self._clamp(selected_min)
+        hi = self._clamp(selected_max)
+        if lo > hi:
+            lo, hi = hi, lo
+        self.selected_min = lo
+        self.selected_max = hi
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("selected_min", self.selected_min)
+            handle.enqueue_set_prop("selected_max", self.selected_max)
+
+    def set_bins(
+        self,
+        edges: Sequence[object],
+        counts: Sequence[object],
+        *,
+        coalesce: bool = True,
+    ) -> None:
+        edge_values = _range_histogram_values(edges, "RangeHistogram edges")
+        count_values = _range_histogram_values(counts, "RangeHistogram counts")
+        self._validate_bins(edge_values, count_values)
+        self.edges = edge_values
+        self.counts = count_values
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_range_histogram_bins_packed(
+                _pack_f32_values(self.edges),
+                _pack_f32_values(self.counts),
+                coalesce=coalesce,
+            )
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "edges": list(self.edges),
+            "counts": list(self.counts),
+            "range_min": self.range_min,
+            "range_max": self.range_max,
+            "selected_min": self.selected_min,
+            "selected_max": self.selected_max,
+            "label": self.label or "",
+            "text": self.label or "",
+            "width": self.width,
+            "height": self.height,
+        }
+
+
 _BAR_CHART_DEFAULT_COLORS = (
     "#69b7ff",
     "#76e0b1",
@@ -9248,6 +9393,7 @@ class Heatmap(Widget):
         title: str | None = None,
         show_labels: bool = True,
         scalar_bar: bool = True,
+        boxes: Sequence[Mapping[str, object]] | None = None,
         on_hover: HeatmapHoverCallback | None = None,
         id: str | None = None,
         key: str | None = None,
@@ -9261,6 +9407,7 @@ class Heatmap(Widget):
         self.title = None if title is None else str(title)
         self.show_labels = bool(show_labels)
         self.scalar_bar = bool(scalar_bar)
+        self.boxes = self._normalize_boxes(boxes or ())
         self.on_hover = on_hover
         self.hover_cell: HeatmapCell | None = None
         self.rows = 0
@@ -9281,6 +9428,7 @@ class Heatmap(Widget):
         x_labels: Sequence[object] | None = None,
         y_labels: Sequence[object] | None = None,
         clim: tuple[float, float] | None = None,
+        boxes: Sequence[Mapping[str, object]] | None = None,
         _initial: bool = False,
     ) -> None:
         effective_clim = self.clim if clim is None else (float(clim[0]), float(clim[1]))
@@ -9302,6 +9450,8 @@ class Heatmap(Widget):
         self._payload = payload
         self._payload_b64 = None
         self._payload_token = zlib.crc32(payload) if payload else 0
+        if boxes is not None:
+            self.boxes = self._normalize_boxes(boxes)
         if not _initial and (handle := self._live()) is not None:
             handle.enqueue_replace_node(self.to_dict())
 
@@ -9319,6 +9469,54 @@ class Heatmap(Widget):
         self.show_labels = bool(visible)
         if (handle := self._live()) is not None:
             handle.enqueue_set_prop("show_labels", self.show_labels)
+
+    @staticmethod
+    def _normalize_boxes(
+        boxes: Sequence[Mapping[str, object]],
+    ) -> list[dict[str, object]]:
+        normalized: list[dict[str, object]] = []
+        for index, box in enumerate(boxes):
+            if not isinstance(box, Mapping):
+                raise TypeError(f"Heatmap box {index} must be a mapping")
+            try:
+                x0 = float(box["x0"])
+                y0 = float(box["y0"])
+                x1 = float(box["x1"])
+                y1 = float(box["y1"])
+            except KeyError as exc:
+                raise ValueError(f"Heatmap box {index} is missing {exc.args[0]!r}") from exc
+            if not all(math.isfinite(value) for value in (x0, y0, x1, y1)):
+                raise ValueError(f"Heatmap box {index} coordinates must be finite")
+            line_width = float(box.get("line_width", 1.5))
+            if not math.isfinite(line_width) or line_width <= 0:
+                raise ValueError(f"Heatmap box {index} line_width must be positive and finite")
+            color_value = box.get("color", "accent")
+            if isinstance(color_value, str):
+                color: object = color_value
+            elif isinstance(color_value, Sequence) and not isinstance(
+                color_value, (bytes, bytearray)
+            ):
+                if len(color_value) not in (3, 4):
+                    raise ValueError(f"Heatmap box {index} color must contain 3 or 4 channels")
+                color = [float(channel) for channel in color_value]
+                if not all(math.isfinite(channel) for channel in color):
+                    raise ValueError(f"Heatmap box {index} color channels must be finite")
+            else:
+                raise TypeError(f"Heatmap box {index} color must be a string or RGB/RGBA sequence")
+            normalized.append({
+                "x0": x0, "y0": y0, "x1": x1, "y1": y1,
+                "color": color, "line_width": line_width,
+            })
+        return normalized
+
+    def set_boxes(self, boxes: Sequence[Mapping[str, object]]) -> None:
+        """Set display-only boxes in heatmap cell coordinates."""
+        self.boxes = self._normalize_boxes(boxes)
+        if (handle := self._live()) is not None:
+            handle.enqueue_replace_node(self.to_dict())
+
+    def clear_boxes(self) -> None:
+        self.set_boxes(())
 
     def _queue_startup_resources(self) -> None:
         if (handle := self._live()) is not None:
@@ -9344,6 +9542,7 @@ class Heatmap(Widget):
             "y_labels": list(self.y_labels),
             "show_labels": self.show_labels,
             "scalar_bar": self.scalar_bar,
+            "boxes": list(self.boxes),
             "events": ["change"] if self.on_hover is not None else [],
         }
         if self.title is not None:
@@ -9788,6 +9987,103 @@ class LinePlot(Widget):
             "window_size": self.window_size,
             "max_points": self.max_points,
             "series": series_items,
+        }
+
+
+class AccelerationBars(Widget):
+    """Compact centered bars for three-axis acceleration or rate telemetry."""
+
+    kind = "acceleration_bars"
+
+    def __init__(
+        self,
+        *,
+        x: int | float = 0.0,
+        y: int | float = 0.0,
+        z: int | float = 0.0,
+        range_g: int | float = 2.0,
+        show_values: bool = True,
+        width: int | float | None = 180,
+        height: int | float | None = 112,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.x = self._finite(x, "x")
+        self.y = self._finite(y, "y")
+        self.z = self._finite(z, "z")
+        self.range_g = max(0.1, self._finite(range_g, "range_g"))
+        self.show_values = bool(show_values)
+        self.width = (
+            None if width is None else _positive_finite_value(width, "AccelerationBars width")
+        )
+        self.height = (
+            None if height is None else _positive_finite_value(height, "AccelerationBars height")
+        )
+        resolved_style = dict(style or {})
+        text_height = self.height if self.height is not None else 112.0
+        resolved_style.setdefault("line_height", f"{max(12.0, (text_height - 20.0) / 3.0):.3f}px")
+        resolved_style.setdefault("font_size", 10)
+        super().__init__(
+            id=id,
+            key=key,
+            class_=class_,
+            style=resolved_style,
+            tooltip=tooltip,
+            parent=parent,
+        )
+
+    @staticmethod
+    def _finite(value: int | float, name: str) -> float:
+        value_f = float(value)
+        if not math.isfinite(value_f):
+            raise ValueError(f"AccelerationBars {name} must be finite")
+        return value_f
+
+    def _display_text(self) -> str:
+        if self.show_values:
+            return f"X {self.x:+.2f}g\nY {self.y:+.2f}g\nZ {self.z:+.2f}g"
+        return "X\nY\nZ"
+
+    def set_values(
+        self,
+        x: int | float,
+        y: int | float,
+        z: int | float,
+    ) -> None:
+        self.x = self._finite(x, "x")
+        self.y = self._finite(y, "y")
+        self.z = self._finite(z, "z")
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("x", self.x)
+            handle.enqueue_set_prop("y", self.y)
+            handle.enqueue_set_prop("z", self.z)
+            handle.enqueue_set_prop("text", self._display_text())
+
+    def set_range(self, range_g: int | float) -> None:
+        self.range_g = max(0.1, self._finite(range_g, "range_g"))
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("range_g", self.range_g)
+
+    def set_show_values(self, visible: bool) -> None:
+        self.show_values = bool(visible)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("show_values", self.show_values)
+            handle.enqueue_set_prop("text", self._display_text())
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "x": self.x,
+            "y": self.y,
+            "z": self.z,
+            "range_g": self.range_g,
+            "show_values": self.show_values,
+            "text": self._display_text(),
+            "width": self.width,
+            "height": self.height,
         }
 
 

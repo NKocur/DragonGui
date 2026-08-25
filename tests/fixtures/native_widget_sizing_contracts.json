@@ -17,7 +17,8 @@
     {
       "widgets": [
         "HLayout", "VLayout", "GridLayout", "Splitter", "Pane", "Sidebar",
-        "Pages", "Page", "PieChart", "Histogram", "BarChart", "Heatmap",
+        "Pages", "Page", "PieChart", "Histogram", "RangeHistogram",
+        "AccelerationBars", "BarChart", "Heatmap",
         "LinePlot", "Scatter3D", "DataFrameTable"
       ],
       "role": "flexible-region",

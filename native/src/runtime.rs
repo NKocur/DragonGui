@@ -3336,6 +3336,8 @@ fn widget_kind_name(kind: &WidgetKind) -> &'static str {
         WidgetKind::NavItem => "nav_item",
         WidgetKind::PieChart => "pie_chart",
         WidgetKind::Histogram => "histogram",
+        WidgetKind::RangeHistogram => "range_histogram",
+        WidgetKind::AccelerationBars => "acceleration_bars",
         WidgetKind::BarChart => "bar_chart",
         WidgetKind::Heatmap => "heatmap",
         WidgetKind::LinePlot => "line_plot",
@@ -6218,6 +6220,52 @@ fn set_widget_limits_bar_prop(node: &mut WidgetNode, id: &str, prop: &str, value
             .raw_props
             .insert(prop.to_string(), Value::Number(number));
     }
+    true
+}
+
+fn set_widget_range_histogram_prop(
+    node: &mut WidgetNode,
+    id: &str,
+    prop: &str,
+    value: f32,
+) -> bool {
+    let Some(target) = find_widget_mut(node, id) else {
+        return false;
+    };
+    if target.kind != WidgetKind::RangeHistogram || !value.is_finite() {
+        return false;
+    }
+    let slot = match prop {
+        "range_min" => &mut target.props.range_histogram.range_min,
+        "range_max" => &mut target.props.range_histogram.range_max,
+        "selected_min" => &mut target.props.range_histogram.selected_min,
+        "selected_max" => &mut target.props.range_histogram.selected_max,
+        _ => return false,
+    };
+    *slot = value;
+    true
+}
+
+fn set_widget_acceleration_bars_prop(
+    node: &mut WidgetNode,
+    id: &str,
+    prop: &str,
+    value: f32,
+) -> bool {
+    let Some(target) = find_widget_mut(node, id) else {
+        return false;
+    };
+    if target.kind != WidgetKind::AccelerationBars || !value.is_finite() {
+        return false;
+    }
+    let slot = match prop {
+        "x" => &mut target.props.acceleration_bars.x,
+        "y" => &mut target.props.acceleration_bars.y,
+        "z" => &mut target.props.acceleration_bars.z,
+        "range_g" if value > 0.0 => &mut target.props.acceleration_bars.range_g,
+        _ => return false,
+    };
+    *slot = value;
     true
 }
 
@@ -17800,6 +17848,7 @@ impl WgpuState {
                     | WidgetKind::NumberInput
                     | WidgetKind::DragNumber
                     | WidgetKind::ProgressBar
+                    | WidgetKind::AccelerationBars
                     | WidgetKind::Collapsible
                     | WidgetKind::Modal
                     | WidgetKind::Page
@@ -18351,6 +18400,31 @@ impl WgpuState {
             ) => {
                 let tree = self.widget_tree.as_mut()?;
                 set_widget_limits_bar_prop(tree, id, prop, v).then_some(Dirty::Visual)
+            }
+            (
+                WidgetKind::RangeHistogram,
+                "range_min" | "range_max" | "selected_min" | "selected_max",
+                CommandValue::Float(v),
+            ) => {
+                let tree = self.widget_tree.as_mut()?;
+                if !set_widget_range_histogram_prop(tree, id, prop, v) {
+                    return None;
+                }
+                let props = &find_widget(tree, id)?.props.range_histogram;
+                state
+                    .float_range
+                    .insert(id.to_string(), (props.range_min, props.range_max));
+                let _ = state.set_range_values(id, props.selected_min, props.selected_max);
+                Some(Dirty::Visual)
+            }
+            (WidgetKind::AccelerationBars, "x" | "y" | "z" | "range_g", CommandValue::Float(v)) => {
+                let tree = self.widget_tree.as_mut()?;
+                set_widget_acceleration_bars_prop(tree, id, prop, v).then_some(Dirty::Visual)
+            }
+            (WidgetKind::AccelerationBars, "show_values", CommandValue::Bool(v)) => {
+                let target = find_widget_mut(self.widget_tree.as_mut()?, id)?;
+                target.props.acceleration_bars.show_values = v;
+                Some(Dirty::Text)
             }
             (WidgetKind::Dropdown, "value", CommandValue::Text(v)) => {
                 state.set_dropdown_value(id, &v)?;
@@ -19675,6 +19749,39 @@ impl WgpuState {
             "finite_count".to_string(),
             serde_json::Value::from(finite_count as u64),
         );
+        Ok(true)
+    }
+
+    fn set_range_histogram_bins(
+        &mut self,
+        id: &str,
+        edges: Vec<f32>,
+        counts: Vec<f32>,
+    ) -> Result<bool, String> {
+        if edges.len() != counts.len().saturating_add(1) || edges.len() < 2 {
+            return Err("range histogram edges length must equal counts length + 1".to_string());
+        }
+        if edges.iter().any(|value| !value.is_finite())
+            || counts
+                .iter()
+                .any(|value| !value.is_finite() || *value < 0.0)
+            || !edges.windows(2).all(|pair| pair[0] < pair[1])
+        {
+            return Err(
+                "range histogram bins must be finite, ordered, and non-negative".to_string(),
+            );
+        }
+        let Some(tree) = self.widget_tree.as_mut() else {
+            return Ok(false);
+        };
+        let Some(node) = find_widget_mut(tree, id) else {
+            return Ok(false);
+        };
+        if node.kind != WidgetKind::RangeHistogram {
+            return Err(format!("widget {id:?} is not a RangeHistogram"));
+        }
+        node.props.range_histogram.edges = edges;
+        node.props.range_histogram.counts = counts;
         Ok(true)
     }
 
@@ -23890,7 +23997,11 @@ impl WgpuState {
                         occlusion_query_set: None,
                         multiview_mask: None,
                     });
-                    runtime.widget.render(&mut pass);
+                    runtime.widget.render_in_target(
+                        &mut pass,
+                        self.config.width,
+                        self.config.height,
+                    );
                     runtime.last_direct_scene_revision = scene_revision;
                     redraw_ms = redraw_t0.elapsed().as_secs_f64() * 1000.0;
                 }
@@ -26977,6 +27088,52 @@ impl DragonApp {
                     redraw,
                 )
             }
+            Command::SetRangeHistogramBinsPacked {
+                id,
+                edges,
+                counts,
+                coalesce: _,
+            } => {
+                let detail = Some(format!(
+                    "bins={}, payload_bytes={}",
+                    counts.len() / 4,
+                    edges.len() + counts.len()
+                ));
+                let decode = |bytes: Vec<u8>| {
+                    bytes
+                        .chunks_exact(4)
+                        .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
+                        .collect::<Vec<_>>()
+                };
+                let (dirty, outcome, redraw) = {
+                    let Some(gpu) = &mut self.gpu else {
+                        return self.record_runtime_command(
+                            "SetRangeHistogramBinsPacked",
+                            Some(id),
+                            detail,
+                            None,
+                            "gpu_not_ready",
+                            false,
+                        );
+                    };
+                    match gpu.set_range_histogram_bins(&id, decode(edges), decode(counts)) {
+                        Ok(true) => {
+                            gpu.rebuild_for_widget_dirty(Dirty::Visual, Some(&id));
+                            (Some(Dirty::Visual), "applied".to_string(), true)
+                        }
+                        Ok(false) => (None, "stale_widget".to_string(), false),
+                        Err(err) => (None, format!("error: {err}"), false),
+                    }
+                };
+                self.record_runtime_command(
+                    "SetRangeHistogramBinsPacked",
+                    Some(id),
+                    detail,
+                    dirty,
+                    &outcome,
+                    redraw,
+                )
+            }
             Command::AppendLinePlotPointsPacked {
                 id,
                 series,
@@ -29657,6 +29814,14 @@ impl DragonApp {
                 }
             }
             if changed {
+                if gpu.widget_kind(&id) == Some(WidgetKind::RangeHistogram) {
+                    if let Some(tree) = gpu.widget_tree.as_mut() {
+                        if let Some(node) = find_widget_mut(tree, &id) {
+                            node.props.range_histogram.selected_min = changed_pair.0;
+                            node.props.range_histogram.selected_max = changed_pair.1;
+                        }
+                    }
+                }
                 gpu.rebuild_primitives();
             }
         }
@@ -32314,7 +32479,10 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                     if kind == WidgetKind::Slider {
                                         self.slider_drag = gpu.create_slider_drag(&id);
                                     }
-                                    if kind == WidgetKind::RangeSlider {
+                                    if matches!(
+                                        kind,
+                                        WidgetKind::RangeSlider | WidgetKind::RangeHistogram
+                                    ) {
                                         self.range_slider_drag =
                                             gpu.create_range_slider_drag(&id, pos[0]);
                                     }
@@ -32327,7 +32495,10 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                 if kind == WidgetKind::Slider {
                                     self.update_slider_drag(pos[0], true);
                                 }
-                                if kind == WidgetKind::RangeSlider {
+                                if matches!(
+                                    kind,
+                                    WidgetKind::RangeSlider | WidgetKind::RangeHistogram
+                                ) {
                                     self.update_range_slider_drag(pos[0], true);
                                 }
                                 self.request_redraw();

@@ -7,7 +7,7 @@ from typing import Any, Iterable
 
 
 _HELP_SCHEMA_VERSION = 1
-_LIBRARY_VERSION_FALLBACK = "1.0.4"
+_LIBRARY_VERSION_FALLBACK = "1.0.5"
 
 
 def _library_version() -> str:
@@ -257,6 +257,7 @@ _CONTROL_WIDGETS = (
     "RangeSlider",
     "ProgressBar",
     "LimitsBar",
+    "AccelerationBars",
     "LoadingSpinner",
     "NumberInput",
     "DragNumber",
@@ -276,6 +277,7 @@ _DATA_WIDGETS = (
     "NodeGraph",
     "DataFrameTable",
     "Histogram",
+    "RangeHistogram",
     "BarChart",
     "Heatmap",
     "LinePlot",
@@ -442,6 +444,8 @@ _SECTION_NAME_OVERRIDES = {
     "LED": "led",
     "LinePlot": "line_plot",
     "LimitsBar": "limits_bar",
+    "AccelerationBars": "acceleration_bars",
+    "RangeHistogram": "range_histogram",
     "LoadingSpinner": "loading_spinner",
     "MenuBar": "menu_bar",
     "MenuItem": "menu_item",
@@ -528,6 +532,8 @@ _SYMBOL_NOTES = {
     "DataFrameTable": "Tabular data viewer with sort, selection, and live frame replacement support.",
     "LinePlot": "2D time-series and streaming line plot.",
     "LimitsBar": "Read-only telemetry display with ordered alarm zones and a live position marker.",
+    "AccelerationBars": "Compact signed X/Y/Z acceleration display centered around zero.",
+    "RangeHistogram": "Compact histogram with draggable minimum and maximum selection handles.",
     "Scatter3D": "3D point cloud widget with packed data paths, camera controls, and live updates.",
     "ScatterPlot2D": "2D point cloud widget for dense scalar/color plots.",
     "PointStore": "Reusable exact columns, revisions, shared XY/XYZ payloads, exact row queries, and conservative query_box_chunks()/query_frustum_chunks() bounds rejection.",
@@ -701,6 +707,8 @@ _LIVE_METHOD_FAMILIES: dict[str, tuple[str, ...]] = {
     "DataFrameTable": ("set_frame",),
     "LinePlot": ("set_data", "append_points", "clear", "fit"),
     "LimitsBar": ("set_value", "set_limits"),
+    "AccelerationBars": ("set_values", "set_range", "set_show_values"),
+    "RangeHistogram": ("set_range", "set_bins"),
     "Scatter3D": (
         "set_points",
         "set_prepared_points",
@@ -3232,8 +3240,9 @@ Use:
 - `Histogram(data, value=None, bins=30, mode="count")` for distributions.
 - `BarChart(data=None, category=None, value=None, labels=None, values=None,
   aggregate="sum", orientation="vertical")` for categorical comparisons.
-- `Heatmap(matrix, x_labels=None, y_labels=None, colormap="viridis")` for
-  matrices and dense grids.
+- `Heatmap(matrix, x_labels=None, y_labels=None, colormap="viridis",
+  boxes=None)` for matrices and dense grids. `boxes` and `set_boxes(...)`
+  add display-only outlines in heatmap cell coordinates.
 - `PieChart(data=None, labels=None, values=None, category=None, value=None,
   aggregate="count", donut=False)` for composition views.
 

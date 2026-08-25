@@ -1093,6 +1093,7 @@ Global generated-content hooks: `::before`, `::after` (text renderer).
 
 | Widget | Supported states | Parts and renderer support |
 | --- | --- | --- |
+| `AccelerationBars` | `:hover`, `:active`, `:focus`, `:disabled` |  |
 | `ArrowButton` | `:hover`, `:active`, `:focus`, `:disabled` | `icon` (paint) |
 | `BarChart` | `:hover`, `:active`, `:focus`, `:disabled` | `label` (text), `value-label` (text) |
 | `Button` | `:hover`, `:active`, `:focus`, `:disabled` | `badge` (paint) |
@@ -1121,6 +1122,7 @@ Global generated-content hooks: `::before`, `::after` (text renderer).
 | `PieChart` | `:hover`, `:active`, `:focus`, `:disabled` | `label` (text) |
 | `ProgressBar` | `:hover`, `:active`, `:focus`, `:disabled` | `fill` (paint), `track` (paint), `label` (text) |
 | `RadioButton` | `:hover`, `:active`, `:focus`, `:disabled`, `:checked` | `dot` (paint), `indicator` (paint), `label` (text) |
+| `RangeHistogram` | `:hover`, `:active`, `:focus`, `:disabled` |  |
 | `RangeSlider` | `:hover`, `:active`, `:focus`, `:disabled` | `range` (paint), `thumb-max` (paint), `thumb-min` (paint), `track` (paint), `label` (text) |
 | `ScrollArea` | `:hover`, `:active`, `:focus`, `:disabled` | `scrollbar-thumb` (paint), `scrollbar-track` (paint) |
 | `SearchBox` | `:hover`, `:active`, `:focus`, `:disabled` | `clear` (forwarded), `field` (forwarded), `icon` (forwarded) |

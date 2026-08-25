@@ -149,6 +149,12 @@ pub enum Command {
         auto_fit: bool,
         coalesce: bool,
     },
+    SetRangeHistogramBinsPacked {
+        id: String,
+        edges: Vec<u8>,
+        counts: Vec<u8>,
+        coalesce: bool,
+    },
     AppendLinePlotPointsPacked {
         id: String,
         series: String,
@@ -1030,6 +1036,9 @@ impl Command {
             Command::SetHistogramData {
                 id, coalesce: true, ..
             } => Some(CommandCoalescingKey::Histogram(id.clone())),
+            Command::SetRangeHistogramBinsPacked {
+                id, coalesce: true, ..
+            } => Some(CommandCoalescingKey::Histogram(id.clone())),
             Command::SetScatterScalarBar { id, .. } => {
                 Some(CommandCoalescingKey::ScatterScalarBar(id.clone()))
             }
@@ -1108,6 +1117,9 @@ impl Command {
                 Some(CommandCoalescingFamily::LinePlot)
             }
             Command::SetHistogramData { coalesce: true, .. } => {
+                Some(CommandCoalescingFamily::Histogram)
+            }
+            Command::SetRangeHistogramBinsPacked { coalesce: true, .. } => {
                 Some(CommandCoalescingFamily::Histogram)
             }
             Command::SetScatterScalarBar { .. } => Some(CommandCoalescingFamily::ScatterScalarBar),
@@ -1196,7 +1208,9 @@ impl CommandQueue {
                 QueueReplacementFamily::ScatterPoints
             }
             Command::SetLinePlotDataPacked { .. } => QueueReplacementFamily::LinePlot,
-            Command::SetHistogramData { .. } => QueueReplacementFamily::Histogram,
+            Command::SetHistogramData { .. } | Command::SetRangeHistogramBinsPacked { .. } => {
+                QueueReplacementFamily::Histogram
+            }
             Command::SetScatterScalarBar { .. } => QueueReplacementFamily::ScatterScalarBar,
             Command::UpdateScatterActorPacked { .. } => QueueReplacementFamily::ScatterActor,
             Command::UpdateExtensionDisplayList { .. } => {
@@ -1930,6 +1944,34 @@ impl NativeCommandSender {
             input_count,
             finite_count,
             auto_fit,
+            coalesce,
+        })
+    }
+
+    #[pyo3(signature = (id, edges, counts, coalesce=true))]
+    fn enqueue_set_range_histogram_bins_packed(
+        &self,
+        id: String,
+        edges: &Bound<'_, PyAny>,
+        counts: &Bound<'_, PyAny>,
+        coalesce: bool,
+    ) -> PyResult<()> {
+        let edges = byte_buffer_from_py(edges, "range histogram edge payload")?;
+        let counts = byte_buffer_from_py(counts, "range histogram count payload")?;
+        if edges.len() % 4 != 0 || counts.len() % 4 != 0 {
+            return Err(PyValueError::new_err(
+                "range histogram payload lengths must be multiples of 4",
+            ));
+        }
+        if edges.len() / 4 != counts.len() / 4 + 1 || edges.len() < 8 {
+            return Err(PyValueError::new_err(
+                "range histogram edges length must equal counts length + 1",
+            ));
+        }
+        self.enqueue(Command::SetRangeHistogramBinsPacked {
+            id,
+            edges,
+            counts,
             coalesce,
         })
     }
@@ -2728,14 +2770,14 @@ impl NativeCommandSender {
     #[pyo3(signature = (id, timeout_ms=10000))]
     fn scatter_screenshot(
         &self,
+        py: Python<'_>,
         id: String,
         timeout_ms: u64,
     ) -> PyResult<Option<(u32, u32, Vec<u8>)>> {
         use base64::{engine::general_purpose::STANDARD, Engine};
         let timeout = Duration::from_millis(timeout_ms);
-        let json_str = self
-            .bridge
-            .request_scatter_screenshot(id, timeout)
+        let json_str = py
+            .detach(|| self.bridge.request_scatter_screenshot(id, timeout))
             .map_err(|e| PyRuntimeError::new_err(format!("screenshot failed: {e:?}")))?;
         let v: serde_json::Value = serde_json::from_str(&json_str)
             .map_err(|e| PyRuntimeError::new_err(format!("screenshot JSON invalid: {e}")))?;

@@ -307,6 +307,22 @@
       "parts": {"paint": ["track", "red-low", "yellow-low", "green", "yellow-high", "red-high", "indicator"]}
     },
     {
+      "public_type": "RangeHistogram",
+      "native_kind": "range_histogram",
+      "python_kind": "range_histogram",
+      "css_type_chain": ["RangeHistogram", "Widget"],
+      "states_profile": "interactive",
+      "parts": {}
+    },
+    {
+      "public_type": "AccelerationBars",
+      "native_kind": "acceleration_bars",
+      "python_kind": "acceleration_bars",
+      "css_type_chain": ["AccelerationBars", "Widget"],
+      "states_profile": "interactive",
+      "parts": {}
+    },
+    {
       "public_type": "LoadingSpinner",
       "native_kind": "loading_spinner",
       "python_kind": "loading_spinner",

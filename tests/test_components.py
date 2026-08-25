@@ -223,6 +223,7 @@ def test_thread_monitor_failure_rows_keep_columns_bounded() -> None:
             thread_role="producer",
             exc_type="RuntimeError",
             exc_msg="failed",
+            repeat_count=3,
         )
     ]
     panel = thread_monitor_module._build_panel(
@@ -244,6 +245,7 @@ def test_thread_monitor_failure_rows_keep_columns_bounded() -> None:
     led = failure_row["children"][0]
     copy = failure_row["children"][1]
     age = failure_row["children"][2]
+    message = copy["children"][0]
 
     assert failure_row["type"] == "h_layout"
     assert failure_row["style"]["align_items"] == "center"
@@ -256,6 +258,7 @@ def test_thread_monitor_failure_rows_keep_columns_bounded() -> None:
     assert copy["style"]["flex_shrink"] == 1
     assert age["style"]["width"] == 54
     assert age["style"]["flex_shrink"] == 0
+    assert message["props"]["text"] == "RuntimeError: failed ×3"
 
 
 def test_thread_monitor_refresh_diff_uses_stable_widget_keys() -> None:

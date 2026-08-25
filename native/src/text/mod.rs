@@ -2635,6 +2635,8 @@ fn collect_text(
             | WidgetKind::NumberInput
             | WidgetKind::DragNumber
             | WidgetKind::ProgressBar
+            | WidgetKind::AccelerationBars
+            | WidgetKind::RangeHistogram
             | WidgetKind::LoadingSpinner
             | WidgetKind::Tab
             | WidgetKind::NavItem
@@ -2960,6 +2962,14 @@ fn collect_text(
                             r.y + r.h,
                         )
                     }
+                    WidgetKind::AccelerationBars | WidgetKind::RangeHistogram => (
+                        r.x + pad,
+                        r.y + pad,
+                        r.x + pad,
+                        r.y,
+                        r.x + r.w - pad,
+                        r.y + r.h,
+                    ),
                     _ => {
                         let top = if label_text_should_top_align(
                             node,
@@ -3789,6 +3799,8 @@ fn widget_kind_name(kind: WidgetKind) -> &'static str {
         WidgetKind::NavItem => "nav_item",
         WidgetKind::PieChart => "pie_chart",
         WidgetKind::Histogram => "histogram",
+        WidgetKind::RangeHistogram => "range_histogram",
+        WidgetKind::AccelerationBars => "acceleration_bars",
         WidgetKind::BarChart => "bar_chart",
         WidgetKind::Heatmap => "heatmap",
         WidgetKind::LinePlot => "line_plot",

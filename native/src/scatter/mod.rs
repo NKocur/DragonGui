@@ -400,7 +400,7 @@ impl PickingMode {
 /// Mouse and depth behavior for scatter widgets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ScatterInteractionMode {
-    /// Left drag orbits the 3D camera and opaque points write depth.
+    /// Left drag orbits the 3D camera and all points write depth.
     #[default]
     Orbit3D,
     /// Left drag pans a flat XY view and points render without depth writes.
@@ -1291,6 +1291,25 @@ fn scatter_scissor_bounds(offset: [u32; 2], size: [u32; 2]) -> [f32; 4] {
     ]
 }
 
+fn scatter_points_write_depth(mode: ScatterInteractionMode) -> bool {
+    mode == ScatterInteractionMode::Orbit3D
+}
+
+fn clamp_scissor_to_target(
+    offset: [u32; 2],
+    size: [u32; 2],
+    target_width: u32,
+    target_height: u32,
+) -> Option<([u32; 2], [u32; 2])> {
+    let left = offset[0].min(target_width);
+    let top = offset[1].min(target_height);
+    let right = offset[0].saturating_add(size[0]).min(target_width);
+    let bottom = offset[1].saturating_add(size[1]).min(target_height);
+    let width = right.saturating_sub(left);
+    let height = bottom.saturating_sub(top);
+    (width > 0 && height > 0).then_some(([left, top], [width, height]))
+}
+
 // ---------------------------------------------------------------------------
 // ScatterWidget
 // ---------------------------------------------------------------------------
@@ -2136,28 +2155,32 @@ impl ScatterWidget {
         let primary_is_lod =
             self.lod_enabled && self.lod_active && self.point_count > self.lod_threshold;
         let primary_visible = self.point_count > 0 && self.primary_first_buffer().is_some();
-        let flat_2d = self.interaction_mode == ScatterInteractionMode::Pan2D;
+        let flat_2d = !scatter_points_write_depth(self.interaction_mode);
 
-        if primary_visible && self.primary_points_opaque {
-            if self.primary_storage == PrimaryPointStorage::XyF32 && !primary_is_lod && flat_2d {
+        // Every 3D point set needs a depth-writing pipeline, including points
+        // with alpha below one. Without depth writes, visibility is determined
+        // by upload order and a farther billboard can blend over a nearer one
+        // after the camera rotates. Flat 2D plots intentionally retain their
+        // painter-style, non-depth-writing pipelines.
+        if primary_visible && !flat_2d {
+            if self.primary_storage == PrimaryPointStorage::XyzF32 && !primary_is_lod {
+                self.ensure_compact_opaque_point_pipeline(device);
+            } else {
+                self.ensure_opaque_point_pipeline(device);
+            }
+        }
+
+        if primary_visible && flat_2d {
+            if self.primary_storage == PrimaryPointStorage::XyF32 && !primary_is_lod {
                 self.ensure_compact_xy_point_pipeline(device);
             } else if self.primary_storage == PrimaryPointStorage::XyzF32 && !primary_is_lod {
-                if flat_2d {
-                    self.ensure_compact_point_pipeline(device);
-                } else {
-                    self.ensure_compact_opaque_point_pipeline(device);
-                }
-            } else if !flat_2d {
-                self.ensure_opaque_point_pipeline(device);
+                self.ensure_compact_point_pipeline(device);
             }
         }
 
         if !flat_2d
             && self.extra_actors.values().any(|actor| {
-                actor.visible
-                    && actor.point_count > 0
-                    && actor.points_opaque
-                    && actor.vertex_buffer.is_some()
+                actor.visible && actor.point_count > 0 && actor.vertex_buffer.is_some()
             })
         {
             self.ensure_opaque_point_pipeline(device);
@@ -4935,6 +4958,33 @@ impl ScatterWidget {
         );
     }
 
+    /// Render into the window surface while guaranteeing the strict wgpu
+    /// scissor invariant. Fractional layout rounding and a resize can leave a
+    /// one-pixel scissor at exactly the old target edge; wgpu treats that as a
+    /// validation error rather than an empty draw.
+    pub fn render_in_target<'pass, 'data: 'pass>(
+        &'data self,
+        pass: &mut wgpu::RenderPass<'pass>,
+        target_width: u32,
+        target_height: u32,
+    ) {
+        let Some((scissor_offset, scissor_size)) = clamp_scissor_to_target(
+            self.scissor_offset,
+            self.scissor_size,
+            target_width,
+            target_height,
+        ) else {
+            return;
+        };
+        self.render_with_viewport(
+            pass,
+            self.offset,
+            [self.width as f32, self.height as f32],
+            scissor_offset,
+            scissor_size,
+        );
+    }
+
     pub fn render_offscreen<'pass, 'data: 'pass>(
         &'data self,
         pass: &mut wgpu::RenderPass<'pass>,
@@ -5080,10 +5130,10 @@ impl ScatterWidget {
             }
         }
 
-        let flat_2d = self.interaction_mode == ScatterInteractionMode::Pan2D;
+        let flat_2d = !scatter_points_write_depth(self.interaction_mode);
         let primary_view_proj = self.camera.view_proj();
         let mut draw_point_buffer =
-            |opaque: bool, compact: bool, vb: &wgpu::Buffer, draw_count: u32| {
+            |_opaque: bool, compact: bool, vb: &wgpu::Buffer, draw_count: u32| {
                 let pipeline = if compact {
                     if self.primary_storage == PrimaryPointStorage::XyF32 {
                         let Some(pipeline) = self.compact_xy_pipeline.as_ref() else {
@@ -5101,7 +5151,7 @@ impl ScatterWidget {
                         };
                         pipeline
                     }
-                } else if opaque && !flat_2d {
+                } else if !flat_2d {
                     let Some(pipeline) = self.opaque_pipeline.as_ref() else {
                         return;
                     };
@@ -5541,6 +5591,28 @@ mod tests {
         assert_eq!(
             scatter_scissor_bounds(rect.scissor_offset, rect.scissor_size),
             [20.0, 96.0, 320.0, 168.0]
+        );
+    }
+
+    #[test]
+    fn orbit_3d_points_always_write_depth_but_flat_2d_points_do_not() {
+        assert!(scatter_points_write_depth(ScatterInteractionMode::Orbit3D));
+        assert!(!scatter_points_write_depth(ScatterInteractionMode::Pan2D));
+    }
+
+    #[test]
+    fn surface_scissor_is_clamped_inside_resized_render_target() {
+        assert_eq!(
+            clamp_scissor_to_target([1021, 1079], [376, 4], 1848, 1080),
+            Some(([1021, 1079], [376, 1]))
+        );
+        assert_eq!(
+            clamp_scissor_to_target([1021, 1080], [376, 1], 1848, 1080),
+            None
+        );
+        assert_eq!(
+            clamp_scissor_to_target([1847, 40], [20, 30], 1848, 1080),
+            Some(([1847, 40], [1, 30]))
         );
     }
 

@@ -223,6 +223,52 @@ pub struct HistogramProp {
     pub bar_gap: f32,
 }
 
+#[derive(Debug, Clone)]
+pub struct RangeHistogramProp {
+    pub edges: Vec<f32>,
+    pub counts: Vec<f32>,
+    pub range_min: f32,
+    pub range_max: f32,
+    pub selected_min: f32,
+    pub selected_max: f32,
+    pub label: Option<String>,
+}
+
+impl Default for RangeHistogramProp {
+    fn default() -> Self {
+        Self {
+            edges: Vec::new(),
+            counts: Vec::new(),
+            range_min: 0.0,
+            range_max: 1.0,
+            selected_min: 0.0,
+            selected_max: 1.0,
+            label: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AccelerationBarsProp {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub range_g: f32,
+    pub show_values: bool,
+}
+
+impl Default for AccelerationBarsProp {
+    fn default() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            range_g: 2.0,
+            show_values: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct BarChartSeriesProp {
     pub label: Option<String>,
@@ -272,6 +318,16 @@ pub struct HeatmapHoverProp {
 }
 
 #[derive(Debug, Clone)]
+pub struct HeatmapBoxProp {
+    pub x0: f32,
+    pub y0: f32,
+    pub x1: f32,
+    pub y1: f32,
+    pub color: Option<ColorRef>,
+    pub line_width: f32,
+}
+
+#[derive(Debug, Clone)]
 pub struct HeatmapProp {
     pub rows: usize,
     pub cols: usize,
@@ -285,6 +341,7 @@ pub struct HeatmapProp {
     pub show_labels: bool,
     pub scalar_bar: bool,
     pub title: Option<String>,
+    pub boxes: Vec<HeatmapBoxProp>,
     pub hover: Option<HeatmapHoverProp>,
 }
 
@@ -303,6 +360,7 @@ impl Default for HeatmapProp {
             show_labels: true,
             scalar_bar: true,
             title: None,
+            boxes: Vec::new(),
             hover: None,
         }
     }
@@ -783,6 +841,79 @@ fn parse_histogram_props(props: &serde_json::Value) -> HistogramProp {
     }
 }
 
+fn parse_range_histogram_props(props: &serde_json::Value) -> RangeHistogramProp {
+    let mut edges = parse_f32_vec(props.get("edges"));
+    let mut counts = parse_f32_vec(props.get("counts"));
+    let bins_valid = edges.len() == counts.len().saturating_add(1)
+        && edges.len() >= 2
+        && edges.windows(2).all(|pair| pair[1] > pair[0])
+        && counts
+            .iter()
+            .all(|value| value.is_finite() && *value >= 0.0);
+    if !bins_valid {
+        edges.clear();
+        counts.clear();
+    }
+    let range_min = props
+        .get("range_min")
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite())
+        .unwrap_or(0.0) as f32;
+    let range_max = props
+        .get("range_max")
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite() && *value > range_min as f64)
+        .unwrap_or(range_min as f64 + 1.0) as f32;
+    let selected = |name: &str, fallback: f32| {
+        props
+            .get(name)
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+            .map(|value| value as f32)
+            .unwrap_or(fallback)
+            .clamp(range_min, range_max)
+    };
+    let mut selected_min = selected("selected_min", range_min);
+    let mut selected_max = selected("selected_max", range_max);
+    if selected_min > selected_max {
+        std::mem::swap(&mut selected_min, &mut selected_max);
+    }
+    RangeHistogramProp {
+        edges,
+        counts,
+        range_min,
+        range_max,
+        selected_min,
+        selected_max,
+        label: props
+            .get("label")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+    }
+}
+
+fn parse_acceleration_bars_props(props: &serde_json::Value) -> AccelerationBarsProp {
+    let value = |name: &str, fallback: f32| {
+        props
+            .get(name)
+            .and_then(Value::as_f64)
+            .filter(|number| number.is_finite())
+            .map(|number| number as f32)
+            .unwrap_or(fallback)
+    };
+    AccelerationBarsProp {
+        x: value("x", 0.0),
+        y: value("y", 0.0),
+        z: value("z", 0.0),
+        range_g: value("range_g", 2.0).max(0.1),
+        show_values: props
+            .get("show_values")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+    }
+}
+
 fn parse_bar_chart_props(props: &serde_json::Value) -> BarChartProp {
     let labels = parse_string_vec(props.get("labels"));
     let mut series = Vec::new();
@@ -963,6 +1094,37 @@ fn parse_heatmap_props(props: &serde_json::Value) -> HeatmapProp {
     if y_labels.len() != rows {
         y_labels.clear();
     }
+    let boxes = props
+        .get("boxes")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let x0 = item.get("x0")?.as_f64()? as f32;
+                    let y0 = item.get("y0")?.as_f64()? as f32;
+                    let x1 = item.get("x1")?.as_f64()? as f32;
+                    let y1 = item.get("y1")?.as_f64()? as f32;
+                    if ![x0, y0, x1, y1].iter().all(|value| value.is_finite()) {
+                        return None;
+                    }
+                    Some(HeatmapBoxProp {
+                        x0,
+                        y0,
+                        x1,
+                        y1,
+                        color: parse_color_ref(item.get("color")),
+                        line_width: item
+                            .get("line_width")
+                            .and_then(Value::as_f64)
+                            .filter(|value| value.is_finite() && *value > 0.0)
+                            .map(|value| value as f32)
+                            .unwrap_or(1.5),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     HeatmapProp {
         rows: if values.len() == expected { rows } else { 0 },
         cols: if values.len() == expected { cols } else { 0 },
@@ -991,6 +1153,7 @@ fn parse_heatmap_props(props: &serde_json::Value) -> HeatmapProp {
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty())
             .map(str::to_string),
+        boxes,
         hover: None,
     }
 }
@@ -1258,6 +1421,8 @@ pub enum WidgetKind {
     NavItem,
     PieChart,
     Histogram,
+    RangeHistogram,
+    AccelerationBars,
     BarChart,
     Heatmap,
     LinePlot,
@@ -1328,6 +1493,8 @@ pub(crate) const ALL_WIDGET_KINDS: &[WidgetKind] = &[
     WidgetKind::NavItem,
     WidgetKind::PieChart,
     WidgetKind::Histogram,
+    WidgetKind::RangeHistogram,
+    WidgetKind::AccelerationBars,
     WidgetKind::BarChart,
     WidgetKind::Heatmap,
     WidgetKind::LinePlot,
@@ -1399,6 +1566,8 @@ impl WidgetKind {
             "nav_item" => WidgetKind::NavItem,
             "pie_chart" => WidgetKind::PieChart,
             "histogram" => WidgetKind::Histogram,
+            "range_histogram" => WidgetKind::RangeHistogram,
+            "acceleration_bars" => WidgetKind::AccelerationBars,
             "bar_chart" => WidgetKind::BarChart,
             "heatmap" => WidgetKind::Heatmap,
             "line_plot" => WidgetKind::LinePlot,
@@ -1581,6 +1750,10 @@ pub struct NodeProps {
     pub pie_chart: PieChartProp,
     /// Histogram pre-binned startup data and chrome props.
     pub histogram: HistogramProp,
+    /// Compact histogram and interactive selected range.
+    pub range_histogram: RangeHistogramProp,
+    /// Three-axis centered telemetry bars.
+    pub acceleration_bars: AccelerationBarsProp,
     /// BarChart categorical startup data and chrome props.
     pub bar_chart: BarChartProp,
     /// Heatmap packed matrix startup data and chrome props.
@@ -2214,6 +2387,16 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
     } else {
         HistogramProp::default()
     };
+    let range_histogram = if matches!(kind, WidgetKind::RangeHistogram) {
+        parse_range_histogram_props(props)
+    } else {
+        RangeHistogramProp::default()
+    };
+    let acceleration_bars = if matches!(kind, WidgetKind::AccelerationBars) {
+        parse_acceleration_bars_props(props)
+    } else {
+        AccelerationBarsProp::default()
+    };
     let bar_chart = if matches!(kind, WidgetKind::BarChart) {
         parse_bar_chart_props(props)
     } else {
@@ -2580,6 +2763,8 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         line_plot_hover,
         pie_chart,
         histogram,
+        range_histogram,
+        acceleration_bars,
         bar_chart,
         heatmap,
         scatter_colormap,
@@ -3039,6 +3224,10 @@ mod tests {
                 "y_labels": ["R0", "R1"],
                 "show_labels": true,
                 "scalar_bar": false,
+                "boxes": [{
+                    "x0": 0.25, "y0": 0.5, "x1": 1.75, "y1": 1.5,
+                    "color": "#40ff73", "line_width": 2.0
+                }],
                 "title": "Dense"
             }
         }))
@@ -3056,6 +3245,13 @@ mod tests {
         assert_eq!(node.props.heatmap.y_labels, vec!["R0", "R1"]);
         assert!(!node.props.heatmap.scalar_bar);
         assert_eq!(node.props.heatmap.title.as_deref(), Some("Dense"));
+        assert_eq!(node.props.heatmap.boxes.len(), 1);
+        let overlay = &node.props.heatmap.boxes[0];
+        assert_eq!(
+            (overlay.x0, overlay.y0, overlay.x1, overlay.y1),
+            (0.25, 0.5, 1.75, 1.5)
+        );
+        assert_eq!(overlay.line_width, 2.0);
     }
 
     #[test]

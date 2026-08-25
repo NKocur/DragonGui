@@ -293,6 +293,21 @@ class LiveWidgetHandle:
             coalesce=coalesce,
         )
 
+    def enqueue_set_range_histogram_bins_packed(
+        self,
+        edges: bytes,
+        counts: bytes,
+        *,
+        coalesce: bool = True,
+    ) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_range_histogram_bins_packed(
+            self.id,
+            edges,
+            counts,
+            coalesce=coalesce,
+        )
+
     def enqueue_reset_scatter_camera(self) -> None:
         self.ensure_open()
         self.app.enqueue_reset_scatter_camera(self.id)
@@ -1048,6 +1063,22 @@ class AppHandle:
             int(input_count),
             int(finite_count),
             bool(auto_fit),
+            bool(coalesce),
+        )
+
+    def enqueue_set_range_histogram_bins_packed(
+        self,
+        widget_id: str,
+        edges: bytes,
+        counts: bytes,
+        *,
+        coalesce: bool = True,
+    ) -> None:
+        self._send_or_queue_native(
+            "enqueue_set_range_histogram_bins_packed",
+            widget_id,
+            _byte_view(edges, "range histogram edge payload"),
+            _byte_view(counts, "range histogram count payload"),
             bool(coalesce),
         )
 
@@ -2124,12 +2155,17 @@ class AppHandle:
                     task()
                 except Exception as _exc:  # pragma: no cover - diagnostic path
                     outcome = "error"
-                    traceback.print_exc()
+                    repeat_count = 1
                     if scheduled.diagnostics:
                         try:
-                            _record_task_failure(task, _exc, scheduled.origin)
+                            repeat_count = _record_task_failure(task, _exc, scheduled.origin)
                         except Exception:
                             pass
+                    # Preserve the first traceback but do not saturate stderr
+                    # when a producer schedules the same broken callback every
+                    # frame. ThreadMonitor retains the aggregate repeat count.
+                    if repeat_count == 1:
+                        traceback.print_exc()
                 finally:
                     task_ms = (time.perf_counter() - task_t0) * 1000.0
                     with self._lock:
@@ -2400,7 +2436,7 @@ def _collect_runtime_callbacks(
     widget: object,
 ) -> tuple[dict[str, Callable[[], None]], dict[str, Callable[[object], None]]]:
     from .node_graph import NodeGraph
-    from .widgets import BarChart, BarChartBar, Button, Checkbox, CodeEditor, Collapsible, Container, DataFrameTable, DateInput, DateTimeInput, DragDropPayload, DragNumber, DropTarget, Dropdown, ExtensionWidget, Heatmap, HeatmapCell, MenuItem, NumberInput, Pages, PaintKeyEvent, PaintPointerEvent, RadioButton, RangeSlider, Scatter3D, ScatterHit, ScatterPick, Selectable, Slider, TableSelection, TableSort, Tabs, TextArea, TextInput, TimeInput, ToggleSwitch, TreeNode, TreeView, Widget
+    from .widgets import BarChart, BarChartBar, Button, Checkbox, CodeEditor, Collapsible, Container, DataFrameTable, DateInput, DateTimeInput, DragDropPayload, DragNumber, DropTarget, Dropdown, ExtensionWidget, Heatmap, HeatmapCell, MenuItem, NumberInput, Pages, PaintKeyEvent, PaintPointerEvent, RadioButton, RangeHistogram, RangeSlider, Scatter3D, ScatterHit, ScatterPick, Selectable, Slider, TableSelection, TableSort, Tabs, TextArea, TextInput, TimeInput, ToggleSwitch, TreeNode, TreeView, Widget
 
     click_callbacks: dict[str, Callable[[], None]] = {}
     change_callbacks: dict[str, Callable[[object], None]] = {}
@@ -2533,6 +2569,24 @@ def _collect_runtime_callbacks(
                 widget.on_change(widget.value)
 
             change_callbacks[node.id] = slider_changed
+        if isinstance(node, RangeHistogram) and node.on_change is not None:
+            def range_histogram_changed(value: object, widget: RangeHistogram = node) -> None:
+                payload = json.loads(value) if isinstance(value, str) else value
+                if isinstance(payload, Mapping):
+                    low = payload.get("min")
+                    high = payload.get("max")
+                elif isinstance(payload, Sequence) and len(payload) >= 2:
+                    low, high = payload[0], payload[1]
+                else:
+                    raise TypeError(
+                        "RangeHistogram change payload must be a pair or JSON object"
+                    )
+                if low is None or high is None:
+                    raise TypeError("RangeHistogram change payload requires min and max")
+                widget.set_range(float(low), float(high))
+                widget.on_change((widget.selected_min, widget.selected_max))
+
+            change_callbacks[node.id] = range_histogram_changed
         if isinstance(node, RangeSlider) and node.on_change is not None:
             def range_slider_changed(value: object, widget: RangeSlider = node) -> None:
                 payload = json.loads(value) if isinstance(value, str) else value

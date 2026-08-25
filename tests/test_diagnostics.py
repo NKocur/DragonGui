@@ -44,6 +44,24 @@ def test_task_failure_records_enqueue_origin_thread_and_role() -> None:
     assert hidden.threads == []
 
 
+def test_repeated_identical_task_failures_are_aggregated() -> None:
+    collector = _reset_collector()
+    handle = AppHandle()
+
+    def bad_task() -> None:
+        raise RuntimeError("repeated diagnostic boom")
+
+    handle.call_soon_threadsafe(bad_task)
+    handle.call_soon_threadsafe(bad_task)
+    handle.call_soon_threadsafe(bad_task)
+    handle._drain_python_tasks()
+
+    snap = collector.snapshot()
+    assert snap.failure_count == 3
+    assert len(snap.recent_failures) == 1
+    assert snap.recent_failures[0].repeat_count == 3
+
+
 def test_enqueue_rate_reports_above_previous_timestamp_cap() -> None:
     collector = _reset_collector()
     origin = collector.capture_thread_origin()

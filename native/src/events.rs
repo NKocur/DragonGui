@@ -1559,6 +1559,13 @@ fn collect_state(node: &WidgetNode, s: &mut WidgetState, parent: Option<&WidgetN
             let high = node.props.value_max.unwrap_or(max);
             let _ = s.set_range_values(&node.id, low, high);
         }
+        WidgetKind::RangeHistogram => {
+            let props = &node.props.range_histogram;
+            s.float_range
+                .insert(node.id.clone(), (props.range_min, props.range_max));
+            s.float_step.insert(node.id.clone(), 0.0);
+            let _ = s.set_range_values(&node.id, props.selected_min, props.selected_max);
+        }
         WidgetKind::NumberInput | WidgetKind::DragNumber => {
             let value = node.props.value.unwrap_or(0.0);
             s.float_val.insert(node.id.clone(), value);
@@ -1958,6 +1965,7 @@ fn is_interactive(kind: &WidgetKind) -> bool {
             | WidgetKind::Menu
             | WidgetKind::Slider
             | WidgetKind::RangeSlider
+            | WidgetKind::RangeHistogram
             | WidgetKind::NumberInput
             | WidgetKind::DragNumber
             | WidgetKind::TextInput

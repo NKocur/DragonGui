@@ -1779,6 +1779,8 @@ fn style_for_with_viewport(
         // ── plot / table: grow to fill remaining space ────────────────────
         WidgetKind::PieChart
         | WidgetKind::Histogram
+        | WidgetKind::RangeHistogram
+        | WidgetKind::AccelerationBars
         | WidgetKind::BarChart
         | WidgetKind::Heatmap
         | WidgetKind::LinePlot

@@ -38,6 +38,28 @@ class DemoFrame:
     shape = (1_000_000, 3)
 
 
+def test_empty_scatter2d_with_explicit_colors_builds_clear_packet() -> None:
+    np = pytest.importorskip("numpy")
+
+    class EmptyFrame2D:
+        columns = ("x", "y")
+        shape = (0, 2)
+        x = np.empty(0, dtype=np.float32)
+        y = np.empty(0, dtype=np.float32)
+
+        def __getitem__(self, column: str) -> object:
+            return getattr(self, column)
+
+    plot = dg.ScatterPlot2D(
+        EmptyFrame2D(),
+        x="x",
+        y="y",
+        colors=np.empty((0, 3), dtype=np.float32),
+    )
+
+    assert plot._build_payload() == b""
+
+
 def test_scatter_capacity_error_is_public_and_catchable() -> None:
     assert "ScatterCapacityError" in dg.__all__
     assert issubclass(dg.ScatterCapacityError, RuntimeError)
@@ -2739,6 +2761,96 @@ def test_limits_bar_validates_and_updates_live_value_and_limits() -> None:
         limits.set_limits(yellow_low=99)
     assert limits.yellow_low == -50.0
 
+
+def test_range_histogram_serializes_and_updates_live_selection_and_bins() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.props: list[tuple[str, str, object]] = []
+            self.bins: list[tuple[str, bytes, bytes, bool]] = []
+
+        def enqueue_set_prop(self, widget_id: str, prop: str, value: object) -> None:
+            self.props.append((widget_id, prop, value))
+
+        def enqueue_set_range_histogram_bins_packed(
+            self, widget_id: str, edges: object, counts: object, coalesce: bool
+        ) -> None:
+            self.bins.append((widget_id, bytes(edges), bytes(counts), coalesce))
+
+        def close(self) -> None:
+            pass
+
+    histogram = dg.RangeHistogram(
+        [-2, -1, 0, 1, 2],
+        [2, 5, 7, 3],
+        range_min=-2,
+        range_max=2,
+        selected_min=-1,
+        selected_max=1,
+        id="range-hist",
+        parent=None,
+    )
+    assert histogram.to_dict()["props"]["selected_min"] == -1.0
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+    histogram._bind_live(handle.widget_handle(histogram.id))
+    histogram.set_range(1.5, -0.5)
+    histogram.set_bins([0, 1, 2], [4, 9], coalesce=False)
+
+    assert sender.props == [
+        ("range-hist", "selected_min", -0.5),
+        ("range-hist", "selected_max", 1.5),
+    ]
+    assert sender.bins[0][0] == "range-hist"
+    assert len(sender.bins[0][1]) == 12
+    assert len(sender.bins[0][2]) == 8
+    assert sender.bins[0][3] is False
+
+    with pytest.raises(ValueError, match="counts length"):
+        dg.RangeHistogram([0, 1], [1, 2], range_min=0, range_max=1, parent=None)
+
+
+def test_acceleration_bars_serializes_and_updates_live_values() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.props: list[tuple[str, str, object]] = []
+
+        def enqueue_set_prop(self, widget_id: str, prop: str, value: object) -> None:
+            self.props.append((widget_id, prop, value))
+
+        def close(self) -> None:
+            pass
+
+    bars = dg.AccelerationBars(x=0.1, y=-0.2, z=1.0, range_g=4, id="accel", parent=None)
+    assert bars.to_dict()["props"] == {
+        "x": 0.1,
+        "y": -0.2,
+        "z": 1.0,
+        "range_g": 4.0,
+        "show_values": True,
+        "text": "X +0.10g\nY -0.20g\nZ +1.00g",
+        "width": 180.0,
+        "height": 112.0,
+    }
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+    bars._bind_live(handle.widget_handle(bars.id))
+    bars.set_values(-1, 0.5, 2)
+    bars.set_range(8)
+    bars.set_show_values(False)
+
+    assert sender.props == [
+        ("accel", "x", -1.0),
+        ("accel", "y", 0.5),
+        ("accel", "z", 2.0),
+        ("accel", "text", "X -1.00g\nY +0.50g\nZ +2.00g"),
+        ("accel", "range_g", 8.0),
+        ("accel", "show_values", False),
+        ("accel", "text", "X\nY\nZ"),
+    ]
 
 def test_loading_spinner_serializes_validates_and_updates_live_props() -> None:
     class Sender:
@@ -9557,6 +9669,10 @@ def test_heatmap_serializes_packed_matrix() -> None:
         y_labels=["r0", "r1"],
         colormap="turbo",
         title="Matrix",
+        boxes=[{
+            "x0": 0.25, "y0": 0.5, "x1": 1.75, "y1": 1.5,
+            "color": "#40ff73", "line_width": 2.0,
+        }],
         id="heat",
         parent=None,
     )
@@ -9574,6 +9690,10 @@ def test_heatmap_serializes_packed_matrix() -> None:
     assert props["colormap"] == "turbo"
     assert props["title"] == "Matrix"
     assert props["scalar_bar"] is True
+    assert props["boxes"] == [{
+        "x0": 0.25, "y0": 0.5, "x1": 1.75, "y1": 1.5,
+        "color": "#40ff73", "line_width": 2.0,
+    }]
     raw = base64.b64decode(props["data_b64"])
     assert struct.unpack("<6f", raw)[:2] == pytest.approx((1.0, 2.5))
     assert props["events"] == []
@@ -9643,6 +9763,14 @@ def test_heatmap_validation() -> None:
         dg.Heatmap([[1.0, 2.0]], x_labels=["only one"], parent=None)
     with pytest.raises(ValueError, match="color range"):
         dg.Heatmap([[1.0]], clim=(float("nan"), 2.0), parent=None)
+    with pytest.raises(ValueError, match="missing 'y1'"):
+        dg.Heatmap([[1.0]], boxes=[{"x0": 0, "y0": 0, "x1": 1}], parent=None)
+    with pytest.raises(ValueError, match="line_width"):
+        dg.Heatmap(
+            [[1.0]],
+            boxes=[{"x0": 0, "y0": 0, "x1": 1, "y1": 1, "line_width": 0}],
+            parent=None,
+        )
 
 
 def test_scatter_screenshot_returns_none_when_not_live() -> None:
