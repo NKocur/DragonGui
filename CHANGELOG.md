@@ -3,6 +3,15 @@
 All notable changes to DragonGUI are documented here. The project follows
 [Semantic Versioning](https://semver.org/) from version 1.0.0 onward.
 
+## [1.0.6] - 2026-08-27
+
+### Changed
+
+- Published Nash Kocur as the package author and added PyPI links to the
+  repository, documentation, and issue tracker.
+- Confirmed `pywinpty` remains a Windows-gated `[terminal]` extra; the base
+  installation has no platform-specific runtime dependencies.
+
 ## [1.0.5] - 2026-08-25
 
 ### Added
@@ -51,3 +60,4 @@ First stable production release.
 [1.0.0]: https://github.com/NKocur/DragonGui/releases/tag/v1.0.0
 [1.0.4]: https://github.com/NKocur/DragonGui/releases/tag/v1.0.4
 [1.0.5]: https://github.com/NKocur/DragonGui/releases/tag/v1.0.5
+[1.0.6]: https://github.com/NKocur/DragonGui/releases/tag/v1.0.6

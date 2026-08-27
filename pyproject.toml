@@ -4,14 +4,14 @@ build-backend = "maturin"
 
 [project]
 name = "dragongui"
-version = "1.0.5"
+version = "1.0.6"
 description = "A Python application toolkit for GPU-native data tools."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [
-  { name = "DragonFrame contributors" }
+  { name = "Nash Kocur", email = "nash.kocur@gmail.com" }
 ]
 keywords = ["gui", "gpu", "dataframe", "wgpu", "visualization", "rust"]
 classifiers = [
@@ -60,7 +60,8 @@ docs = [
 
 [project.urls]
 Homepage = "https://github.com/NKocur/DragonGui"
-Source = "https://github.com/NKocur/DragonGui"
+Repository = "https://github.com/NKocur/DragonGui"
+Documentation = "https://github.com/NKocur/DragonGui/blob/master/docs/library-overview.md"
 Issues = "https://github.com/NKocur/DragonGui/issues"
 
 [tool.maturin]
